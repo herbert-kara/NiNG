@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.herbertkara.ning"
+    namespace = "com.v2ray.ang"
     ndkVersion = "29.0.14206865"
     compileSdk = 37
 
