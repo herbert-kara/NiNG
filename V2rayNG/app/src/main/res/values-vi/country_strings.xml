@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="country_label_hint">Gợi ý từ tên: %1$s</string>
+    <string name="country_server">Máy chủ: %1$s</string>
+    <string name="country_exit">Đầu ra: %1$s</string>
+</resources>

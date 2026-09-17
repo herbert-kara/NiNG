@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="country_label_hint">Подсказка в имени: %1$s</string>
+    <string name="country_server">Сервер: %1$s</string>
+    <string name="country_exit">Выход: %1$s</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="country_label_hint">نشونهٔ نوم: %1$s</string>
+    <string name="country_server">سرور: %1$s</string>
+    <string name="country_exit">خروجی: %1$s</string>
+</resources>

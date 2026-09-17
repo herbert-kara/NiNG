@@ -79,12 +79,7 @@ object SpeedtestManager {
             ipInfo.query
         ).firstOrNull { !it.isNullOrBlank() }
 
-        val country = listOf(
-            ipInfo.country_code,
-            ipInfo.country,
-            ipInfo.countryCode,
-            ipInfo.location?.country_code
-        ).firstOrNull { !it.isNullOrBlank() }
+        val country = ipInfo.normalizedCountry()
 
         return RemoteEndpointInfo(
             country = country,

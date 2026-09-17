@@ -66,6 +66,9 @@ data class ProfileItem(
     var bandwidthDown: String? = null,
     var bandwidthUp: String? = null,
 
+    // Legacy display metadata only; never treat an imported hint as measured geography.
+    var countryCode: String? = null,
+
     var policyGroupType: String? = null,
     var policyGroupSubscriptionId: String? = null,
     var policyGroupFilter: String? = null,
@@ -110,6 +113,7 @@ data class ProfileItem(
      * - addedTime
      * - remarks
      * - description
+     * - countryCode (legacy display metadata; never treated as measured geography)
      *
      * All other fields, including configType, are included in the comparison.
      *
@@ -121,6 +125,7 @@ data class ProfileItem(
             subscriptionId = "",
             addedTime = 0L,
             remarks = "",
-            description = null
+            description = null,
+            countryCode = null
         )
 }

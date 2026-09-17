@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="country_label_hint">Label hint: %1$s</string>
+    <string name="country_server">Server: %1$s</string>
+    <string name="country_exit">Exit: %1$s</string>
+</resources>

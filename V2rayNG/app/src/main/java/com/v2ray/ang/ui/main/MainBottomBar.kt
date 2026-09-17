@@ -22,13 +22,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.v2ray.ang.R
+import coil.compose.AsyncImage
+import com.v2ray.ang.handler.ProfileCountry
 import com.v2ray.ang.ui.compose.AppDivider
 import com.v2ray.ang.ui.compose.colorFabActive
 import com.v2ray.ang.ui.compose.colorFabInactiveDark
@@ -39,6 +40,7 @@ fun MainBottomBar(
     displayText: String,
     isRunning: Boolean,
     isDarkTheme: Boolean,
+    exitCountryCode: String? = null,
     onAction: (MainAction) -> Unit
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
@@ -58,13 +60,18 @@ fun MainBottomBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = displayText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.semantics {
-                        contentDescription = displayText
-                    }
-                )
+                // Exit-IP geography only: shown with the current connection-test result,
+                // separate from per-profile ingress hints rendered in the server rows.
+                Column(Modifier.weight(1f).padding(end = 64.dp)) {
+                    CountryBadge(exitCountryCode, R.string.country_exit)
+                    Text(
+                        text = displayText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.semantics {
+                            contentDescription = displayText
+                        }
+                    )
+                }
             }
         }
         FloatingActionButton(

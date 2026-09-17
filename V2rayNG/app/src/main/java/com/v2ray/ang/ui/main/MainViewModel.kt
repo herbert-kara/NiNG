@@ -32,6 +32,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import com.v2ray.ang.handler.ServerCountryLookup
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -110,11 +113,43 @@ class MainViewModel(
     private var bulkTestJob: Job? = null
 
     private val initialPageReady = CompletableDeferred<Unit>()
+    private val serverCountries = ServerCountryLookup()
 
     // ---------- Service events ----------
     init {
+        collectServerCountries()
         collectServiceEvents()
         setupGroupTab()
+    }
+
+    private fun collectServerCountries() {
+        viewModelScope.launch {
+            uiState.map { it.selectedGroupId }.distinctUntilChanged().collectLatest { groupId ->
+                serverGroupState(groupId).map { state ->
+                    state.rows.mapNotNull { row ->
+                        row.profile.server?.takeIf { !row.profile.configType.isComplexType() }
+                            ?.let { row.guid to it }
+                    }.take(128)
+                }.distinctUntilChanged().collectLatest { targets ->
+                    // A single bounded selected-page batch, not background subscription scanning.
+                    // Group/target changes cancel the old batch; HTTP is cancelled with its owner.
+                    withContext(ioDispatcher) {
+                        for ((guid, address) in targets) {
+                            ensureActive()
+                            val country = serverCountries.resolve(address) ?: continue
+                            withContext(Dispatchers.Main.immediate) {
+                                ensureActive()
+                                if (uiState.value.selectedGroupId == groupId) {
+                                    mutableServerGroupState(groupId).update { state ->
+                                        state.copy(rows = applyServerCountry(state.rows, guid, address, country))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun collectServiceEvents() {
@@ -395,10 +430,19 @@ class MainViewModel(
 
     private fun updateGroupUi(groupId: String, servers: List<ServersCache>) {
         val filteredServers = applyKeywordFilter(servers)
-        mutableServerGroupState(groupId).value = ServerGroupUiState(
-            servers = filteredServers,
-            rows = buildServerRows(groupId, filteredServers)
-        )
+        val rows = buildServerRows(groupId, filteredServers)
+        mutableServerGroupState(groupId).update { previous ->
+            val previousRows = previous.rows.associateBy { it.guid }
+            ServerGroupUiState(
+                servers = filteredServers,
+                rows = rows.map { row ->
+                    val old = previousRows[row.guid]
+                    if (old?.profile?.server == row.profile.server) {
+                        row.copy(serverCountryCode = old?.serverCountryCode)
+                    } else row
+                }
+            )
+        }
     }
 
     private fun buildServerRows(groupId: String, servers: List<ServersCache>): List<ServerRowUiModel> {
@@ -945,6 +989,7 @@ class MainViewModel(
         reloadJob?.cancel()
         filterJob?.cancel()
         cancelAllPing()
+        serverCountries.close()
         dataSource.close()
         super.onCleared()
     }

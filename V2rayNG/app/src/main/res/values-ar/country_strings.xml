@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="country_label_hint">تلميح الاسم: %1$s</string>
+    <string name="country_server">الخادم: %1$s</string>
+    <string name="country_exit">الخروج: %1$s</string>
+</resources>

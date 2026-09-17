@@ -1,0 +1,5 @@
+Country flag artwork and country names from https://github.com/hampusborgos/country-flags
+Revision: c09927e63705529bbf59ca6684cd9b23225dddad
+Upstream states: "The source files were taken from Wikimedia Commons and sometimes contributed back ... The flags are not under copyright protection since flags are in public domain (there may be other restrictions on how the flag can be used though)."
+PNG files rendered from the upstream SVGs at width 48 using @resvg/resvg-js 2.6.2.
+No downloads occur at application runtime.

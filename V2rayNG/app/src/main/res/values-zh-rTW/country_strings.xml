@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="country_label_hint">名稱提示：%1$s</string>
+    <string name="country_server">伺服器：%1$s</string>
+    <string name="country_exit">出口：%1$s</string>
+</resources>

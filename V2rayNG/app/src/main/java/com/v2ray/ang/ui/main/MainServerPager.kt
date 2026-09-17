@@ -405,6 +405,10 @@ private fun ServerListItem(
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
+            // Separate lines fit narrow double-column layouts and large font settings.
+            // A label never replaces the independently acquired ingress country.
+            CountryBadge(row.labelCountryCode, R.string.country_label_hint)
+            CountryBadge(row.serverCountryCode, R.string.country_server)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(row.typeDescription, style = MaterialTheme.typography.bodySmall, color = colorConfigType, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(testResult, style = MaterialTheme.typography.bodySmall, color = if (row.testDelayMillis < 0L) colorPingRed else colorPing, maxLines = 1, overflow = TextOverflow.Ellipsis)

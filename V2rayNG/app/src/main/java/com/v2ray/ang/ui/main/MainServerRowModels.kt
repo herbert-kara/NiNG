@@ -7,6 +7,7 @@ import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.nullIfBlank
 import com.v2ray.ang.handler.AngConfigManager
+import com.v2ray.ang.handler.ProfileCountry
 
 internal data class ServerRowUiModel(
     val guid: String,
@@ -16,6 +17,8 @@ internal data class ServerRowUiModel(
     val typeDescription: String,
     val testDelayMillis: Long,
     val subscriptionBadge: String,
+    val labelCountryCode: String? = null,
+    val serverCountryCode: String? = null,
 )
 
 internal data class ServerGroupUiState(
@@ -32,6 +35,7 @@ internal fun buildServerRowUiModel(
         guid = server.guid,
         profile = profile,
         remarks = profile.remarks,
+        labelCountryCode = ProfileCountry.fromLabel(profile.remarks),
         statistics = profile.description.nullIfBlank()
             ?: AngConfigManager.generateDescription(profile),
         typeDescription = serverProtocolDescription(profile),
