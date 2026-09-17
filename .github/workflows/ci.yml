@@ -1,0 +1,51 @@
+name: NiNG compile and unit tests
+on:
+  workflow_dispatch:
+  push:
+    branches: [my-releases]
+permissions:
+  contents: read
+concurrency:
+  group: ning-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    if: github.repository == 'herbert-kara/NiNG'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '14742923'
+          packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Download core paired with committed gitlink
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(git -C AndroidLibXrayLite describe --tags --abbrev=0)
+          mkdir -p V2rayNG/app/libs
+          gh release download "$tag" --repo patterniha/AndroidLibXrayLite --pattern libv2ray.aar --dir V2rayNG/app/libs
+      - name: Compile and unit test
+        working-directory: V2rayNG
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:testPlaystoreDebugUnitTest --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-reports
+          path: |
+            V2rayNG/app/build/reports/tests/
+            V2rayNG/app/build/test-results/
+          if-no-files-found: ignore

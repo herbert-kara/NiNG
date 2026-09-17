@@ -6,15 +6,16 @@ plugins {
 }
 
 android {
-    namespace = "com.v2ray.ang"
+    namespace = "com.herbertkara.ning"
+    ndkVersion = "29.0.14206865"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.patterniha.pattng"
+        applicationId = "com.herbertkara.ning"
         minSdk = 24
         targetSdk = 37
-        versionCode = 748
-        versionName = (project.findProperty("pattngVersion") as? String)?.takeIf { it.isNotBlank() } ?: "2.3.8"
+        versionCode = 749
+        versionName = (project.findProperty("ningVersion") as? String)?.takeIf { it.isNotBlank() } ?: "2.3.8-ning.1"
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {
@@ -92,7 +93,7 @@ android {
                 .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
                 .forEach { output ->
                     val abi = output.getFilter("ABI") ?: "universal"
-                    output.outputFileName = "PattNG_${variant.versionName}-fdroid_${abi}.apk"
+                    output.outputFileName = "NiNG_${variant.versionName}-fdroid_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (100 * variant.versionCode + versionCodes[abi]!!).plus(5000000)
@@ -112,7 +113,7 @@ android {
                     else
                         "universal"
 
-                    output.outputFileName = "PattNG_${variant.versionName}_${abi}.apk"
+                    output.outputFileName = "NiNG_${variant.versionName}_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (1000000 * versionCodes[abi]!!).plus(variant.versionCode)
