@@ -81,6 +81,9 @@ object AppConfig {
     const val PREF_IS_BOOTED = "pref_is_booted"
     const val PREF_CHECK_UPDATE_PRE_RELEASE = "pref_check_update_pre_release"
     const val PREF_GEO_FILES_SOURCES = "pref_geo_files_sources"
+
+    /** The exit countries Psiphon last reported it can leave from, ISO codes comma separated; see PsiphonServerList. */
+    const val PREF_PSIPHON_REGIONS = "pref_psiphon_regions"
     const val PREF_USE_HEV_TUNNEL = "pref_use_hev_tunnel_v2"
     const val PREF_HEV_TUNNEL_LOGLEVEL = "pref_hev_tunnel_loglevel"
     const val PREF_HEV_TUNNEL_RW_TIMEOUT = "pref_hev_tunnel_rw_timeout_v2"
@@ -161,6 +164,13 @@ object AppConfig {
     const val GEOIP_ONLY_CN_PRIVATE_DAT = "geoip-only-cn-private.dat"
     const val GEOIP_ONLY_CN_PRIVATE_URL = "$GITHUB_RAW_URL/Loyalsoldier/geoip/release/$GEOIP_ONLY_CN_PRIVATE_DAT"
 
+    /** Psiphon's signed server list, as its client downloads it: shipped by every build and kept beside the geo files. */
+    const val PSIPHON_SERVERS_DAT = "psiphon_servers.dat"
+    const val PSIPHON_SERVERS_URL = "https://s3.amazonaws.com//psiphon/web/mjr4-p23r-puwl/server_list_compressed"
+
+    /** When the bundled list was published, as the build recorded it from the download: seconds since the epoch. */
+    const val PSIPHON_SERVERS_STAMP = "psiphon_servers.stamp"
+
     /** Ports and addresses for various services. */
     const val PORT_LOCAL_DNS = "10853"
     const val PORT_SOCKS = "10808"
@@ -168,6 +178,7 @@ object AppConfig {
     const val WIREGUARD_LOCAL_ADDRESS_V4 = "172.16.0.2/32"
     const val WIREGUARD_LOCAL_ADDRESS_V6 = "2606:4700:110:8f81:d551:a0:532e:a2b3/128"
     const val WIREGUARD_LOCAL_MTU = "1420"
+    const val WIREGUARD_LOCAL_REMOTE_DNS = "1.1.1.1,1.0.0.1,2606:4700:4700::1111,2606:4700:4700::1001"
     const val LOOPBACK = "127.0.0.1"
 
     /** Shared defaults for settings shown in the UI and consumed by config generation. */
@@ -206,7 +217,6 @@ object AppConfig {
     /** Notification channel IDs and names. */
     // Use a new ID because Android does not let an app raise an existing channel's importance.
     const val RAY_NG_CHANNEL_ID = "CORE_M_CH_ID_V2"
-    const val RAY_NG_CHANNEL_NAME = "Core Background Service"
 
     /** Protocols Scheme **/
     const val VMESS = "vmess://"
@@ -278,6 +288,9 @@ object AppConfig {
     const val DEFAULT_PORT = 443
     const val DEFAULT_SECURITY = "auto"
     const val DEFAULT_NETWORK = "tcp"
+
+    /** Xray's default targetStrategy; a profile stores null for it and its outbound carries none. */
+    const val TARGET_STRATEGY_AS_IS = "AsIs"
     const val TLS = "tls"
     const val REALITY = "reality"
     const val HEADER_TYPE_HTTP = "http"

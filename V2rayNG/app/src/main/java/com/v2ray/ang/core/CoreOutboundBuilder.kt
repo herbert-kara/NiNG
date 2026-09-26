@@ -32,12 +32,13 @@ object CoreOutboundBuilder {
             EConfigType.WIREGUARD -> toOutboundWireguard(profileItem)
             EConfigType.HYSTERIA2 -> toOutboundHysteria2(profileItem)
             EConfigType.HTTP -> toOutboundHttp(profileItem)
-            EConfigType.AETHER -> toOutboundAether()
+            EConfigType.AETHER -> toOutboundAether(profileItem)
             else -> null
         }
 
         outbound ?: return null
         applyDialMode(outbound, profileItem)
+        applyTargetStrategy(outbound, profileItem)
         val ret = updateOutboundWithGlobalSettings(outbound)
         if (!ret) return null
         return outbound
@@ -58,6 +59,15 @@ object CoreOutboundBuilder {
             outbound.streamSettings = OutboundBean.StreamSettingsBean(network = null)
         }
         outbound.ensureSockopt().dialMode = dialMode
+    }
+
+    /**
+     * Copies the profile targetStrategy onto the outbound. Blank and AsIs, Xray's default, leave
+     * the field out, so a profile saved with the default emits nothing new.
+     */
+    internal fun applyTargetStrategy(outbound: OutboundBean, profileItem: ProfileItem) {
+        outbound.targetStrategy = profileItem.targetStrategy?.trim()
+            ?.takeIf { it.isNotEmpty() && !it.equals(AppConfig.TARGET_STRATEGY_AS_IS, ignoreCase = true) }
     }
 
     /** Applies global outbound options (mux, protocol-specific tweaks, etc.). */
@@ -233,12 +243,16 @@ object CoreOutboundBuilder {
         return outboundBean
     }
 
-    private fun toOutboundAether(): OutboundBean? {
+    /**
+     * A SOCKS outbound to the Aether core, on the port the app dials the core of the profile on. The
+     * core itself is named at the top of the configuration, as aetherCommand, once the configuration is built.
+     */
+    private fun toOutboundAether(profileItem: ProfileItem): OutboundBean? {
         val outboundBean = createInitOutbound(EConfigType.SOCKS)
 
         outboundBean?.settings?.let { settings ->
             settings.address = AppConfig.LOOPBACK
-            settings.port = AetherCoreManager.socksPort
+            settings.port = AetherCore.of(profileItem).port
         }
 
         return outboundBean
@@ -276,6 +290,22 @@ object CoreOutboundBuilder {
             ipv4Addresses.ifEmpty { listOf(AppConfig.WIREGUARD_LOCAL_ADDRESS_V4) }
         }
 
+        val rawDNS = profileItem.remoteDNS
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.ifEmpty { null }
+            ?: listOf(AppConfig.WIREGUARD_LOCAL_REMOTE_DNS)
+
+        val remotes = if (rawDNS.size == 1 && rawDNS[0] == "local") {
+            rawDNS
+        } else if (MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED) == true) {
+            rawDNS
+        } else {
+            val ipv4Dns = rawDNS.filter { !it.contains(":") }
+            ipv4Dns.ifEmpty { listOf(AppConfig.WIREGUARD_LOCAL_REMOTE_DNS) }
+        }
+
         outboundBean?.settings?.let { wireguard ->
             wireguard.secretKey = profileItem.secretKey
             wireguard.address = addresses
@@ -286,6 +316,7 @@ object CoreOutboundBuilder {
                 peer.endpoint = Utils.getIpv6Address(profileItem.server) + ":${profileItem.serverPort}"
             }
             wireguard.mtu = profileItem.mtu
+            wireguard.remoteDNS = remotes
             wireguard.reserved = profileItem.reserved?.takeIf { it.isNotBlank() }?.split(",")?.filter { it.isNotBlank() }?.map { it.trim().toInt() }
         }
 
@@ -594,6 +625,9 @@ object CoreOutboundBuilder {
         if (streamSettings.security == AppConfig.TLS) {
             streamSettings.tlsSettings = tlsSetting
             streamSettings.realitySettings = null
+            // PattNG: the ECH config query goes through the profile's ECH outbound, which
+            // EchOutbound.serialize checks, points echSockopt at and appends after every other outbound
+            tlsSetting.echOutbound = profileItem.echOutbound.nullIfBlank()
         } else if (streamSettings.security == AppConfig.REALITY) {
             streamSettings.tlsSettings = null
             streamSettings.realitySettings = tlsSetting

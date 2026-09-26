@@ -5,6 +5,7 @@ import android.text.TextUtils
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.R
 import com.v2ray.ang.dto.ConfigResult
 import com.v2ray.ang.dto.CoreConfigContext
 import com.v2ray.ang.dto.V2rayConfig
@@ -42,7 +43,9 @@ object CoreConfigManager {
             if (configContext.isCustom) {
                 return buildV2rayCustomConfig(configContext)
             }
-            return toConfigResult(configContext, buildUnifiedConfig(configContext))
+            val dependency = AetherDependency.of(configContext.resolvedOutbounds)
+            aetherFailure(context, guid, dependency)?.let { return it }
+            return toConfigResult(context, configContext, buildUnifiedConfig(configContext), dependency)
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to get V2ray config", e)
             return ConfigResult(
@@ -56,9 +59,11 @@ object CoreConfigManager {
     /**
      * Build a lightweight configuration for latency testing.
      *
-     * The core flow is reused, then non-essential sections are removed.
+     * The core flow is reused, then non-essential sections are removed. A configuration that runs
+     * on an Aether core is pointed at [aetherPort] when the test opens a core of its own; null
+     * leaves it on the port it was written for.
      */
-    fun getV2rayConfig4Speedtest(context: Context, guid: String): ConfigResult {
+    fun getV2rayConfig4Speedtest(context: Context, guid: String, aetherPort: Int? = null): ConfigResult {
         try {
             val configContext = CoreConfigContextBuilder.build(context, guid)
                 ?: return ConfigResult(
@@ -67,12 +72,18 @@ object CoreConfigManager {
                     errorMessage = "Failed to build config context"
                 )
             if (configContext.isCustom) {
-                return buildV2rayCustomConfig(configContext)
+                return buildV2rayCustomConfig(configContext, aetherPort)
             }
+            // Only the primary outbound is measured; the routing outbounds lose their rules below.
+            val dependency = AetherDependency.of(configContext.resolvedOutbounds.take(1))
+            aetherFailure(context, guid, dependency)?.let { return it }
             val v2rayConfig = buildUnifiedConfig(configContext)
             postProcessForSpeedtest(v2rayConfig)
+            if (aetherPort != null && dependency is AetherDependency.Single) {
+                rebindAetherOutbounds(v2rayConfig.outbounds, from = dependency.core.port, port = aetherPort)
+            }
 
-            return toConfigResult(configContext, v2rayConfig)
+            return toConfigResult(context, configContext, v2rayConfig, dependency, listeningOn = aetherPort)
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to get V2ray config for speedtest", e)
             return ConfigResult(
@@ -85,8 +96,11 @@ object CoreConfigManager {
 
     /**
      * Build configuration for custom profiles.
+     *
+     * A custom configuration asks for an Aether core with its command line as aetherCommand; the
+     * result names that core, and [aetherPort] moves its outbounds to the core a latency test opened.
      */
-    private fun buildV2rayCustomConfig(configContext: CoreConfigContext): ConfigResult {
+    private fun buildV2rayCustomConfig(configContext: CoreConfigContext, aetherPort: Int? = null): ConfigResult {
         val context = configContext.context
         val raw = MmkvManager.decodeServerRaw(configContext.guid)
             ?: return ConfigResult(
@@ -97,6 +111,15 @@ object CoreConfigManager {
         val result = ConfigResult(true, configContext.guid, raw)
 
         val json = JsonUtil.parseString(raw)?.takeIf { it.isJsonObject }?.asJsonObject ?: return result
+
+        val dependency = AetherDependency.ofCustom(json)
+        aetherFailure(context, configContext.guid, dependency)?.let { return it }
+        if (dependency is AetherDependency.Single) {
+            result.aetherCore = dependency.core
+            if (aetherPort != null) {
+                AetherDependency.rebindCustom(json, from = dependency.core.port, port = aetherPort)
+            }
+        }
 
         // Inject or remove traffic statistics configuration based on user preference
         if (MmkvManager.decodeSettingsBool(AppConfig.PREF_SPEED_ENABLED) == true) {
@@ -123,7 +146,7 @@ object CoreConfigManager {
         }
 
         if (!needTun()) {
-            return JsonUtil.toJsonPretty(json)?.let { ConfigResult(true, configContext.guid, it) } ?: result
+            return JsonUtil.toJsonPretty(json)?.let { result.copy(content = it) } ?: result
         }
 
         // Check whether package names need to be replaced with UIDs
@@ -167,7 +190,7 @@ object CoreConfigManager {
             }
         }
 
-        return JsonUtil.toJsonPretty(json)?.let { ConfigResult(true, configContext.guid, it) } ?: result
+        return JsonUtil.toJsonPretty(json)?.let { result.copy(content = it) } ?: result
     }
 
     /**
@@ -223,7 +246,6 @@ object CoreConfigManager {
 
         // User routing rules (policyGroupBalancerTags rewrites TAG_PROXY→balancer when main is POLICYGROUP).
         configureRouting(configContext, v2rayConfig, policyGroupBalancerTags)
-        configureFakeDns(v2rayConfig)
         configureDns(configContext, v2rayConfig, policyGroupBalancerTags)
         configureLocalDns(configContext, v2rayConfig)
         configureRootModeDns(v2rayConfig)
@@ -470,14 +492,80 @@ object CoreConfigManager {
     }
 
     /**
-     * Serialize a runtime configuration into a standard result object.
+     * Serialize a runtime configuration into a standard result object. The Aether core it runs on
+     * is written into it as aetherCommand, so that the exported configuration runs again as a custom
+     * one; [listeningOn] is the port of the core a latency test opened, when its outbounds were moved there.
+     * The ECH outbounds of its profiles are linked and appended as it is serialized; one that cannot be
+     * used fails it with a message from [context] meant for the screen.
      */
-    private fun toConfigResult(configContext: CoreConfigContext, v2rayConfig: V2rayConfig): ConfigResult {
+    private fun toConfigResult(
+        context: Context,
+        configContext: CoreConfigContext,
+        v2rayConfig: V2rayConfig,
+        dependency: AetherDependency,
+        listeningOn: Int? = null,
+    ): ConfigResult {
+        val core = (dependency as? AetherDependency.Single)?.core
+        v2rayConfig.aetherCommand = core?.let { if (listeningOn != null) it.on(listeningOn) else it }?.command
+        // PattNG: the ECH outbounds of the profiles get their tags and go after every other outbound, as written
+        val content = when (val serialized = EchOutbound.serialize(v2rayConfig)) {
+            is EchOutbound.Result.Done -> serialized.content
+            is EchOutbound.Result.Invalid -> return echOutboundFailure(configContext.guid, serialized, when (serialized.error) {
+                EchOutbound.Error.INVALID_JSON ->
+                    context.getString(R.string.toast_malformed_json_detail, context.getString(R.string.server_lab_ech_outbound))
+                EchOutbound.Error.NEEDS_ECH_CONFIG_LIST -> context.getString(R.string.toast_ech_outbound_needs_ech_config_list)
+                EchOutbound.Error.INVALID_TAG -> context.getString(R.string.toast_ech_outbound_invalid_tag)
+            })
+            is EchOutbound.Result.TagConflict -> return echOutboundFailure(
+                configContext.guid,
+                serialized,
+                context.getString(R.string.toast_ech_outbound_tag_conflict, serialized.tag),
+            )
+        }
         return ConfigResult(
             status = true,
             guid = configContext.guid,
-            content = JsonUtil.toJsonPretty(v2rayConfig) ?: ""
+            content = content,
+            aetherCore = core,
         )
+    }
+
+    /** PattNG: a configuration whose ECH outbound cannot be used, as a failure whose message is meant for the screen. */
+    private fun echOutboundFailure(guid: String, result: EchOutbound.Result, message: String): ConfigResult {
+        LogUtil.w(AppConfig.TAG, "ECH outbound cannot be used: $result, guid=$guid")
+        return ConfigResult(status = false, guid = guid, errorMessage = message, localizedError = true)
+    }
+
+    /**
+     * A configuration the one Aether core cannot serve, as a failure whose message is a resource
+     * string meant for the screen; null when the configuration is fine.
+     */
+    private fun aetherFailure(context: Context, guid: String, dependency: AetherDependency): ConfigResult? {
+        val message = when (dependency) {
+            AetherDependency.None, is AetherDependency.Single -> return null
+            AetherDependency.Conflicting -> context.getString(R.string.aether_config_single_profile)
+            is AetherDependency.NotEntryHop -> context.getString(R.string.aether_chain_entry_only)
+            is AetherDependency.UnusableCommand -> context.getString(R.string.aether_custom_invalid_command, dependency.written)
+            is AetherDependency.NoOutbound -> context.getString(R.string.aether_custom_no_outbound, AppConfig.LOOPBACK, dependency.port)
+        }
+        LogUtil.w(AppConfig.TAG, "Aether cannot serve this configuration: $dependency, guid=$guid")
+        return ConfigResult(status = false, guid = guid, errorMessage = message, localizedError = true)
+    }
+
+    /**
+     * Points every Aether outbound at [port] instead of [from], the port its profile listens on. A
+     * latency test of a configuration that runs on Aether opens a core of its own when the daemon's
+     * session is busy with another profile or absent, and that core listens on a port of its own.
+     */
+    internal fun rebindAetherOutbounds(outbounds: List<V2rayConfig.OutboundBean>, from: Int, port: Int) {
+        outbounds.forEach { outbound ->
+            val settings = outbound.settings ?: return@forEach
+            if (outbound.protocol.equals(EConfigType.SOCKS.name, ignoreCase = true) &&
+                settings.address == AppConfig.LOOPBACK && settings.port == from
+            ) {
+                settings.port = port
+            }
+        }
     }
 
     /**
@@ -586,17 +674,6 @@ object CoreConfigManager {
     }
 
     /**
-     * Enable fake DNS when local DNS and fake DNS are both enabled.
-     */
-    private fun configureFakeDns(v2rayConfig: V2rayConfig) {
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_LOCAL_DNS_ENABLED, true)
-            && MmkvManager.decodeSettingsBool(AppConfig.PREF_FAKE_DNS_ENABLED, true)
-        ) {
-            v2rayConfig.fakedns = listOf(V2rayConfig.FakednsBean())
-        }
-    }
-
-    /**
      * Collect domain rules that target one outbound tag.
      */
     private fun collectUserRuleDomainsByTag(tag: String): ArrayList<String> {
@@ -652,6 +729,7 @@ object CoreConfigManager {
                 .distinct()
             val finalDomain = geositeCn + routingDomains
             // fakedns with all domains to make it always top priority
+            // PattNG: no "fakedns" block, so Xray-core applies its default fake IP pools
             v2rayConfig.dns?.servers?.add(
                 0,
                 V2rayConfig.DnsBean.ServersBean(

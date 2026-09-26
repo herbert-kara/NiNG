@@ -11,6 +11,7 @@ import com.v2ray.ang.AppConfig.GEOIP_PRIVATE
 import com.v2ray.ang.AppConfig.GEOSITE_PRIVATE
 import com.v2ray.ang.AppConfig.TAG_DIRECT
 import com.v2ray.ang.AppConfig.VPN
+import com.v2ray.ang.core.PsiphonServerList
 import com.v2ray.ang.dto.V2rayConfig
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.dto.entities.RulesetItem
@@ -291,6 +292,15 @@ object SettingsManager {
         return getSocksPort() + if (Utils.isXray()) 0 else 1
     }
 
+    /**
+     * The loopback ports the local proxy is set to listen on, which nothing else the app starts can
+     * share. Empty while the SOCKS port is picked at random on every start: no port is known before
+     * the service runs then, and asking for one here would pick one for this process only.
+     */
+    fun getLocalProxyPorts(): Set<Int> {
+        return if (IsDynamicSocksPort()) emptySet() else setOf(getSocksPort(), getHttpPort())
+    }
+
     private fun IsDynamicSocksPort(): Boolean {
         return MmkvManager.decodeSettingsBool(AppConfig.PREF_DYNAMIC_SOCKS_PORT, false)
     }
@@ -309,9 +319,20 @@ object SettingsManager {
 
         try {
             val geo = arrayOf(AppConfig.GEOSITE_DAT, AppConfig.GEOIP_DAT, AppConfig.GEOIP_ONLY_CN_PRIVATE_DAT)
+            // The bundled Psiphon list is the newest the build could fetch. It goes over the copy only when it
+            // was published after the copy was made, never over a file the user picked, and the copy takes the
+            // list's publication time so that the next build is compared with the list, not with the copy.
+            val publishedAt = PsiphonServerList.publishedAt(
+                runCatching { assets.open(AppConfig.PSIPHON_SERVERS_STAMP).use { it.bufferedReader().readText() } }.getOrNull()
+            )
+            // "file" is the address the Asset files screen saves for a file the user picked.
+            val keptByUser = MmkvManager.decodeAssetUrls().any { it.assetUrl.remarks == AppConfig.PSIPHON_SERVERS_DAT && it.assetUrl.url == "file" }
             assets.list("")
-                ?.filter { geo.contains(it) }
-                ?.filter { !File(extFolder, it).exists() }
+                ?.filter { geo.contains(it) || it == AppConfig.PSIPHON_SERVERS_DAT }
+                ?.filter { name ->
+                    val copy = File(extFolder, name)
+                    if (name == AppConfig.PSIPHON_SERVERS_DAT) PsiphonServerList.bundledListGoesOver(copy, publishedAt, keptByUser) else !copy.exists()
+                }
                 ?.forEach {
                     val target = File(extFolder, it)
                     assets.open(it).use { input ->
@@ -319,6 +340,7 @@ object SettingsManager {
                             input.copyTo(output)
                         }
                     }
+                    if (it == AppConfig.PSIPHON_SERVERS_DAT && publishedAt > 0) target.setLastModified(publishedAt)
                     LogUtil.i(AppConfig.TAG, "Copied from apk assets folder to ${target.absolutePath}")
                 }
         } catch (e: Exception) {

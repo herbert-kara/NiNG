@@ -1,17 +1,26 @@
 package com.v2ray.ang.fmt
 
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.core.AetherCore
 import com.v2ray.ang.dto.AetherEndpoint
 import com.v2ray.ang.dto.AetherRange
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherIpVersion
 import com.v2ray.ang.enums.AetherObfuscation
 import com.v2ray.ang.enums.AetherProtocol
+import com.v2ray.ang.enums.AetherPsiphon
+import com.v2ray.ang.enums.AetherPsiphonCdnSet
+import com.v2ray.ang.enums.AetherPsiphonMode
 import com.v2ray.ang.enums.AetherScanMode
+import com.v2ray.ang.enums.AetherTor
+import com.v2ray.ang.enums.AetherTorBridges
+import com.v2ray.ang.enums.AetherTorRelays
 import com.v2ray.ang.enums.AetherTransport
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.idnHost
 import com.v2ray.ang.util.Utils
 import java.net.URI
+import java.util.Locale
 
 object AetherFmt : FmtBase() {
 
@@ -20,6 +29,16 @@ object AetherFmt : FmtBase() {
         INVALID_HOP,
         SHARED_HOP,
         INVALID_FRAGMENT,
+        INVALID_DNS,
+        INVALID_EXIT_LOC,
+        INVALID_LISTEN_PORT,
+        LISTEN_PORT_TAKEN,
+        PSIPHON_NEEDS_MASQUE,
+        NEXT_PORT_TAKEN,
+        TOR_NEEDS_MASQUE,
+        TOR_PSIPHON_CONFLICT,
+        TOR_BRIDGES_MISSING,
+        INVALID_COMMAND,
     }
 
     fun parse(str: String): ProfileItem? {
@@ -38,8 +57,23 @@ object AetherFmt : FmtBase() {
         config.aetherFragment = queryParam["fragment"] == "1"
         config.aetherFragmentSize = AetherRange.parse(queryParam["fragment_size"], AetherRange.FRAGMENT_SIZE)?.toString()
         config.aetherFragmentDelay = AetherRange.parse(queryParam["fragment_delay"], AetherRange.FRAGMENT_DELAY)?.toString()
+        config.aetherEch = queryParam["ech"] == "1"
+        config.aetherDns = queryParam["dns"]
+        config.aetherExitLoc = queryParam["exit_loc"]
+        config.aetherListenPort = listenPortOf(queryParam["listen"])?.let(::storedListenPort)
+        config.aetherPsiphon = AetherPsiphon.fromString(queryParam["psiphon"]).type.takeUnless { it == AetherPsiphon.OFF.type }
+        config.aetherPsiphonMode = queryParam["psiphon_mode"]?.let { AetherPsiphonMode.fromString(it).type }
+        config.aetherPsiphonCdnIps = queryParam["cdn_ips"]
+        config.aetherPsiphonCdnSni = queryParam["cdn_sni"]
+        config.aetherPsiphonCdnSets = queryParam["cdn_sets"]
+        config.aetherPsiphonRegion = queryParam["region"]
+        config.aetherPsiphonBundledList = if (queryParam["psiphon_bundled"] == "0") false else null
+        config.aetherTor = AetherTor.fromString(queryParam["tor"]).type.takeUnless { it == AetherTor.OFF.type }
+        config.aetherTorBridges = queryParam["tor_bridges"]?.let { AetherTorBridges.fromString(it).type }
+        config.aetherTorBridgeLines = queryParam["bridges"]?.split(';')?.joinToString("\n")
+        config.aetherTorRelays = queryParam["tor_relays"]?.let { AetherTorRelays.fromString(it).type }
 
-        if (protocol == AetherProtocol.GOOL) {
+        if (protocol.twoHops) {
             val outer = AetherEndpoint.parse(queryParam["outer"])
             val inner = AetherEndpoint.parse(queryParam["inner"])?.takeUnless { it.host == outer?.host }
             config.aetherWiwOuter = outer?.toString()
@@ -58,10 +92,13 @@ object AetherFmt : FmtBase() {
         val query = linkedMapOf(
             "protocol" to protocol.type,
             "scan" to AetherScanMode.fromString(config.aetherScanMode).type,
-            "noize" to AetherObfuscation.fromString(config.aetherObfuscation).type,
-            "ip" to AetherIpVersion.fromString(config.aetherIpVersion).type,
         )
-        if (protocol == AetherProtocol.MASQUE) {
+        // Automatic obfuscation is the core's own choice per protocol; a link says nothing about it.
+        AetherObfuscation.fromString(config.aetherObfuscation).takeUnless { it == AetherObfuscation.AUTO }?.let { query["noize"] = it.type }
+        query["ip"] = AetherIpVersion.fromString(config.aetherIpVersion).type
+        config.aetherDns?.takeIf { it.isNotBlank() }?.let { query["dns"] = it }
+        config.aetherExitLoc?.takeIf { it.isNotBlank() }?.let { query["exit_loc"] = it }
+        if (protocol.overMasque) {
             query["transport"] = AetherTransport.fromString(config.aetherTransport).type
             if (config.aetherFragment == true) {
                 query["fragment"] = "1"
@@ -70,22 +107,186 @@ object AetherFmt : FmtBase() {
                 AetherRange.parse(config.aetherFragmentDelay, AetherRange.FRAGMENT_DELAY)
                     ?.let { query["fragment_delay"] = it.toString() }
             }
+            if (config.aetherEch == true) query["ech"] = "1"
         }
-        if (protocol == AetherProtocol.GOOL) {
+        if (protocol.twoHops) {
             AetherEndpoint.parse(config.aetherWiwOuter)?.let { query["outer"] = it.toString() }
             AetherEndpoint.parse(config.aetherWiwInner)?.let { query["inner"] = it.toString() }
         }
-        val endpoint = AetherEndpoint.of(config.server, config.serverPort).takeUnless { protocol == AetherProtocol.GOOL }
+        listenPortOf(config.aetherListenPort)?.let(::storedListenPort)?.let { query["listen"] = it }
+        val psiphon = AetherPsiphon.fromString(config.aetherPsiphon)
+        if (psiphon != AetherPsiphon.OFF) {
+            query["psiphon"] = psiphon.type
+            query["psiphon_mode"] = AetherPsiphonMode.fromString(config.aetherPsiphonMode).type
+            config.aetherPsiphonCdnIps?.takeIf { it.isNotBlank() }?.let { query["cdn_ips"] = it }
+            config.aetherPsiphonCdnSni?.takeIf { it.isNotBlank() }?.let { query["cdn_sni"] = it }
+            config.aetherPsiphonCdnSets?.takeIf { it.isNotBlank() }?.let { query["cdn_sets"] = it }
+            config.aetherPsiphonRegion?.takeIf { it.isNotBlank() }?.let { query["region"] = it }
+            if (config.aetherPsiphonBundledList == false) query["psiphon_bundled"] = "0"
+        }
+        val tor = AetherTor.fromString(config.aetherTor)
+        if (tor != AetherTor.OFF) {
+            query["tor"] = tor.type
+            query["tor_bridges"] = AetherTorBridges.fromString(config.aetherTorBridges).type
+            query["tor_relays"] = AetherTorRelays.fromString(config.aetherTorRelays).type
+            // Bridge lines never hold a semicolon: the core itself separates them with one.
+            bridgeLines(config.aetherTorBridgeLines).takeIf { it.isNotEmpty() }?.let { query["bridges"] = it.joinToString(";") }
+        }
+        val endpoint = AetherEndpoint.of(config.server, config.serverPort).takeUnless { protocol.twoHops }
 
         val queryText = query.entries.joinToString("&") { "${it.key}=${Utils.encodeURIComponent(it.value)}" }
         return "${endpoint ?: ""}?$queryText#${Utils.encodeURIComponent(config.remarks)}"
     }
 
-    fun normalize(config: ProfileItem): Problem? =
-        normalizeFragment(config) ?: normalizeEndpoints(config)
+    /** The loopback port [text] names for the core to listen on, null when it names none. */
+    fun listenPortOf(text: String?): Int? = text?.trim()?.toIntOrNull()?.takeIf { it in 1..65535 }
+
+    /**
+     * The listen port as a profile stores it: nothing for the default, so a profile saved before
+     * the port could be chosen and one saved with the default stay the same profile.
+     */
+    fun storedListenPort(port: Int): String? = port.toString().takeUnless { it == AppConfig.PORT_AETHER_SOCKS }
+
+    /**
+     * [takenPorts] are loopback ports something else of the app listens on, the local proxy above
+     * all; the core of the profile cannot listen there as well.
+     */
+    fun normalize(config: ProfileItem, takenPorts: Set<Int> = emptySet()): Problem? =
+        normalizeFragment(config)
+            ?: normalizeEndpoints(config)
+            ?: normalizeDns(config)
+            ?: normalizeExitLoc(config)
+            ?: normalizePsiphon(config)
+            ?: normalizeTor(config)
+            ?: normalizeListenPort(config, takenPorts)
+            ?: normalizeCommand(config, takenPorts)
+
+    private fun normalizeListenPort(config: ProfileItem, takenPorts: Set<Int>): Problem? {
+        val text = config.aetherListenPort?.trim().orEmpty()
+        val port = listenPortOf(text)
+        if (text.isNotEmpty() && port == null) return Problem.INVALID_LISTEN_PORT
+        // The default port can be taken too, once the local proxy has been moved onto it.
+        val listen = port ?: AppConfig.PORT_AETHER_SOCKS.toInt()
+        if (listen in takenPorts) return Problem.LISTEN_PORT_TAKEN
+        // Psiphon inside the tunnel, Tor inside it and Tor around it each take one more port after the
+        // one the app dials, as AetherCoreManager.buildArguments hands them out.
+        val tor = AetherTor.fromString(config.aetherTor)
+        val more = listOf(
+            AetherPsiphon.fromString(config.aetherPsiphon) == AetherPsiphon.CHAIN,
+            tor == AetherTor.CHAIN,
+            tor == AetherTor.REVERSE,
+        ).count { it }
+        if (listen + more > 65535) return Problem.INVALID_LISTEN_PORT
+        if ((1..more).any { listen + it in takenPorts }) return Problem.NEXT_PORT_TAKEN
+        config.aetherListenPort = port?.let(::storedListenPort)
+        return null
+    }
+
+    /** The resolvers, each an address with or without a port, as the core reads them; written back comma-separated. */
+    private fun normalizeDns(config: ProfileItem): Problem? {
+        val resolvers = config.aetherDns.orEmpty().split(Regex("[,;\\s]+")).filter { it.isNotEmpty() }
+        if (resolvers.any { AetherEndpoint.parse(it) == null && AetherEndpoint.of(it, "53") == null }) return Problem.INVALID_DNS
+        config.aetherDns = resolvers.joinToString(",").ifEmpty { null }
+        return null
+    }
+
+    /** The exit rule as the core reads it: country codes to allow, or with a leading ! to refuse, kept in capitals. */
+    private fun normalizeExitLoc(config: ProfileItem): Problem? {
+        val rule = config.aetherExitLoc.orEmpty().filterNot { it.isWhitespace() }.uppercase(Locale.ROOT)
+        if (rule.isEmpty()) {
+            config.aetherExitLoc = null
+            return null
+        }
+        if (!exitRule.matches(rule)) return Problem.INVALID_EXIT_LOC
+        config.aetherExitLoc = rule
+        return null
+    }
+
+    private val exitRule = Regex("!?[A-Z]{2}(,[A-Z]{2})*")
+
+    private fun normalizePsiphon(config: ProfileItem): Problem? {
+        val psiphon = AetherPsiphon.fromString(config.aetherPsiphon)
+        if (psiphon == AetherPsiphon.OFF) {
+            config.aetherPsiphon = null
+            config.aetherPsiphonMode = null
+            config.aetherPsiphonCdnIps = null
+            config.aetherPsiphonCdnSni = null
+            config.aetherPsiphonCdnSets = null
+            config.aetherPsiphonRegion = null
+            config.aetherPsiphonBundledList = null
+            return null
+        }
+        // Psiphon carries TCP alone and WARP's WireGuard endpoints answer on UDP; the core refuses the pair.
+        if (psiphon == AetherPsiphon.REVERSE && !AetherProtocol.fromString(config.aetherProtocol).overMasque) {
+            return Problem.PSIPHON_NEEDS_MASQUE
+        }
+        config.aetherPsiphon = psiphon.type
+        config.aetherPsiphonMode = AetherPsiphonMode.fromString(config.aetherPsiphonMode).type
+        config.aetherPsiphonCdnIps = commaList(config.aetherPsiphonCdnIps)
+        config.aetherPsiphonCdnSni = commaList(config.aetherPsiphonCdnSni)
+        config.aetherPsiphonCdnSets = AetherPsiphonCdnSet.join(AetherPsiphonCdnSet.parse(config.aetherPsiphonCdnSets))
+        config.aetherPsiphonRegion = config.aetherPsiphonRegion?.trim()?.uppercase(Locale.ROOT)?.ifEmpty { null }
+        // Stored only when it says no; yes is the default and needs no word.
+        config.aetherPsiphonBundledList = config.aetherPsiphonBundledList?.takeUnless { it }
+        return null
+    }
+
+    private fun normalizeTor(config: ProfileItem): Problem? {
+        val tor = AetherTor.fromString(config.aetherTor)
+        if (tor == AetherTor.OFF) {
+            config.aetherTor = null
+            config.aetherTorBridges = null
+            config.aetherTorBridgeLines = null
+            config.aetherTorRelays = null
+            return null
+        }
+        // Tor carries TCP alone and WARP's WireGuard endpoints answer on UDP; the core refuses the pair.
+        if (tor == AetherTor.REVERSE && !AetherProtocol.fromString(config.aetherProtocol).overMasque) {
+            return Problem.TOR_NEEDS_MASQUE
+        }
+        // Tor and Psiphon go together only nested, one inside the tunnel and the other around it: two around
+        // it the core refuses, two inside it or one alone leaves the app nothing to dial the other on.
+        val psiphon = AetherPsiphon.fromString(config.aetherPsiphon)
+        val nested = psiphon == AetherPsiphon.OFF ||
+            (tor == AetherTor.CHAIN && psiphon == AetherPsiphon.REVERSE) ||
+            (tor == AetherTor.REVERSE && psiphon == AetherPsiphon.CHAIN)
+        if (!nested) return Problem.TOR_PSIPHON_CONFLICT
+        val bridges = AetherTorBridges.fromString(config.aetherTorBridges)
+        val lines = bridgeLines(config.aetherTorBridgeLines)
+        if (bridges == AetherTorBridges.OWN && lines.isEmpty()) return Problem.TOR_BRIDGES_MISSING
+        config.aetherTor = tor.type
+        config.aetherTorBridges = bridges.type
+        config.aetherTorBridgeLines = lines.takeIf { bridges == AetherTorBridges.OWN }?.joinToString("\n")
+        config.aetherTorRelays = AetherTorRelays.fromString(config.aetherTorRelays).type
+        return null
+    }
+
+    /**
+     * The bridge lines in [text], one per line the way torrc writes them, read as the core reads a
+     * bridge file: blank lines and comments dropped, a leading Bridge keyword taken off.
+     */
+    fun bridgeLines(text: String?): List<String> =
+        text.orEmpty().lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .map { it.removePrefix("Bridge ").removePrefix("bridge ").trim() }
+            .filter { it.isNotEmpty() }
+
+    /** A list as the core reads it, entries separated by commas or spaces, written back with commas alone. */
+    private fun commaList(text: String?): String? =
+        text?.split(Regex("[,\\s]+"))?.filter { it.isNotEmpty() }?.joinToString(",")?.ifEmpty { null }
+
+    /** A command written in place of the settings has to be one the app can run, on ports nothing else of the app holds. */
+    private fun normalizeCommand(config: ProfileItem, takenPorts: Set<Int>): Problem? {
+        val text = config.aetherCommand?.trim().orEmpty()
+        config.aetherCommand = text.ifEmpty { null }
+        if (text.isEmpty()) return null
+        val core = AetherCore.ofCommand(text) ?: return Problem.INVALID_COMMAND
+        return if (core.ports.any { it in takenPorts }) Problem.LISTEN_PORT_TAKEN else null
+    }
 
     private fun normalizeFragment(config: ProfileItem): Problem? {
-        val inUse = AetherProtocol.fromString(config.aetherProtocol) == AetherProtocol.MASQUE &&
+        val inUse = AetherProtocol.fromString(config.aetherProtocol).overMasque &&
             AetherTransport.fromString(config.aetherTransport) == AetherTransport.HTTP2 &&
             config.aetherFragment == true
         val sizeText = config.aetherFragmentSize?.trim().orEmpty()
@@ -101,7 +302,7 @@ object AetherFmt : FmtBase() {
     }
 
     private fun normalizeEndpoints(config: ProfileItem): Problem? {
-        if (AetherProtocol.fromString(config.aetherProtocol) == AetherProtocol.GOOL) {
+        if (AetherProtocol.fromString(config.aetherProtocol).twoHops) {
             val outerText = config.aetherWiwOuter?.trim().orEmpty()
             val innerText = config.aetherWiwInner?.trim().orEmpty()
             val outer = AetherEndpoint.parse(outerText)

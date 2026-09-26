@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.v2ray.ang.AppConfig.REALITY
 import com.v2ray.ang.AppConfig.TLS
 import com.v2ray.ang.R
+import com.v2ray.ang.core.EchOutbound
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.enums.NetworkType
@@ -105,20 +106,23 @@ abstract class BaseServerActivity : BaseComponentActivity() {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             FormTextField(
-                stringResource(R.string.server_lab_remarks),
-                state.remarks,
-                { state.remarks = it }
+                label = stringResource(R.string.server_lab_remarks),
+                value = state.remarks,
+                onValueChange = { state.remarks = it },
+                isError = state.isRemarksError
             )
             FormTextField(
-                stringResource(R.string.server_lab_address),
-                state.address,
-                { state.address = it }
+                label = stringResource(R.string.server_lab_address),
+                value = state.address,
+                onValueChange = { state.address = it },
+                isError = state.isAddressError
             )
             FormTextField(
-                stringResource(R.string.server_lab_port),
-                state.port,
-                { state.port = it },
-                keyboardType = KeyboardType.Number
+                label = stringResource(R.string.server_lab_port),
+                value = state.port,
+                onValueChange = { state.port = it },
+                keyboardType = KeyboardType.Number,
+                isError = state.isPortError
             )
         }
     }
@@ -255,6 +259,17 @@ abstract class BaseServerActivity : BaseComponentActivity() {
         )
     }
 
+    /** targetStrategy is an option of every Xray outbound, so every protocol offers it. */
+    @Composable
+    protected fun CommonTargetStrategyField(state: ServerUiState) {
+        FormDropdownField(
+            stringResource(R.string.server_lab_target_strategy),
+            state.targetStrategy,
+            stringArrayResource(R.array.target_strategy_values).toList(),
+            { state.targetStrategy = it }
+        )
+    }
+
     @Composable
     protected fun CommonStreamSecurityFields(
         state: ServerUiState,
@@ -308,6 +323,11 @@ abstract class BaseServerActivity : BaseComponentActivity() {
                     stringResource(R.string.server_lab_ech_config_list),
                     state.echConfigList,
                     { state.echConfigList = it }
+                )
+                FormTextField(
+                    stringResource(R.string.server_lab_ech_outbound),
+                    state.echOutbound,
+                    { state.echOutbound = it }
                 )
                 FormTextField(
                     stringResource(R.string.server_lab_verify_peer_cert_by_name),
@@ -381,33 +401,27 @@ abstract class BaseServerActivity : BaseComponentActivity() {
     }
 
     protected open fun validateBasicConfig(state: ServerUiState): Boolean {
-        if (state.remarks.isBlank()) {
-            toast(R.string.server_lab_remarks)
-            return false
-        }
-        if (state.address.isBlank()) {
-            toast(R.string.server_lab_address)
-            return false
-        }
-        if (
-            state.configType != EConfigType.HYSTERIA2 &&
-            (state.port.toIntOrNull() ?: 0) <= 0
-        ) {
-            toast(R.string.server_lab_port)
-            return false
-        }
-        return true
+        val remarksErr = state.remarks.isBlank()
+        val addressErr = state.address.isBlank()
+        val portErr = state.configType != EConfigType.HYSTERIA2 && (state.port.toIntOrNull() ?: 0) <= 0
+
+        state.isRemarksError = remarksErr
+        state.isAddressError = addressErr
+        state.isPortError = portErr
+
+        val hasError = remarksErr || addressErr || portErr
+        return !hasError
     }
 
     protected open fun validateProtocolConfig(config: ProfileItem): Boolean = true
 
-    protected open fun validateCommonConfig(config: ProfileItem): Boolean {
+    protected open fun validateCommonConfig(state: ServerUiState, config: ProfileItem): Boolean {
 
         if (config.password.isNullOrBlank()) {
+            state.isPasswordError = true
             if (config.configType == EConfigType.VMESS ||
                 config.configType == EConfigType.VLESS
             ) {
-                toast(R.string.server_lab_id)
                 return false
             }
 
@@ -415,7 +429,6 @@ abstract class BaseServerActivity : BaseComponentActivity() {
                 config.configType == EConfigType.SHADOWSOCKS ||
                 config.configType == EConfigType.HYSTERIA2
             ) {
-                toast(R.string.server_lab_id3)
                 return false
             }
         }
@@ -435,13 +448,24 @@ abstract class BaseServerActivity : BaseComponentActivity() {
             toast(R.string.server_lab_final_mask)
             return false
         }
+        // PattNG: the ECH outbound is an outbound JSON object with a tag of its own, used with echConfigList
+        val echOutboundError = when (EchOutbound.validate(config)) {
+            null -> null
+            EchOutbound.Error.INVALID_JSON -> R.string.server_lab_ech_outbound
+            EchOutbound.Error.NEEDS_ECH_CONFIG_LIST -> R.string.toast_ech_outbound_needs_ech_config_list
+            EchOutbound.Error.INVALID_TAG -> R.string.toast_ech_outbound_invalid_tag
+        }
+        if (echOutboundError != null) {
+            toast(echOutboundError)
+            return false
+        }
         return true
     }
 
     protected fun saveServer(state: ServerUiState): Boolean {
         if (!validateBasicConfig(state)) return false
         val config = state.toProfileItem(initialConfig)
-        if (!validateCommonConfig(config)) return false
+        if (!validateCommonConfig(state, config)) return false
         if (!validateProtocolConfig(config)) return false
 
         config.description = AngConfigManager.generateDescription(config)
@@ -507,6 +531,7 @@ abstract class BaseServerActivity : BaseComponentActivity() {
         if (showDeleteDialog) {
             DeleteConfirmDialog(
                 message = stringResource(R.string.confirm_delete_profile),
+                itemName = initialConfig.remarks,
                 onConfirm = {
                     showDeleteDialog = false
                     deleteServer(editGuid)

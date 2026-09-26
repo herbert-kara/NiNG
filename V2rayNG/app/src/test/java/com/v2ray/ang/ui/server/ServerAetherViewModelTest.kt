@@ -39,15 +39,21 @@ class ServerAetherViewModelTest {
         var session: AetherSession? = null
         var scanner: suspend (ProfileItem, (String) -> Unit) -> AetherScanResult? = { _, _ -> null }
         var renewer: suspend (ProfileItem, (String) -> Unit) -> AetherIdentityStatus? = { _, _ -> null }
+        var clearer: suspend () -> Boolean = { true }
+        var regions: List<String> = emptyList()
         val identities = mutableMapOf<AetherProtocol, AetherIdentityStatus>()
 
         override suspend fun isCoreAvailable() = available
+        override suspend fun isPsiphonAvailable(): Boolean = false
+        override suspend fun isTorTransportsAvailable(): Boolean = false
         override suspend fun activeSession() = session
         override suspend fun scan(profile: ProfileItem, onOutput: (String) -> Unit) = scanner(profile, onOutput)
         override suspend fun identityStatus(protocol: AetherProtocol) =
             identities[protocol] ?: AetherIdentityStatus(protocol, null)
 
         override suspend fun renewIdentity(profile: ProfileItem, onOutput: (String) -> Unit) = renewer(profile, onOutput)
+        override suspend fun clearPsiphonData() = clearer()
+        override suspend fun psiphonRegions() = regions
     }
 
     private val source = FakeSource()
@@ -237,16 +243,18 @@ class ServerAetherViewModelTest {
     }
 
     @Test
-    fun goolReportsBothHopKeys() {
-        val status = AetherIdentityStatus(AetherProtocol.GOOL, oldKey, null)
+    fun aTwoHopProtocolReportsBothHopKeys() {
+        for (protocol in listOf(AetherProtocol.GOOL, AetherProtocol.MIM)) {
+            val status = AetherIdentityStatus(protocol, oldKey, null)
 
-        assertEquals(
-            listOf(
-                resource(R.string.aether_log_outer_key_ready, "a1b2c3d4…", "172.16.0.2", "2606:4700:110:8a36::1"),
-                resource(R.string.aether_log_inner_key_missing),
-            ),
-            ServerAetherViewModel.identityLines(status)
-        )
+            assertEquals(
+                listOf(
+                    resource(R.string.aether_log_outer_key_ready, "a1b2c3d4…", "172.16.0.2", "2606:4700:110:8a36::1"),
+                    resource(R.string.aether_log_inner_key_missing),
+                ),
+                ServerAetherViewModel.identityLines(status)
+            )
+        }
     }
 
     @Test
@@ -280,6 +288,41 @@ class ServerAetherViewModelTest {
         source.session = AetherSession(AetherProtocol.MASQUE)
 
         assertEquals(AetherSession(AetherProtocol.MASQUE), viewModel().session.value)
+    }
+
+    @Test
+    fun theExitCountriesOnOfferComeFromTheServerList() {
+        assertTrue(viewModel().psiphonRegions.value.isEmpty())
+        source.regions = listOf("DE", "US")
+        assertEquals(listOf("DE", "US"), viewModel().psiphonRegions.value)
+    }
+
+    @Test
+    fun psiphonDataIsNotClearedUnderALiveSessionAndTheLogTellsTheOutcome() {
+        var clears = 0
+        source.clearer = { clears++; true }
+        val viewModel = viewModel()
+
+        source.session = AetherSession(AetherProtocol.MASQUE)
+        viewModel.clearPsiphonData()
+        assertEquals(0, clears)
+        val blocked = viewModel.log.value.single()
+        assertEquals(resource(R.string.aether_psiphon_clear_blocked), blocked.text)
+        assertEquals(Log.WARN, blocked.priority)
+
+        source.session = null
+        viewModel.clearPsiphonData()
+        assertEquals(1, clears)
+        val cleared = viewModel.log.value.last()
+        assertEquals(resource(R.string.aether_log_psiphon_cleared), cleared.text)
+        assertEquals(Log.INFO, cleared.priority)
+
+        source.clearer = { clears++; false }
+        viewModel.clearPsiphonData()
+        assertEquals(2, clears)
+        val failed = viewModel.log.value.last()
+        assertEquals(resource(R.string.aether_log_psiphon_clear_failed), failed.text)
+        assertEquals(Log.ERROR, failed.priority)
     }
 
     @Test

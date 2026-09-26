@@ -46,6 +46,18 @@ class ServerAetherViewModel(
     private val _isCoreAvailable = MutableStateFlow(true)
     val isCoreAvailable: StateFlow<Boolean> = _isCoreAvailable.asStateFlow()
 
+    /** Whether this build ships the Psiphon client; false until looked up, so nothing claims it does. */
+    private val _isPsiphonAvailable = MutableStateFlow(false)
+    val isPsiphonAvailable: StateFlow<Boolean> = _isPsiphonAvailable.asStateFlow()
+
+    /** Whether this build ships the pluggable transport Tor's bridges run through; false until looked up. */
+    private val _isTorTransportsAvailable = MutableStateFlow(false)
+    val isTorTransportsAvailable: StateFlow<Boolean> = _isTorTransportsAvailable.asStateFlow()
+
+    /** The exit countries Psiphon can be asked for, from the app's server list; empty until looked up or without a list. */
+    private val _psiphonRegions = MutableStateFlow<List<String>>(emptyList())
+    val psiphonRegions: StateFlow<List<String>> = _psiphonRegions.asStateFlow()
+
     private val _scanState = MutableStateFlow<AetherScanState>(AetherScanState.Idle)
     val scanState: StateFlow<AetherScanState> = _scanState.asStateFlow()
 
@@ -68,6 +80,9 @@ class ServerAetherViewModel(
 
     init {
         viewModelScope.launch { _isCoreAvailable.value = source.isCoreAvailable() }
+        viewModelScope.launch { _isPsiphonAvailable.value = source.isPsiphonAvailable() }
+        viewModelScope.launch { _isTorTransportsAvailable.value = source.isTorTransportsAvailable() }
+        viewModelScope.launch { _psiphonRegions.value = source.psiphonRegions() }
         refreshSession()
     }
 
@@ -138,6 +153,25 @@ class ServerAetherViewModel(
         }
     }
 
+    /** Forgets what Psiphon has learned, unless a session runs on it; the outcome goes to the log. */
+    fun clearPsiphonData() {
+        if (isBusy) return
+        viewModelScope.launch {
+            // Checked again at the tap, the session may have come up after the screen opened.
+            val session = source.activeSession()
+            _session.value = session
+            if (session != null) {
+                append(Log.WARN, AetherLogText.Resource(R.string.aether_psiphon_clear_blocked))
+                return@launch
+            }
+            val cleared = source.clearPsiphonData()
+            append(
+                if (cleared) Log.INFO else Log.ERROR,
+                AetherLogText.Resource(if (cleared) R.string.aether_log_psiphon_cleared else R.string.aether_log_psiphon_clear_failed),
+            )
+        }
+    }
+
     private fun reportIdentity(status: AetherIdentityStatus, onlyChanges: Boolean) {
         if (onlyChanges && status == reportedIdentity) return
         reportedIdentity = status
@@ -182,7 +216,7 @@ class ServerAetherViewModel(
                 keyLine(status.primary, R.string.aether_log_wireguard_key_ready, R.string.aether_log_wireguard_key_missing)
             )
 
-            AetherProtocol.GOOL -> listOf(
+            AetherProtocol.GOOL, AetherProtocol.MIM -> listOf(
                 keyLine(status.primary, R.string.aether_log_outer_key_ready, R.string.aether_log_outer_key_missing),
                 keyLine(status.secondary, R.string.aether_log_inner_key_ready, R.string.aether_log_inner_key_missing),
             )

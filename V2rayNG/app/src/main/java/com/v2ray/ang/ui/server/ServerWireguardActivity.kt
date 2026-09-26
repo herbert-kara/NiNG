@@ -31,6 +31,7 @@ class ServerWireguardActivity : BaseServerActivity() {
             CommonBasicFields(uiState)
             WireguardProtocolFields(uiState)
             CommonDialModeField(uiState)
+            CommonTargetStrategyField(uiState)
 
         }
     }
@@ -73,6 +74,12 @@ class ServerWireguardActivity : BaseServerActivity() {
             stringResource(R.string.server_lab_final_mask),
             state.finalMask,
             { state.finalMask = it }
+        )
+
+        FormTextField(
+            stringResource(R.string.server_lab_remote_dns),
+            state.remoteDNS,
+            { state.remoteDNS = it }
         )
     }
 }

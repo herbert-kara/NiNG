@@ -14,6 +14,9 @@
     <string name="pull_down_to_refresh">برای بروزرسانی، صفحه را به پایین بکشید!</string>
 
     <!-- Notifications -->
+    <string name="notification_channel_service">سرویس NiNG</string>
+    <string name="notification_channel_subscription_updates">به‌روزرسانی اشتراک‌ها</string>
+    <string name="notification_channel_connection_checks">بررسی اتصال</string>
     <string name="notification_action_stop_v2ray">توقف</string>
     <string name="toast_permission_denied">امکان دریافت مجوز وجود ندارد</string>
     <string name="toast_permission_denied_notification">امکان دریافت مجوز ارسال اعلان وجود ندارد</string>
@@ -50,7 +53,7 @@
     <string name="confirm_delete_proxy_chain_member">آیا مطمئن هستید که می‌خواهید این عضو زنجیره پراکسی را حذف کنید؟</string>
     <string name="confirm_delete_routing_rule">آیا مطمئن هستید که می‌خواهید این قانون مسیریابی را حذف کنید؟</string>
     <string name="confirm_delete_subscription_group">آیا مطمئن هستید که می‌خواهید این گروه اشتراک را حذف کنید؟</string>
-    <string name="confirm_delete_asset_file">آیا مطمئن هستید که می‌خواهید فایل دارایی \"%1$s\" را حذف کنید؟</string>
+    <string name="confirm_delete_asset_file">آیا مطمئن هستید که می‌خواهید این فایل دارایی را حذف کنید؟</string>
     <string name="confirm_delete_asset_source">آیا مطمئن هستید که می‌خواهید این منبع دارایی را حذف کنید؟</string>
     <string name="server_lab_remarks">ملاحظات</string>
     <string name="server_lab_address">نشانی</string>
@@ -101,6 +104,7 @@
     <string name="server_lab_reserved">Reserved (اختیاری، جدا شده با کاما)</string>
     <string name="server_lab_local_address">آدرس محلی (IPv4/IPv6 اختیاری، جدا شده با کاما)</string>
     <string name="server_lab_local_mtu">MTU (اختیاری، پیش‌فرض 1420)</string>
+    <string name="server_lab_remote_dns">remoteDNS (اختیاری، آدرس‌های IPv4/IPv6 جدا شده با کاما، یا "local" برای استفاده از DNS دستگاه)</string>
     <string name="server_lab_kcp_mtu">mKCP MTU (اختیاری، پیش‌فرض 1350)</string>
     <string name="server_lab_kcp_tti">mKCP TTI (اختیاری، پیش‌فرض 50 میلی‌ثانیه)</string>
     <string name="toast_success">موفقیت‌آمیز</string>
@@ -130,6 +134,10 @@
     <string name="server_lab_final_mask">JSON خام finalMask، قالب: { FinalMaskObject }</string>
     <string name="server_lab_dial_mode" translatable="false">dialMode</string>
     <string name="server_lab_ech_config_list" translatable="false">echConfigList</string>
+    <string name="server_lab_ech_outbound">JSON خام echOutbound، قالب: { OutboundObject }</string>
+    <string name="toast_ech_outbound_needs_ech_config_list">echOutbound به echConfigList نیاز دارد</string>
+    <string name="toast_ech_outbound_invalid_tag">echOutbound باید یک \"tag\" غیرخالی داشته باشد که direct یا block نباشد و با proxy شروع نشود</string>
+    <string name="toast_ech_outbound_tag_conflict">تگ \"%1$s\" در echOutbound قبلاً توسط outbound دیگری استفاده شده است</string>
     <string name="server_lab_verify_peer_cert_by_name">تأیید گواهی همتا بر اساس نام</string>
     <string name="server_lab_pinned_ca256">اثر انگشت گواهی (SHA-256)</string>
     <string name="server_lab_browser_dialer">فعال‌سازی Browser Dialer</string>
@@ -567,6 +575,7 @@
     <string name="aether_lab_scan_mode">حالت اسکن</string>
     <string name="aether_lab_obfuscation">مبهم‌سازی</string>
     <string name="aether_lab_ip_version">نسخه IP</string>
+    <string name="aether_lab_listen_port">پورت شنود</string>
     <string name="aether_lab_fragment">تکه‌تکه کردن ClientHello</string>
     <string name="aether_lab_fragment_size">اندازه تکه‌ها (بایت)</string>
     <string name="aether_lab_fragment_delay">تأخیر بین تکه‌ها (میلی‌ثانیه)</string>
@@ -581,6 +590,47 @@
     <string name="aether_invalid_hop">نشانی و پورت را با هم بنویسید، مثل 162.159.192.1:2408</string>
     <string name="aether_same_hop">دو مسیر باید نشانی متفاوت داشته باشند</string>
     <string name="aether_invalid_fragment">یک عدد یا بازه مثل 16-32 بنویسید: اندازه 1 تا 4096 بایت، تأخیر 0 تا 1000 میلی‌ثانیه</string>
+    <string name="aether_invalid_listen_port">یک پورت شنود از 1 تا 65535 وارد کنید، یا برای پورت پیش‌فرض آن را خالی بگذارید</string>
+    <string name="aether_listen_port_taken">پورت شنود نباید با پورت پروکسی محلی برنامه یکسان باشد</string>
+    <string name="aether_lab_psiphon">سایفون</string>
+    <string name="aether_lab_psiphon_mode">نحوه اتصال سایفون</string>
+    <string name="aether_lab_psiphon_cdn_ips">آی‌پی‌های CDN</string>
+    <string name="aether_lab_psiphon_cdn_sni">نام سرورهای CDN (SNI)</string>
+    <string name="aether_hint_psiphon_list">با کاما جدا کنید؛ خالی بگذارید تا فهرست داخلی استفاده شود</string>
+    <string name="aether_lab_psiphon_region">کشور خروجی</string>
+    <string name="aether_psiphon_region_any">هر کشوری</string>
+    <string name="aether_lab_psiphon_bundled_list">شروع از فهرست سرورهای همراه برنامه</string>
+    <string name="aether_hint_psiphon_bundled_list">روشن: سایفون بی‌درنگ سرورهای psiphon_servers.dat را امتحان می‌کند و فهرست تازه را فقط وقتی می‌گیرد که آن‌ها کار نکنند. خاموش: پیش از نخستین اتصال فهرست تازه را می‌گیرد، پس فهرست باید در دسترس باشد، مثلاً از پشت WARP</string>
+    <string name="aether_action_clear_psiphon">پاک کردن داده‌های سایفون</string>
+    <string name="aether_hint_clear_psiphon">سرورهایی که سایفون یاد گرفته و فهرست‌هایی که گرفته فراموش می‌شوند. شروع بعدی دوباره از فهرست همراه برنامه است، یا اگر گزینهٔ بالا خاموش باشد، از یک دریافت تازه</string>
+    <string name="aether_log_psiphon_cleared">داده‌های سایفون پاک شد</string>
+    <string name="aether_log_psiphon_clear_failed">داده‌های سایفون پاک نشد</string>
+    <string name="aether_psiphon_clear_blocked">پیش از پاک کردن داده‌های سایفون، اتصال Aether را قطع کنید؛ اتصال فعلی از آن‌ها استفاده می‌کند</string>
+    <string name="aether_psiphon_unavailable">این نسخه کلاینت سایفون را ندارد؛ پروفایلی که از سایفون استفاده کند نمی‌تواند وصل شود</string>
+    <string name="aether_psiphon_needs_masque">حالت «اول سایفون، بعد WARP» فقط با پروتکل MASQUE کار می‌کند</string>
+    <string name="aether_next_port_taken">با تور یا سایفون در مسیر، هسته پورت‌های بعد از پورت گوش‌دادن را هم استفاده می‌کند؛ هیچ‌کدام نمی‌تواند پورت پروکسی محلی برنامه باشد</string>
+    <string name="aether_lab_tor">تور (Tor)</string>
+    <string name="aether_lab_tor_bridges">پل‌ها</string>
+    <string name="aether_lab_tor_bridge_lines">خط‌های پل</string>
+    <string name="aether_hint_tor_bridge_lines">هر خط یک پل، مانند torrc: obfs4 1.2.3.4:443 FINGERPRINT cert=… iat-mode=0</string>
+    <string name="aether_tor_transports_unavailable">این نسخه انتقال‌های اتصال‌پذیر (pluggable transport) را ندارد، پس پل‌های تور قابل استفاده نیستند؛ تور فقط جایی وصل می‌شود که مسدود نباشد</string>
+    <string name="aether_tor_needs_masque">حالت «اول تور، بعد WARP» فقط با پروتکل MASQUE کار می‌کند</string>
+    <string name="aether_tor_psiphon_conflict">تور و سایفون فقط به این شکل با هم کار می‌کنند: یکی درون تونل و دیگری دور آن</string>
+    <string name="aether_tor_bridges_missing">دست‌کم یک خط پل بنویسید، یا تنظیم دیگری برای پل‌ها انتخاب کنید</string>
+    <string name="aether_lab_ech">Encrypted Client Hello (ECH)</string>
+    <string name="aether_hint_ech">نام سرور را در دست‌دهی MASQUE پنهان می‌کند، وقتی کلید آن قابل دریافت باشد</string>
+    <string name="aether_lab_dns">DNS درون تونل</string>
+    <string name="aether_hint_dns">با کاما جدا کنید؛ خالی بگذارید تا 1.1.1.1 و 1.0.0.1 استفاده شود</string>
+    <string name="aether_invalid_dns">نشانی‌های DNS مانند 1.1.1.1 یا 10.0.0.1:5353 را با کاما جدا بنویسید</string>
+    <string name="aether_lab_exit_loc">کشور خروجی تونل</string>
+    <string name="aether_hint_exit_loc">DE,SE فقط همان‌ها را مجاز می‌کند؛ !IR,RU آن‌ها را رد می‌کند؛ خالی یعنی هر کشوری</string>
+    <string name="aether_invalid_exit_loc">کدهای دوحرفی کشور را با کاما جدا بنویسید، با ! در ابتدا برای رد کردن</string>
+    <string name="aether_lab_tor_relays">منبع پل‌ها</string>
+    <string name="aether_lab_advanced">تنظیمات پیشرفته</string>
+    <string name="aether_lab_command">فرمان Aether</string>
+    <string name="aether_command_custom">دستی ویرایش شده: این فرمان همان‌طور که نوشته شده اجرا می‌شود و تنظیمات بالا اعمال نمی‌شوند</string>
+    <string name="aether_action_use_settings">استفاده از تنظیمات</string>
+    <string name="aether_invalid_command">فرمان باید آرگومان‌های هسته Aether را داشته باشد و پورت گوش‌دادن پس از --bind بیاید</string>
     <string name="aether_unsupported_abi">هسته Aether برای این دستگاه در دسترس نیست</string>
     <string name="aether_core_stopped">هسته Aether متوقف شده است</string>
     <string name="aether_core_connecting">هسته Aether هنوز در حال اتصال است</string>
@@ -607,19 +657,68 @@
     <string name="aether_log_inner_key_missing">کلید مسیر درونی: هنوز ثبت نشده؛ در اولین اسکن یا اتصال ثبت می‌شود</string>
     <string name="aether_renew_blocked">پیش از دریافت کلید جدید WARP، اتصال Aether را قطع کنید؛ اتصال فعلی از کلید کنونی استفاده می‌کند</string>
     <string name="aether_scan_blocked">پیش از اسکن، اتصال Aether را قطع کنید؛ اسکن یک تونل دوم با کلید اتصال فعلی باز می‌کند</string>
+    <string name="aether_chain_entry_only">پروفایل Aether فقط می‌تواند نخستین گام زنجیره پروکسی باشد؛ گامی که مستقیماً به اینترنت می‌رسد</string>
+    <string name="aether_config_single_profile">یک پیکربندی فقط می‌تواند از یک پروفایل Aether استفاده کند</string>
+    <string name="aether_custom_no_outbound">هیچ خروجی SOCKS در پیکربندی به %1$s:%2$d وصل نمی‌شود؛ فرمان Aether همان‌جا گوش می‌دهد</string>
+    <string name="aether_custom_invalid_command">aetherCommand باید خط فرمان هسته Aether به صورت متن باشد و نشانی گوش‌دادن آن پس از --bind بیاید: %1$s</string>
     <string name="title_aether_core">هسته Aether</string>
     <string name="summary_aether_core">کلاینت WARP ساخته CluvexStudio که با مجوز AGPL-3.0 همراه برنامه است. برای دیدن کد منبع ضربه بزنید.</string>
     <string-array name="aether_scan_entries">
         <item>توربو</item>
         <item>متعادل</item>
         <item>دقیق</item>
-        <item>پنهانی</item>
+        <item>تأییدشده</item>
         <item>تضمینی</item>
     </string-array>
+    <string-array name="aether_psiphon_entries">
+        <item>خاموش</item>
+        <item>اول WARP، بعد سایفون</item>
+        <item>اول سایفون، بعد WARP</item>
+        <item>فقط سایفون</item>
+    </string-array>
+    <string name="aether_lab_psiphon_cdn_sets">فهرست‌های لبهٔ CDN برای اسکن</string>
+    <string name="aether_hint_psiphon_cdn_sets">کدام فهرست‌های لبهٔ داخلی سایفون در اسکن فرانتینگ امتحان شوند. هیچ‌کدام یعنی همه؛ در کنار IPهای خودتان، پس از آن‌ها امتحان می‌شوند</string>
+    <string name="aether_psiphon_cdn_sets_all">همهٔ فهرست‌های داخلی سایفون</string>
+    <string-array name="aether_psiphon_cdn_set_entries">
+        <item>Cloudflare</item>
+        <item>Fastly</item>
+        <item>CloudFront</item>
+        <item>Akamai (فهرست سایفون)</item>
+        <item>Bunny (فهرست سایفون)</item>
+        <item>Vercel</item>
+        <item>GitHub</item>
+        <item>لبه‌های گزینش‌شدهٔ فرانتینگ</item>
+        <item>بازنویسی‌های قدیمی اندروید</item>
+    </string-array>
+    <string-array name="aether_psiphon_mode_entries">
+        <item>خودکار</item>
+        <item>فقط از طریق CDN</item>
+        <item>فقط مستقیم</item>
+    </string-array>
+    <string-array name="aether_tor_entries">
+        <item>خاموش</item>
+        <item>اول WARP، بعد تور</item>
+        <item>اول تور، بعد WARP</item>
+        <item>فقط تور</item>
+    </string-array>
+    <string-array name="aether_tor_bridges_entries">
+        <item>وقتی تور مسدود است</item>
+        <item>از همان ابتدا</item>
+        <item>هرگز</item>
+        <item>خط‌های پل خودم</item>
+    </string-array>
+    <string-array name="aether_tor_relays_entries">
+        <item>bridgedb و رله‌های عمومی</item>
+        <item>فقط رله‌های عمومی</item>
+        <item>فقط bridgedb</item>
+    </string-array>
     <string-array name="aether_obfuscation_entries">
+        <item>خودکار</item>
         <item>خاموش</item>
         <item>سبک</item>
+        <item>فایروال</item>
         <item>متعادل</item>
+        <item>GFW</item>
         <item>شدید</item>
     </string-array>
 

@@ -4,7 +4,10 @@ import com.v2ray.ang.core.AetherDelayTester.Route
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherProtocol
 import com.v2ray.ang.enums.EConfigType
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.DataInputStream
@@ -20,24 +23,33 @@ class AetherDelayTesterTest {
     private fun aether(protocol: AetherProtocol) =
         ProfileItem.create(EConfigType.AETHER).apply { aetherProtocol = protocol.type }
 
-    private fun session(protocol: AetherProtocol, running: ProfileItem? = null, listening: Boolean = true) =
-        AetherDelayTester.LiveSession(protocol, running?.let { AetherCoreManager.buildArguments(it, AetherCoreManager.socksPort) }, listening)
+    private fun session(
+        protocol: AetherProtocol,
+        running: ProfileItem? = null,
+        listening: Boolean = true,
+        port: Int = AetherCoreManager.socksPort,
+    ) = AetherDelayTester.LiveSession(protocol, running?.let { AetherCoreManager.buildArguments(it, port) }, port, listening)
 
     @Test
     fun withoutAnAetherSessionEachTestGetsItsOwnTunnel() {
         val masque = aether(AetherProtocol.MASQUE)
-        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("a", masque, "a", session = null))
-        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("a", masque, null, session = null))
+        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("a", AetherCore.of(masque), "a", session = null))
+        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("a", AetherCore.of(masque), null, session = null))
     }
 
     @Test
     fun theRunningProfileIsMeasuredThroughTheLiveSession() {
         val wireguard = aether(AetherProtocol.WIREGUARD).apply { server = "162.159.192.1"; serverPort = "2408" }
         // Told by the session's arguments, whichever profile is selected.
-        assertEquals(Route.ACTIVE_SESSION, AetherDelayTester.route("a", wireguard, "b", session(AetherProtocol.WIREGUARD, wireguard)))
+        assertEquals(Route.ACTIVE_SESSION, AetherDelayTester.route("a", AetherCore.of(wireguard), "b", session(AetherProtocol.WIREGUARD, wireguard)))
         // Without the process, the selected profile stands in for the running one.
-        assertEquals(Route.ACTIVE_SESSION, AetherDelayTester.route("a", wireguard, "a", session(AetherProtocol.WIREGUARD)))
-        assertEquals(Route.SKIP, AetherDelayTester.route("a", wireguard, "b", session(AetherProtocol.WIREGUARD)))
+        assertEquals(Route.ACTIVE_SESSION, AetherDelayTester.route("a", AetherCore.of(wireguard), "a", session(AetherProtocol.WIREGUARD)))
+        assertEquals(Route.SKIP, AetherDelayTester.route("a", AetherCore.of(wireguard), "b", session(AetherProtocol.WIREGUARD)))
+        // The same tunnel behind another port, as a custom configuration or another listen port runs it, is the same session.
+        assertEquals(
+            Route.ACTIVE_SESSION,
+            AetherDelayTester.route("a", AetherCore.of(wireguard), "b", session(AetherProtocol.WIREGUARD, wireguard, port = 20808))
+        )
     }
 
     @Test
@@ -45,28 +57,55 @@ class AetherDelayTesterTest {
         val wireguard = aether(AetherProtocol.WIREGUARD).apply { server = "162.159.192.1"; serverPort = "2408" }
         val connecting = session(AetherProtocol.WIREGUARD, wireguard, listening = false)
         // A request through a listener that is not up yet would fail, and that is not a failure of the profile.
-        assertEquals(Route.NOT_READY, AetherDelayTester.route("a", wireguard, "a", connecting))
+        assertEquals(Route.NOT_READY, AetherDelayTester.route("a", AetherCore.of(wireguard), "a", connecting))
         // The other routes do not depend on the listener.
-        assertEquals(Route.SKIP, AetherDelayTester.route("b", aether(AetherProtocol.GOOL), "a", connecting))
-        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("b", aether(AetherProtocol.MASQUE), "a", connecting))
+        assertEquals(Route.SKIP, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.GOOL)), "a", connecting))
+        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.MASQUE)), "a", connecting))
     }
 
     @Test
     fun aProfileSharingTheLiveSessionsKeyIsLeftAlone() {
         val running = aether(AetherProtocol.MASQUE).apply { server = "162.159.198.1"; serverPort = "443" }
         val live = session(AetherProtocol.MASQUE, running)
-        assertEquals(Route.SKIP, AetherDelayTester.route("b", aether(AetherProtocol.MASQUE), "a", live))
+        assertEquals(Route.SKIP, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.MASQUE)), "a", live))
         // Selected, but not what the session runs: it is not measured through that session.
-        assertEquals(Route.SKIP, AetherDelayTester.route("b", aether(AetherProtocol.MASQUE), "b", live))
-        assertEquals(Route.SKIP, AetherDelayTester.route("b", aether(AetherProtocol.GOOL), "a", session(AetherProtocol.WIREGUARD)))
-        assertEquals(Route.SKIP, AetherDelayTester.route("b", aether(AetherProtocol.WIREGUARD), "a", session(AetherProtocol.GOOL)))
+        assertEquals(Route.SKIP, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.MASQUE)), "b", live))
+        assertEquals(Route.SKIP, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.GOOL)), "a", session(AetherProtocol.WIREGUARD)))
+        assertEquals(Route.SKIP, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.WIREGUARD)), "a", session(AetherProtocol.GOOL)))
+        // Masque-in-masque runs on the MASQUE key.
+        assertEquals(Route.SKIP, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.MIM)), "a", live))
+        assertEquals(Route.SKIP, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.MASQUE)), "a", session(AetherProtocol.MIM)))
     }
 
     @Test
     fun aProfileWithADifferentKeyGetsItsOwnTunnel() {
-        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("b", aether(AetherProtocol.MASQUE), "a", session(AetherProtocol.WIREGUARD)))
-        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("b", aether(AetherProtocol.GOOL), "a", session(AetherProtocol.MASQUE)))
+        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.MASQUE)), "a", session(AetherProtocol.WIREGUARD)))
+        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.GOOL)), "a", session(AetherProtocol.MASQUE)))
+        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.MIM)), "a", session(AetherProtocol.WIREGUARD)))
+        assertEquals(Route.NEW_TUNNEL, AetherDelayTester.route("b", AetherCore.of(aether(AetherProtocol.GOOL)), "a", session(AetherProtocol.MIM)))
     }
+
+    @Test
+    fun aTestCoreThatDialsPsiphonIsReadyOnlyOnTheCoresWord() = runBlocking {
+        SocksStub().use { socks ->
+            val output = Channel<String>(Channel.UNLIMITED)
+            // The listener answers, but nothing said yet: not ready within a short budget.
+            assertFalse(AetherDelayTester.awaitListening(socks.port, output, deadlineAfterMs(600), needsWord = true))
+            // Without the need, the answering listener is enough.
+            assertTrue(AetherDelayTester.awaitListening(socks.port, output, deadlineAfterMs(2_000), needsWord = false))
+
+            output.trySend("[2026-09-24T10:00:00.000Z INFO  aether] [*] starting psiphon through the tunnel at 127.0.0.1:10820")
+            output.trySend("[2026-09-24T10:00:00.000Z INFO  aether] [+] psiphon is ready; 127.0.0.1:${socks.port} leaves through psiphon, carried by the tunnel")
+            assertTrue(AetherDelayTester.awaitListening(socks.port, output, deadlineAfterMs(2_000), needsWord = true))
+
+            // A core that ends before its word is a failed test, not a wait.
+            val ended = Channel<String>(Channel.UNLIMITED)
+            ended.close()
+            assertFalse(AetherDelayTester.awaitListening(socks.port, ended, deadlineAfterMs(2_000), needsWord = true))
+        }
+    }
+
+    private fun deadlineAfterMs(ms: Long): Long = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ms)
 
     @Test
     fun aTcpPingProbesThePinnedEdgeInsteadOfOpeningATunnel() {
@@ -83,6 +122,11 @@ class AetherDelayTesterTest {
         assertEquals(listOf("162.159.192.1" to 443), probed)
 
         probed.clear()
+        val masqueHops = aether(AetherProtocol.MIM).apply { aetherWiwOuter = "162.159.197.3:443"; aetherWiwInner = "188.114.96.1:443" }
+        assertEquals(42L, AetherDelayTester.reachability(masqueHops, connect))
+        assertEquals(listOf("162.159.197.3" to 443), probed)
+
+        probed.clear()
         val unreachable = { _: String, _: Int -> -1L }
         assertEquals(-1L, AetherDelayTester.reachability(pinned, unreachable))
     }
@@ -93,6 +137,7 @@ class AetherDelayTesterTest {
 
         assertEquals(AetherDelayTester.UNTESTED, AetherDelayTester.reachability(aether(AetherProtocol.MASQUE), probes))
         assertEquals(AetherDelayTester.UNTESTED, AetherDelayTester.reachability(aether(AetherProtocol.GOOL), probes))
+        assertEquals(AetherDelayTester.UNTESTED, AetherDelayTester.reachability(aether(AetherProtocol.MIM), probes))
         val halfPinned = aether(AetherProtocol.WIREGUARD).apply { server = "162.159.198.1" }
         assertEquals(AetherDelayTester.UNTESTED, AetherDelayTester.reachability(halfPinned, probes))
         val hostName = aether(AetherProtocol.WIREGUARD).apply { server = "engage.cloudflareclient.com"; serverPort = "2408" }

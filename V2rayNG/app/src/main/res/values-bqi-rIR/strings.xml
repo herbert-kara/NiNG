@@ -14,6 +14,9 @@
     <string name="pull_down_to_refresh">سی وانۊ کردن، بلگه ن بلم بکشین!</string>
 
     <!-- Notifications -->
+    <string name="notification_channel_service">سرویس NiNG</string>
+    <string name="notification_channel_subscription_updates">ورۊ کردن اشتراکا</string>
+    <string name="notification_channel_connection_checks">واجۊری منپیز</string>
     <string name="notification_action_stop_v2ray">واڌاشتن</string>
     <string name="toast_permission_denied">گرؽڌن موجوز مومکن نؽڌ</string>
     <string name="toast_permission_denied_notification">گرؽڌن موجوز وارسۊوی مومکن نؽڌ</string>
@@ -50,7 +53,7 @@
     <string name="confirm_delete_proxy_chain_member">ای عوزو زنجیره پروکسی پاک ابۊ، هنی هم اخۊی پاکس کۊنی؟</string>
     <string name="confirm_delete_routing_rule">ای قانووݩ تور جوستن پاک ابۊ، هنی هم اخۊی پاکس کۊنی؟</string>
     <string name="confirm_delete_subscription_group">ای بونکۊ اشتراک پاک ابۊ، هنی هم اخۊی پاکس کۊنی؟</string>
-    <string name="confirm_delete_asset_file">فایل بونچک جغرافیایی «%1$s» پاک ابۊ، هنی هم اخۊی پاکس کۊنی؟</string>
+    <string name="confirm_delete_asset_file">ای فایل بونچک جغرافیایی پاک ابۊ، هنی هم اخۊی پاکس کۊنی؟</string>
     <string name="confirm_delete_asset_source">ای بونچک فایلا جغرافیایی پاک ابۊ، هنی هم اخۊی پاکس کۊنی؟</string>
     <string name="server_lab_remarks">نیشتنا</string>
     <string name="server_lab_address">نشۊوی</string>
@@ -101,6 +104,7 @@
     <string name="server_lab_reserved">Reserved(اختیاری، وا کاما (,) ز یک جوڌا ابۊن)</string>
     <string name="server_lab_local_address">نشۊوی محلی (اختیاری IPv4/IPv6، وا کاما (,) ز یک جوڌا ابۊن)</string>
     <string name="server_lab_local_mtu">MTU(اختیاری، پؽش فرض 1420)</string>
+    <string name="server_lab_remote_dns">remoteDNS (اختياری، آدرس‌های IPv4/IPv6 جدا شده با کاما، یا "local" برای استفاده از DNS دستگاه)</string>
     <string name="server_lab_kcp_mtu">mKCP MTU (اختیاری، پؽش فرض 1350)</string>
     <string name="server_lab_kcp_tti">mKCP TTI (اختیاری، پؽش فرض 50 میلی‌ثانیه)</string>
     <string name="toast_success">وا مووفقیت ٱنجوم وابی</string>
@@ -130,6 +134,10 @@
     <string name="server_lab_final_mask">finalMask خام JSON، قالوو: { FinalMaskObject }</string>
     <string name="server_lab_dial_mode" translatable="false">dialMode</string>
     <string name="server_lab_ech_config_list" translatable="false">echConfigList</string>
+    <string name="server_lab_ech_outbound">echOutbound خام JSON، قالوو: { OutboundObject }</string>
+    <string name="toast_ech_outbound_needs_ech_config_list">سی echOutbound، echConfigList لازم هڌ</string>
+    <string name="toast_ech_outbound_invalid_tag">\"tag\" echOutbound نباید خالی، direct یا block بۊ، وو نباید وا proxy شروع بۊ</string>
+    <string name="toast_ech_outbound_tag_conflict">tag \"%1$s\" echOutbound وا ی outbound دیگه ٱستفاده ابۊ</string>
     <string name="server_lab_verify_peer_cert_by_name">تئیڌ گوواهی هومتا و ری نوم</string>
     <string name="server_lab_pinned_ca256">جا کلک گوواهی (SHA-256)</string>
     <string name="server_lab_browser_dialer">Browser Dialer ن ره وستین</string>
@@ -567,6 +575,7 @@
     <string name="aether_lab_scan_mode">حالت اسکن</string>
     <string name="aether_lab_obfuscation">مبهم‌سازی</string>
     <string name="aether_lab_ip_version">نسخه IP</string>
+    <string name="aether_lab_listen_port">پورت شنود</string>
     <string name="aether_lab_fragment">تکه‌تکه کردن ClientHello</string>
     <string name="aether_lab_fragment_size">اندازه تکه‌یل (بایت)</string>
     <string name="aether_lab_fragment_delay">تأخیر میون تکه‌یل (میلی‌ثانیه)</string>
@@ -581,6 +590,47 @@
     <string name="aether_invalid_hop">نشونی و پورت ره با هم بنویسید، مثل 162.159.192.1:2408</string>
     <string name="aether_same_hop">دو مسیر بایس نشونی جیا داشته بوهن</string>
     <string name="aether_invalid_fragment">یه عدد یا بازه مثل 16-32 بنویسین: اندازه 1 تا 4096 بایت، تأخیر 0 تا 1000 میلی‌ثانیه</string>
+    <string name="aether_invalid_listen_port">یه پورت شنود زه 1 تا 65535 بنویسین، یا سی پورت پیش‌فرض خالی بیلینس</string>
+    <string name="aether_listen_port_taken">پورت شنود نباید وا پورت پروکسی محلی برنامه یکی بۊ</string>
+    <string name="aether_lab_psiphon">سایفون</string>
+    <string name="aether_lab_psiphon_mode">نحوه اتصال سایفون</string>
+    <string name="aether_lab_psiphon_cdn_ips">آی‌پی‌های CDN</string>
+    <string name="aether_lab_psiphon_cdn_sni">نوم سرورهای CDN (SNI)</string>
+    <string name="aether_hint_psiphon_list">وا کاما جدا کنین؛ خالی بیلین تا فهرست داخلی استفاده بۊ</string>
+    <string name="aether_lab_psiphon_region">کشور خروجی</string>
+    <string name="aether_psiphon_region_any">هر کشوری</string>
+    <string name="aether_lab_psiphon_bundled_list">شروع زه لیست سرورهای همرا برنامه</string>
+    <string name="aether_hint_psiphon_bundled_list">روشن: سایفون همو اول سرورهای psiphon_servers.dat نه امتحان ایکنه و لیست تازه نه فقط وختی ایگره که اونا کار نکنن. خاموش: پیش زه اولین اتصال لیست تازه نه ایگره، پس لیست بایست در دسترس بوه، مثلاً زه پشت WARP</string>
+    <string name="aether_action_clear_psiphon">پاک کردن داده‌های سایفون</string>
+    <string name="aether_hint_clear_psiphon">سرورهایی که سایفون یاد گرهده و لیست‌هایی که گرهده فراموش ایبون. شروع بعدی دوواره زه لیست همرا برنامه‌ئه، یا اگه گزینه بالا خاموش بوه، زه یه دریافت تازه</string>
+    <string name="aether_log_psiphon_cleared">داده‌های سایفون پاک وابید</string>
+    <string name="aether_log_psiphon_clear_failed">داده‌های سایفون پاک نوابید</string>
+    <string name="aether_psiphon_clear_blocked">پیش زه پاک کردن داده‌های سایفون، اتصال Aether نه قطع کنین؛ اتصال ایسا زه اونا استفاده ایکنه</string>
+    <string name="aether_psiphon_unavailable">ای نسخه کلاینت سایفون نداره؛ پروفایلی که سایفون داشته بۊ نیتره وصل بۊ</string>
+    <string name="aether_psiphon_needs_masque">حالت «اول سایفون، بعد WARP» فقط وا پروتکل MASQUE کار اکنه</string>
+    <string name="aether_next_port_taken">وا تور یا سایفون من مسیر، هسته پورت‌یای بعد زه پورت گوش‌دادن هم استفاده اکنه؛ هیچ‌کوم نیتره پورت پروکسی محلی برنامه بۊ</string>
+    <string name="aether_lab_tor">تور (Tor)</string>
+    <string name="aether_lab_tor_bridges">پل‌یا</string>
+    <string name="aether_lab_tor_bridge_lines">خط‌یای پل</string>
+    <string name="aether_hint_tor_bridge_lines">هر خط یه پل، مثل torrc: obfs4 1.2.3.4:443 FINGERPRINT cert=… iat-mode=0</string>
+    <string name="aether_tor_transports_unavailable">ای نسخه انتقال‌یای اتصال‌پذیر (pluggable transport) نداره، پس پل‌یای تور قابل استفاده نیسن؛ تور فقط جایی وصل ابۊ که مسدود نبۊ</string>
+    <string name="aether_tor_needs_masque">حالت «اول تور، بعد WARP» فقط وا پروتکل MASQUE کار اکنه</string>
+    <string name="aether_tor_psiphon_conflict">تور و سایفون فقط ای‌جور وا هم کار اکنن: یکی من تونل و اۊ یکی دور تونل</string>
+    <string name="aether_tor_bridges_missing">کم‌کم یه خط پل بنویسین، یا یه تنظیم دیه سی پل‌یا انتخاب کنین</string>
+    <string name="aether_lab_ech">Encrypted Client Hello (ECH)</string>
+    <string name="aether_hint_ech">نوم سرور من دست‌دادن MASQUE قایم اکنه، وختی کلیدس قابل گرهدن بۊ</string>
+    <string name="aether_lab_dns">DNS من تونل</string>
+    <string name="aether_hint_dns">وا کاما سوا کنین؛ خالی بیلین تا 1.1.1.1 و 1.0.0.1 استفاده بۊ</string>
+    <string name="aether_invalid_dns">نشونی‌یای DNS مثل 1.1.1.1 یا 10.0.0.1:5353 نه وا کاما سوا بنویسین</string>
+    <string name="aether_lab_exit_loc">ولات خروجی تونل</string>
+    <string name="aether_hint_exit_loc">DE,SE فقط هموناره مجاز اکنه؛ !IR,RU اونونه رد اکنه؛ خالی یعنی هر ولاتی</string>
+    <string name="aether_invalid_exit_loc">کدیای دوحرفی ولات نه وا کاما سوا بنویسین، وا ! من اول سی رد کردن</string>
+    <string name="aether_lab_tor_relays">منبع پل‌یا</string>
+    <string name="aether_lab_advanced">تنظیمات پیشرفته</string>
+    <string name="aether_lab_command">فرمان Aether</string>
+    <string name="aether_command_custom">وا دست ویرایش بیده: ای فرمان همی‌طور که نوشته بیده اجرا ابۊ وو تنظیمات بالا اعمال نیبۊن</string>
+    <string name="aether_action_use_settings">استفاده زه تنظیمات</string>
+    <string name="aether_invalid_command">فرمان باید آرگومان‌های هسته Aether داشته بۊ وو پورت گوش‌دادن پس زه --bind بیا</string>
     <string name="aether_unsupported_abi">هسته Aether سی ای دستگاه د دسترس نیه</string>
     <string name="aether_core_stopped">هسته Aether وستاده</string>
     <string name="aether_core_connecting">هسته Aether هونی وصل ابۊ</string>
@@ -607,19 +657,68 @@
     <string name="aether_log_inner_key_missing">کلید مسیر درونی: هنی ثبت نبیڌه؛ د اولین اسکن یا اتصال ثبت ابۊ</string>
     <string name="aether_renew_blocked">پیش زه گرفتن کلید تازه WARP، اتصال Aether نه قطع کنین؛ اتصال ایسا زه کلید ایسا استفاده ایکنه</string>
     <string name="aether_scan_blocked">پیش زه اسکن، اتصال Aether نه قطع کنین؛ اسکن یه تونل دوم وا کلید اتصال ایسا وا ایکنه</string>
+    <string name="aether_chain_entry_only">پروفایل Aether فقط ایتره اولین گام زنجیره پروکسی بو؛ گامی که راست به اینترنت ارسه</string>
+    <string name="aether_config_single_profile">یه پیکربندی فقط ایتره زه یه پروفایل Aether استفاده کنه</string>
+    <string name="aether_custom_no_outbound">هیچ خروجی SOCKS من پیکربندی به %1$s:%2$d وصل نیبۊ؛ فرمان Aether همۊچو گوش اکنه</string>
+    <string name="aether_custom_invalid_command">aetherCommand باید خط فرمان هسته Aether به شکل متن بۊ وو نشونی گوش‌دادنش پس زه --bind بیا: %1$s</string>
     <string name="title_aether_core">هسته Aether</string>
     <string name="summary_aether_core">کلاینت WARP که CluvexStudio ساخته و وا مجوز AGPL-3.0 ور برنامه هده. سی دیدن کد منبع بزنین.</string>
     <string-array name="aether_scan_entries">
         <item>توربو</item>
         <item>متعادل</item>
         <item>دقیق</item>
-        <item>پنهونی</item>
+        <item>تأیید‌بیده</item>
         <item>تضمینی</item>
     </string-array>
+    <string-array name="aether_psiphon_entries">
+        <item>خاموش</item>
+        <item>اول WARP، بعد سایفون</item>
+        <item>اول سایفون، بعد WARP</item>
+        <item>فقط سایفون</item>
+    </string-array>
+    <string name="aether_lab_psiphon_cdn_sets">لیست‌های لبه CDN سی اسکن</string>
+    <string name="aether_hint_psiphon_cdn_sets">کدوم لیست‌های لبه داخلی سایفون تو اسکن فرانتینگ امتحان بوهن. هیچ‌کدوم یعنی همه؛ کنار IPهای خوتون، بعد زه اونا امتحان ایبون</string>
+    <string name="aether_psiphon_cdn_sets_all">همه لیست‌های داخلی سایفون</string>
+    <string-array name="aether_psiphon_cdn_set_entries">
+        <item>Cloudflare</item>
+        <item>Fastly</item>
+        <item>CloudFront</item>
+        <item>Akamai (لیست سایفون)</item>
+        <item>Bunny (لیست سایفون)</item>
+        <item>Vercel</item>
+        <item>GitHub</item>
+        <item>لبه‌های دست‌چین فرانتینگ</item>
+        <item>بازنویسی‌های قدیمی اندروید</item>
+    </string-array>
+    <string-array name="aether_psiphon_mode_entries">
+        <item>خودکار</item>
+        <item>فقط زه راه CDN</item>
+        <item>فقط مستقیم</item>
+    </string-array>
+    <string-array name="aether_tor_entries">
+        <item>خاموش</item>
+        <item>اول WARP، بعد تور</item>
+        <item>اول تور، بعد WARP</item>
+        <item>فقط تور</item>
+    </string-array>
+    <string-array name="aether_tor_bridges_entries">
+        <item>وختی تور مسدوده</item>
+        <item>زه اول</item>
+        <item>هیچ‌وخت</item>
+        <item>خط‌یای پل خوم</item>
+    </string-array>
+    <string-array name="aether_tor_relays_entries">
+        <item>bridgedb و رله‌یای عمومی</item>
+        <item>فقط رله‌یای عمومی</item>
+        <item>فقط bridgedb</item>
+    </string-array>
     <string-array name="aether_obfuscation_entries">
+        <item>خودکار</item>
         <item>خاموش</item>
         <item>سبک</item>
+        <item>فایروال</item>
         <item>متعادل</item>
+        <item>GFW</item>
         <item>شدید</item>
     </string-array>
 

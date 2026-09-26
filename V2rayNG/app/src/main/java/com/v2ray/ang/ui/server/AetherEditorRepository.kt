@@ -1,15 +1,20 @@
 package com.v2ray.ang.ui.server
 
 import android.content.Context
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.core.AetherCoreManager
 import com.v2ray.ang.core.AetherIdentityManager
 import com.v2ray.ang.core.AetherIdentityStatus
 import com.v2ray.ang.core.AetherScanResult
 import com.v2ray.ang.core.AetherScanner
+import com.v2ray.ang.core.PsiphonServerList
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherProtocol
+import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /** The daemon's live Aether session; [protocol] is null when only its listener could be seen. */
 data class AetherSession(val protocol: AetherProtocol?) {
@@ -22,11 +27,23 @@ data class AetherSession(val protocol: AetherProtocol?) {
 interface AetherEditorSource {
     suspend fun isCoreAvailable(): Boolean
 
+    /** Whether the Psiphon client is shipped with this build; a profile with Psiphon cannot connect without it. */
+    suspend fun isPsiphonAvailable(): Boolean
+
+    /** Whether the pluggable transport is shipped with this build; without it Tor has no bridges where it is blocked. */
+    suspend fun isTorTransportsAvailable(): Boolean
+
     /** The daemon's live Aether session, scanning or connected, or null; every Aether profile shares its key files. */
     suspend fun activeSession(): AetherSession?
     suspend fun scan(profile: ProfileItem, onOutput: (String) -> Unit): AetherScanResult?
     suspend fun identityStatus(protocol: AetherProtocol): AetherIdentityStatus
     suspend fun renewIdentity(profile: ProfileItem, onOutput: (String) -> Unit): AetherIdentityStatus?
+
+    /** Forgets what the Psiphon client has learned, so that its next start begins again; true when it is gone. */
+    suspend fun clearPsiphonData(): Boolean
+
+    /** The exit countries on offer, ISO codes sorted: those of the app's Psiphon server list and those Psiphon last reported. */
+    suspend fun psiphonRegions(): List<String>
 }
 
 class AetherEditorRepository(private val context: Context) : AetherEditorSource {
@@ -34,13 +51,19 @@ class AetherEditorRepository(private val context: Context) : AetherEditorSource 
     override suspend fun isCoreAvailable(): Boolean =
         withContext(Dispatchers.IO) { AetherCoreManager.isSupported(context) }
 
+    override suspend fun isPsiphonAvailable(): Boolean =
+        withContext(Dispatchers.IO) { AetherCoreManager.isPsiphonSupported(context) }
+
+    override suspend fun isTorTransportsAvailable(): Boolean =
+        withContext(Dispatchers.IO) { AetherCoreManager.isTorTransportsSupported(context) }
+
     // The daemon is the only authority on its state, so this looks for its core process and its
     // listener instead of a UI-side flag. The process check covers the scanning phase, before the
     // listener exists, and names the protocol; the listener probe is the fallback when /proc
     // cannot be read, and then the protocol stays unknown.
     override suspend fun activeSession(): AetherSession? = withContext(Dispatchers.IO) {
         AetherCoreManager.sessionProtocol(context)?.let { AetherSession(it) }
-            ?: AetherSession(protocol = null).takeIf { AetherCoreManager.acceptsConnections(AetherCoreManager.socksPort) }
+            ?: AetherSession(protocol = null).takeIf { AetherCoreManager.answersSocks(AetherCoreManager.socksPort) }
     }
 
     override suspend fun scan(profile: ProfileItem, onOutput: (String) -> Unit): AetherScanResult? =
@@ -51,4 +74,17 @@ class AetherEditorRepository(private val context: Context) : AetherEditorSource 
 
     override suspend fun renewIdentity(profile: ProfileItem, onOutput: (String) -> Unit): AetherIdentityStatus? =
         AetherIdentityManager.renew(context, profile, onOutput)
+
+    override suspend fun clearPsiphonData(): Boolean = withContext(Dispatchers.IO) {
+        PsiphonServerList.forgetRemembered()
+        AetherCoreManager.clearPsiphonState(context.filesDir, AetherIdentityManager.workDir(context))
+    }
+
+    override suspend fun psiphonRegions(): List<String> = withContext(Dispatchers.IO) {
+        val entries = PsiphonServerList.entriesFile(File(Utils.userAssetPath(context)), AetherIdentityManager.workDir(context)) { problem ->
+            LogUtil.w(AppConfig.TAG, "AetherEditor: ${AppConfig.PSIPHON_SERVERS_DAT} is not a usable Psiphon list", problem)
+        }
+        val listed = entries?.let { file -> runCatching { PsiphonServerList.regions(file.readText()) }.getOrDefault(emptySet()) }.orEmpty()
+        (listed + PsiphonServerList.remembered()).toSortedSet().toList()
+    }
 }

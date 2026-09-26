@@ -5,14 +5,24 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
 import com.v2ray.ang.AppConfig.DEFAULT_PORT
+import com.v2ray.ang.AppConfig.PORT_AETHER_SOCKS
 import com.v2ray.ang.AppConfig.REALITY
+import com.v2ray.ang.AppConfig.TARGET_STRATEGY_AS_IS
 import com.v2ray.ang.AppConfig.WIREGUARD_LOCAL_ADDRESS_V4
 import com.v2ray.ang.AppConfig.WIREGUARD_LOCAL_MTU
+import com.v2ray.ang.AppConfig.WIREGUARD_LOCAL_REMOTE_DNS
+import com.v2ray.ang.core.AetherCore
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherIpVersion
 import com.v2ray.ang.enums.AetherObfuscation
 import com.v2ray.ang.enums.AetherProtocol
+import com.v2ray.ang.enums.AetherPsiphon
+import com.v2ray.ang.enums.AetherPsiphonCdnSet
+import com.v2ray.ang.enums.AetherPsiphonMode
 import com.v2ray.ang.enums.AetherScanMode
+import com.v2ray.ang.enums.AetherTor
+import com.v2ray.ang.enums.AetherTorBridges
+import com.v2ray.ang.enums.AetherTorRelays
 import com.v2ray.ang.enums.AetherTransport
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.enums.NetworkType
@@ -35,6 +45,7 @@ class ServerUiState(
     reserved: String = "0,0,0",
     localAddress: String = WIREGUARD_LOCAL_ADDRESS_V4,
     mtu: String = WIREGUARD_LOCAL_MTU,
+    remoteDNS: String = WIREGUARD_LOCAL_REMOTE_DNS,
     obfsPassword: String = "",
     portHopping: String = "",
     portHoppingInterval: String = "",
@@ -55,6 +66,7 @@ class ServerUiState(
     kcpTti: String = "",
     browserDialerMode: String = "",
     dialMode: String = "",
+    targetStrategy: String = TARGET_STRATEGY_AS_IS,
     streamSecurity: String = "",
     sni: String = "",
     allowInsecure: Boolean = false,
@@ -66,19 +78,36 @@ class ServerUiState(
     spiderX: String = "",
     mldsa65Verify: String = "",
     echConfigList: String = "",
+    echOutbound: String = "",
     verifyPeerCertByName: String = "",
     pinnedCA256: String = "",
     isFetchingCert: Boolean = false,
-    aetherProtocol: String = AetherProtocol.MASQUE.type,
+    aetherProtocol: String = AetherProtocol.WIREGUARD.type,
     aetherTransport: String = AetherTransport.HTTP3.type,
     aetherScanMode: String = AetherScanMode.BALANCED.type,
-    aetherObfuscation: String = AetherObfuscation.BALANCED.type,
+    aetherObfuscation: String = AetherObfuscation.AUTO.type,
     aetherIpVersion: String = AetherIpVersion.V4.type,
     aetherWiwOuter: String = "",
     aetherWiwInner: String = "",
     aetherFragment: Boolean = false,
     aetherFragmentSize: String = "",
-    aetherFragmentDelay: String = ""
+    aetherFragmentDelay: String = "",
+    aetherEch: Boolean = false,
+    aetherDns: String = "",
+    aetherExitLoc: String = "",
+    aetherListenPort: String = PORT_AETHER_SOCKS,
+    aetherPsiphon: String = AetherPsiphon.OFF.type,
+    aetherPsiphonMode: String = AetherPsiphonMode.AUTO.type,
+    aetherPsiphonCdnIps: String = "",
+    aetherPsiphonCdnSni: String = "",
+    aetherPsiphonCdnSets: String = "",
+    aetherPsiphonRegion: String = "",
+    aetherPsiphonBundledList: Boolean = true,
+    aetherTor: String = AetherTor.OFF.type,
+    aetherTorBridges: String = AetherTorBridges.AUTO.type,
+    aetherTorBridgeLines: String = "",
+    aetherTorRelays: String = AetherTorRelays.AUTO.type,
+    aetherCommand: String = ""
 ) {
     var configType by mutableStateOf(configType)
     var remarks by mutableStateOf(remarks)
@@ -95,6 +124,7 @@ class ServerUiState(
     var reserved by mutableStateOf(reserved)
     var localAddress by mutableStateOf(localAddress)
     var mtu by mutableStateOf(mtu)
+    var remoteDNS by mutableStateOf(remoteDNS)
     var obfsPassword by mutableStateOf(obfsPassword)
     var portHopping by mutableStateOf(portHopping)
     var portHoppingInterval by mutableStateOf(portHoppingInterval)
@@ -115,6 +145,7 @@ class ServerUiState(
     var kcpTti by mutableStateOf(kcpTti)
     var browserDialerMode by mutableStateOf(browserDialerMode)
     var dialMode by mutableStateOf(dialMode)
+    var targetStrategy by mutableStateOf(targetStrategy)
     var streamSecurity by mutableStateOf(streamSecurity)
     var sni by mutableStateOf(sni)
     var allowInsecure by mutableStateOf(allowInsecure)
@@ -126,6 +157,7 @@ class ServerUiState(
     var spiderX by mutableStateOf(spiderX)
     var mldsa65Verify by mutableStateOf(mldsa65Verify)
     var echConfigList by mutableStateOf(echConfigList)
+    var echOutbound by mutableStateOf(echOutbound)
     var verifyPeerCertByName by mutableStateOf(verifyPeerCertByName)
     var pinnedCA256 by mutableStateOf(pinnedCA256)
     var isFetchingCert by mutableStateOf(isFetchingCert)
@@ -139,6 +171,47 @@ class ServerUiState(
     var aetherFragment by mutableStateOf(aetherFragment)
     var aetherFragmentSize by mutableStateOf(aetherFragmentSize)
     var aetherFragmentDelay by mutableStateOf(aetherFragmentDelay)
+    var aetherEch by mutableStateOf(aetherEch)
+    var aetherDns by mutableStateOf(aetherDns)
+    var aetherExitLoc by mutableStateOf(aetherExitLoc)
+    var aetherListenPort by mutableStateOf(aetherListenPort)
+    var aetherPsiphon by mutableStateOf(aetherPsiphon)
+    var aetherPsiphonMode by mutableStateOf(aetherPsiphonMode)
+    var aetherPsiphonCdnIps by mutableStateOf(aetherPsiphonCdnIps)
+    var aetherPsiphonCdnSni by mutableStateOf(aetherPsiphonCdnSni)
+    var aetherPsiphonCdnSets by mutableStateOf(aetherPsiphonCdnSets)
+
+    /** The CDN edge lists the Psiphon fronting scan tries, as chosen; none chosen means all of them. */
+    val aetherPsiphonCdnSetChoice: Set<AetherPsiphonCdnSet>
+        get() = AetherPsiphonCdnSet.parse(aetherPsiphonCdnSets).toSet()
+
+    /** Chooses or drops one CDN edge list; the choice is kept in the order the core tries them. */
+    fun setPsiphonCdnSet(set: AetherPsiphonCdnSet, chosen: Boolean) {
+        val choice = aetherPsiphonCdnSetChoice.let { if (chosen) it + set else it - set }
+        aetherPsiphonCdnSets = AetherPsiphonCdnSet.join(choice).orEmpty()
+    }
+    var aetherPsiphonRegion by mutableStateOf(aetherPsiphonRegion)
+    var aetherPsiphonBundledList by mutableStateOf(aetherPsiphonBundledList)
+    var aetherTor by mutableStateOf(aetherTor)
+    var aetherTorBridges by mutableStateOf(aetherTorBridges)
+    var aetherTorBridgeLines by mutableStateOf(aetherTorBridgeLines)
+    var aetherTorRelays by mutableStateOf(aetherTorRelays)
+    var aetherCommand by mutableStateOf(aetherCommand)
+
+    /**
+     * Whether an Aether setting the editor keeps folded away holds a value of its own, so that the
+     * folded section opens by itself and nothing set stays out of sight.
+     */
+    val hasAdvancedAetherSettings: Boolean
+        get() = aetherDns.isNotBlank() ||
+            aetherExitLoc.isNotBlank() ||
+            aetherListenPort.trim().let { it.isNotEmpty() && it != PORT_AETHER_SOCKS } ||
+            (targetStrategy.isNotBlank() && targetStrategy != TARGET_STRATEGY_AS_IS)
+
+    var isRemarksError by mutableStateOf(false)
+    var isAddressError by mutableStateOf(false)
+    var isPortError by mutableStateOf(false)
+    var isPasswordError by mutableStateOf(false)
 
     fun toProfileItem(initialConfig: ProfileItem): ProfileItem {
         val isVmess = configType == EConfigType.VMESS
@@ -148,8 +221,10 @@ class ServerUiState(
         val isWireguard = configType == EConfigType.WIREGUARD
         val isHysteria2 = configType == EConfigType.HYSTERIA2
         val isAether = configType == EConfigType.AETHER
+        val isPsiphon = isAether && aetherPsiphon != AetherPsiphon.OFF.type
+        val isTor = isAether && aetherTor != AetherTor.OFF.type
 
-        return initialConfig.copy(
+        val profile = initialConfig.copy(
             configType = configType,
             remarks = remarks,
             server = address,
@@ -172,6 +247,7 @@ class ServerUiState(
             reserved = if (isWireguard) reserved else null,
             localAddress = if (isWireguard) localAddress else null,
             mtu = if (isWireguard) mtu.toIntOrNull() else null,
+            remoteDNS = if (isWireguard) remoteDNS else null,
             obfsPassword = if (isHysteria2) obfsPassword else null,
             portHopping = if (isHysteria2) portHopping else null,
             portHoppingInterval = if (isHysteria2) portHoppingInterval else null,
@@ -196,6 +272,7 @@ class ServerUiState(
                 null
             },
             dialMode = dialMode.nullIfBlank(),
+            targetStrategy = targetStrategy.takeUnless { it.isBlank() || it == TARGET_STRATEGY_AS_IS },
             security = streamSecurity,
             sni = sni,
             insecure = allowInsecure,
@@ -206,6 +283,7 @@ class ServerUiState(
             spiderX = spiderX,
             mldsa65Verify = mldsa65Verify,
             echConfigList = echConfigList,
+            echOutbound = echOutbound.nullIfBlank(),
             verifyPeerCertByName = verifyPeerCertByName,
             pinnedCA256 = pinnedCA256,
             aetherProtocol = if (isAether) aetherProtocol else null,
@@ -217,8 +295,30 @@ class ServerUiState(
             aetherWiwInner = if (isAether) aetherWiwInner.nullIfBlank() else null,
             aetherFragment = if (isAether) aetherFragment else null,
             aetherFragmentSize = if (isAether) aetherFragmentSize.nullIfBlank() else null,
-            aetherFragmentDelay = if (isAether) aetherFragmentDelay.nullIfBlank() else null
+            aetherFragmentDelay = if (isAether) aetherFragmentDelay.nullIfBlank() else null,
+            aetherEch = if (isAether) aetherEch else null,
+            aetherDns = if (isAether) aetherDns.nullIfBlank() else null,
+            aetherExitLoc = if (isAether) aetherExitLoc.nullIfBlank() else null,
+            // Stored only when it is not the default, the way AetherFmt.normalize stores it; text that is
+            // no port goes through as written, for normalize to refuse.
+            aetherListenPort = if (isAether) aetherListenPort.trim().takeUnless { it.isEmpty() || it == PORT_AETHER_SOCKS } else null,
+            aetherPsiphon = if (isPsiphon) aetherPsiphon else null,
+            aetherPsiphonMode = if (isPsiphon) aetherPsiphonMode else null,
+            aetherPsiphonCdnIps = if (isPsiphon) aetherPsiphonCdnIps.nullIfBlank() else null,
+            aetherPsiphonCdnSni = if (isPsiphon) aetherPsiphonCdnSni.nullIfBlank() else null,
+            aetherPsiphonCdnSets = if (isPsiphon) aetherPsiphonCdnSets.nullIfBlank() else null,
+            aetherPsiphonRegion = if (isPsiphon) aetherPsiphonRegion.nullIfBlank() else null,
+            aetherPsiphonBundledList = if (isPsiphon && !aetherPsiphonBundledList) false else null,
+            aetherTor = if (isTor) aetherTor else null,
+            aetherTorBridges = if (isTor) aetherTorBridges else null,
+            aetherTorBridgeLines = if (isTor) aetherTorBridgeLines.nullIfBlank() else null,
+            aetherTorRelays = if (isTor) aetherTorRelays else null,
+            aetherCommand = null,
         )
+        if (!isAether) return profile
+        // A command that says what the settings say is no command of its own: the profile follows the settings.
+        val command = aetherCommand.trim()
+        return if (command.isEmpty() || command == AetherCore.of(profile).command) profile else profile.copy(aetherCommand = command)
     }
 
     companion object {
@@ -242,6 +342,7 @@ class ServerUiState(
                 reserved = initialConfig.reserved ?: "0,0,0",
                 localAddress = initialConfig.localAddress ?: WIREGUARD_LOCAL_ADDRESS_V4,
                 mtu = initialConfig.mtu?.toString() ?: WIREGUARD_LOCAL_MTU,
+                remoteDNS = initialConfig.remoteDNS ?: WIREGUARD_LOCAL_REMOTE_DNS,
                 obfsPassword = initialConfig.obfsPassword ?: "",
                 portHopping = initialConfig.portHopping ?: "",
                 portHoppingInterval = initialConfig.portHoppingInterval ?: "",
@@ -262,6 +363,7 @@ class ServerUiState(
                 kcpTti = initialConfig.kcpTti?.toString() ?: "",
                 browserDialerMode = initialConfig.browserDialerMode ?: "",
                 dialMode = initialConfig.dialMode ?: "",
+                targetStrategy = initialConfig.targetStrategy ?: TARGET_STRATEGY_AS_IS,
                 streamSecurity = initialConfig.security ?: "",
                 sni = initialConfig.sni ?: "",
                 allowInsecure = initialConfig.insecure == true,
@@ -273,6 +375,7 @@ class ServerUiState(
                 spiderX = initialConfig.spiderX ?: "",
                 mldsa65Verify = initialConfig.mldsa65Verify ?: "",
                 echConfigList = initialConfig.echConfigList ?: "",
+                echOutbound = initialConfig.echOutbound ?: "",
                 verifyPeerCertByName = initialConfig.verifyPeerCertByName ?: "",
                 pinnedCA256 = initialConfig.pinnedCA256 ?: "",
                 // Normalized so the dropdowns always hold one of their own values, whatever was persisted.
@@ -285,7 +388,23 @@ class ServerUiState(
                 aetherWiwInner = initialConfig.aetherWiwInner ?: "",
                 aetherFragment = initialConfig.aetherFragment ?: false,
                 aetherFragmentSize = initialConfig.aetherFragmentSize ?: "",
-                aetherFragmentDelay = initialConfig.aetherFragmentDelay ?: ""
+                aetherFragmentDelay = initialConfig.aetherFragmentDelay ?: "",
+                aetherEch = initialConfig.aetherEch == true,
+                aetherDns = initialConfig.aetherDns ?: "",
+                aetherExitLoc = initialConfig.aetherExitLoc ?: "",
+                aetherListenPort = initialConfig.aetherListenPort ?: PORT_AETHER_SOCKS,
+                aetherPsiphon = AetherPsiphon.fromString(initialConfig.aetherPsiphon).type,
+                aetherPsiphonMode = AetherPsiphonMode.fromString(initialConfig.aetherPsiphonMode).type,
+                aetherPsiphonCdnIps = initialConfig.aetherPsiphonCdnIps ?: "",
+                aetherPsiphonCdnSni = initialConfig.aetherPsiphonCdnSni ?: "",
+                aetherPsiphonCdnSets = initialConfig.aetherPsiphonCdnSets ?: "",
+                aetherPsiphonRegion = initialConfig.aetherPsiphonRegion ?: "",
+                aetherPsiphonBundledList = initialConfig.aetherPsiphonBundledList != false,
+                aetherTor = AetherTor.fromString(initialConfig.aetherTor).type,
+                aetherTorBridges = AetherTorBridges.fromString(initialConfig.aetherTorBridges).type,
+                aetherTorBridgeLines = initialConfig.aetherTorBridgeLines ?: "",
+                aetherTorRelays = AetherTorRelays.fromString(initialConfig.aetherTorRelays).type,
+                aetherCommand = initialConfig.aetherCommand ?: ""
             )
 
         fun from(

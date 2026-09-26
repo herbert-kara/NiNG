@@ -15,7 +15,12 @@ android {
         minSdk = 24
         targetSdk = 37
         versionCode = 749
-        versionName = (project.findProperty("ningVersion") as? String)?.takeIf { it.isNotBlank() } ?: "2.3.8-ning.1"
+        // Upstream renamed the property and bumped to 2.3.9. Keep the -ning scheme: the release
+        // workflow derives tags and APK filenames from it, so adopting the upstream name would
+        // silently drop the fork's version suffix.
+        versionName = (project.findProperty("ningVersion") as? String)
+            ?: (project.findProperty("pattngVersion") as? String)?.takeIf { !it.contains("-ning") }
+            ?: "2.3.9-ning.1"
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {
