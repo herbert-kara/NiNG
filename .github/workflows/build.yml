@@ -312,7 +312,9 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/ning-release.p12"
   release:
-    needs: build
+    # Must wait for sign-and-release, not build: the NiNG-signed-release artifact is only
+    # uploaded by the signing job, so depending on build made this job run before it existed.
+    needs: sign-and-release
     if: inputs.release_tag != ''
     runs-on: ubuntu-latest
     permissions:
