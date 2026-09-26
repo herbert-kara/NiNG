@@ -3,6 +3,7 @@ package com.v2ray.ang.ui.main
 import com.v2ray.ang.dto.ConnectionTestResult
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
+import com.v2ray.ang.handler.FlagStatus
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -12,6 +13,27 @@ class MainCountryRowsTest {
         remarks = "FR-01", statistics = "", typeDescription = "VLESS", testDelayMillis = 0,
         subscriptionBadge = "", labelCountryCode = "FR"
     )
+
+    @Test fun verdictUpdatesOnlyTheMatchingRowAndAddress() {
+        val rows = listOf(row(), row("b"))
+        val updated = applyServerFlag(rows, "a", "8.8.8.8", FlagStatus.FLAGGED)
+        assertEquals(FlagStatus.FLAGGED, updated[0].flagStatus)
+        assertEquals(FlagStatus.UNKNOWN, updated[1].flagStatus)
+        assertEquals(rows[1], updated[1])
+    }
+
+    @Test fun aVerdictForAnOldAddressCannotAnnotateAnEditedRow() {
+        val rows = listOf(row())
+        assertEquals(rows, applyServerFlag(rows, "a", "1.1.1.1", FlagStatus.CLEAN))
+        assertEquals(rows, applyServerFlag(rows, "gone", "8.8.8.8", FlagStatus.CLEAN))
+    }
+
+    @Test fun aVerdictNeverOverwritesTheIndependentCountryFlags() {
+        val rows = listOf(row())
+        val updated = applyServerFlag(rows, "a", "8.8.8.8", FlagStatus.FLAGGED)
+        assertEquals("FR", updated[0].labelCountryCode)
+        assertNull(updated[0].serverCountryCode)
+    }
 
     @Test fun ingressUpdatePreservesIndependentLabelAndOtherRows() {
         val rows = listOf(row(), row("b"))

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -29,8 +30,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.v2ray.ang.R
-import coil.compose.AsyncImage
-import com.v2ray.ang.handler.ProfileCountry
 import com.v2ray.ang.ui.compose.AppDivider
 import com.v2ray.ang.ui.compose.colorFabActive
 import com.v2ray.ang.ui.compose.colorFabInactiveDark
@@ -71,6 +70,18 @@ fun MainBottomBar(
                         modifier = Modifier.semantics {
                             contentDescription = displayText
                         }
+                    )
+                }
+                // Re-queries the reputation provider, next to the ping test it parallels. The
+                // click does not start the service and does not activate the row behind it.
+                SmallFloatingActionButton(
+                    onClick = { onAction(MainAction.RefreshFlags) },
+                    modifier = Modifier.padding(end = 8.dp),
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    RefreshFlagsGlyph(
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.size(18.dp),
                     )
                 }
             }

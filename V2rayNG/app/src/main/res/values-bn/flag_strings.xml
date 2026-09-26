@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="flag_verdict_flagged">চিহ্নিত</string>
+    <string name="flag_verdict_clean">পরিষ্কার</string>
+    <string name="flag_verdict_unknown">যাচাই হয়নি</string>
+    <string name="action_refresh_flags">দেশ ও খ্যাতির পতাকা নতুন করুন</string>
+</resources>

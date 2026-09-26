@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="flag_verdict_flagged">已標記</string>
+    <string name="flag_verdict_clean">乾淨</string>
+    <string name="flag_verdict_unknown">未檢測</string>
+    <string name="action_refresh_flags">重新整理國家與信譽標記</string>
+</resources>

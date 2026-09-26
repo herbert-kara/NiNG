@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="flag_verdict_flagged">Flagged</string>
+    <string name="flag_verdict_clean">Clean</string>
+    <string name="flag_verdict_unknown">Unchecked</string>
+    <string name="action_refresh_flags">Refresh country and reputation flags</string>
+</resources>

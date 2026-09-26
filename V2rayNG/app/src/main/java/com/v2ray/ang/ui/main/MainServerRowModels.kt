@@ -7,6 +7,7 @@ import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.nullIfBlank
 import com.v2ray.ang.handler.AngConfigManager
+import com.v2ray.ang.handler.FlagStatus
 import com.v2ray.ang.handler.ProfileCountry
 import com.v2ray.ang.handler.ProfileRisk
 import com.v2ray.ang.handler.RiskLevel
@@ -24,6 +25,7 @@ internal data class ServerRowUiModel(
     val serverCountryCode: String? = null,
     val riskLevel: RiskLevel = RiskLevel.UNKNOWN,
     val riskReason: RiskReason? = null,
+    val flagStatus: FlagStatus = FlagStatus.UNKNOWN,
 )
 
 internal data class ServerGroupUiState(

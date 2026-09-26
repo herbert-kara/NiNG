@@ -410,6 +410,7 @@ private fun ServerListItem(
             CountryBadge(row.labelCountryCode, R.string.country_label_hint)
             CountryBadge(row.serverCountryCode, R.string.country_server)
             RiskFlag(row.riskLevel, row.riskReason)
+            FlaggedBadge(row.flagStatus)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(row.typeDescription, style = MaterialTheme.typography.bodySmall, color = colorConfigType, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(testResult, style = MaterialTheme.typography.bodySmall, color = if (row.testDelayMillis < 0L) colorPingRed else colorPing, maxLines = 1, overflow = TextOverflow.Ellipsis)

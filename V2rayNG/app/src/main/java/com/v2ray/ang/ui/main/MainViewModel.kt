@@ -35,6 +35,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import com.v2ray.ang.handler.ServerCountryLookup
+import com.v2ray.ang.handler.ServerFlaggedLookup
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -114,12 +116,64 @@ class MainViewModel(
 
     private val initialPageReady = CompletableDeferred<Unit>()
     private val serverCountries = ServerCountryLookup()
+    private val serverFlags = ServerFlaggedLookup(publicIpOf = { serverCountries.publicIpOf(it) })
+
+    /**
+     * Monotonic refresh counter. A tap increments it, which re-runs the visible batch with the
+     * provider caches bypassed; every batch after the first refresh uses the normal cache again.
+     * A counter is used instead of a boolean toggle so a second tap can never be swallowed by
+     * a collector that is still busy with the first one.
+     */
+    private val flagRefreshTick = MutableStateFlow(0)
 
     // ---------- Service events ----------
     init {
         collectServerCountries()
+        collectServerFlags()
         collectServiceEvents()
         setupGroupTab()
+    }
+
+    /**
+     * Reputation verdicts, independent of the country lookup above: a row can carry an ingress
+     * country, a verdict, or both. [forceFlagRefresh] makes the batch re-query the provider
+     * instead of replaying a cached verdict up to a day old.
+     */
+    private fun collectServerFlags() {
+        viewModelScope.launch {
+            uiState.map { it.selectedGroupId }.distinctUntilChanged().collectLatest { groupId ->
+                combine(
+                    serverGroupState(groupId).map { state ->
+                        state.rows.mapNotNull { row ->
+                            row.profile.server?.takeIf { !row.profile.configType.isComplexType() }
+                                ?.let { row.guid to it }
+                        }.take(128)
+                    }.distinctUntilChanged(),
+                    // A RefreshFlags tap advances this counter, which re-runs the whole batch
+                    // with the provider caches bypassed; without it in the trigger a tap would
+                    // be inert, because the target list itself has not changed.
+                    flagRefreshTick,
+                ) { targets, tick -> targets to (tick > 0) }
+                    .collectLatest { (targets, force) ->
+                        withContext(ioDispatcher) {
+                            for ((guid, address) in targets) {
+                                ensureActive()
+                                val verdict = serverFlags.resolve(address, force) ?: continue
+                                withContext(Dispatchers.Main.immediate) {
+                                    ensureActive()
+                                    if (uiState.value.selectedGroupId == groupId) {
+                                        mutableServerGroupState(groupId).update { state ->
+                                            state.copy(
+                                                rows = applyServerFlag(state.rows, guid, address, verdict.status)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+            }
+        }
     }
 
     private fun collectServerCountries() {
@@ -157,6 +211,17 @@ class MainViewModel(
             dataSource.mainServiceEvent.collect { event ->
                 handleServiceEvent(event)
             }
+        }
+    }
+
+    /**
+     * Re-query the reputation provider for the visible page. The country lookup keeps its own
+     * cache on purpose: a manual verdict refresh must not also spend the user's quota.
+     */
+    private fun refreshFlags() {
+        viewModelScope.launch {
+            serverFlags.invalidate()
+            flagRefreshTick.value = flagRefreshTick.value + 1
         }
     }
 
@@ -324,6 +389,7 @@ class MainViewModel(
             MainAction.RemoveDuplicateServers -> removeDuplicateServerAsync()
             MainAction.RemoveInvalidServers -> removeInvalidServerAsync()
             MainAction.SortByTestResults -> sortByTestResultsAsync()
+            MainAction.RefreshFlags -> refreshFlags()
             MainAction.UpdateSubscriptions -> importConfigViaSub()
             MainAction.ExportAll -> exportAllAsync()
             is MainAction.SelectGroup -> subscriptionIdChanged(action.groupId)
@@ -990,6 +1056,7 @@ class MainViewModel(
         filterJob?.cancel()
         cancelAllPing()
         serverCountries.close()
+        serverFlags.close()
         dataSource.close()
         super.onCleared()
     }

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="flag_verdict_flagged">Bị gắn cờ</string>
+    <string name="flag_verdict_clean">Sạch</string>
+    <string name="flag_verdict_unknown">Chưa kiểm tra</string>
+    <string name="action_refresh_flags">Làm mới cờ quốc gia và uy tín</string>
+</resources>

@@ -116,6 +116,14 @@ internal class ServerFlaggedLookup(
         })
     }
 
+    /**
+     * Drop every cached verdict so the next batch re-queries the provider. A manual refresh must
+     * actually reach the service, not replay a verdict that is up to a day old.
+     */
+    suspend fun invalidate() {
+        gate.withLock { cache.clear() }
+    }
+
     override fun close() {
         if (clientHolder.isInitialized()) {
             client.dispatcher.cancelAll()
