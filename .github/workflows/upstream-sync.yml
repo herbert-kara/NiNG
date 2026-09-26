@@ -1,0 +1,106 @@
+name: NiNG rebuild from upstream
+
+# The fork tracks patterniha/PattNG. When that repository pushes, rebuild the signed APKs
+# from the merged tree and publish a prerelease, so an installed NiNG updates itself through
+# its own in-app updater instead of waiting for a manual dispatch.
+on:
+  repository_dispatch:
+    types: [upstream-update]
+  schedule:
+    # Off the hour, away from :00, to avoid the scheduled-run congestion on GitHub's side.
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: ning-upstream-rebuild
+  cancel-in-progress: false
+jobs:
+  sync:
+    if: github.repository == 'herbert-kara/NiNG'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      merged: ${{ steps.merge.outputs.merged }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          ref: my-releases
+      - name: Merge upstream without dropping fork features
+        id: merge
+        env:
+          UPSTREAM: https://github.com/patterniha/PattNG.git
+        run: |
+          set -euo pipefail
+          git config user.name 'herbert-kara'
+          git config user.email 'herbert-kara@users.noreply.github.com'
+          git remote add upstream "$UPSTREAM" 2>/dev/null || git remote set-url upstream "$UPSTREAM"
+          git fetch upstream --quiet
+          base=$(git merge-base HEAD upstream/master || git merge-base HEAD upstream/main)
+          echo "upstream commits not yet merged:"
+          git log --oneline "$base"..upstream/HEAD 2>/dev/null | head -20 || true
+          if git merge-base --is-ancestor upstream/HEAD HEAD; then
+            echo "Already up to date with upstream; nothing to rebuild."
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A merge commit, never a rebase or a reset: the fork's own commits (identity, flags,
+          # reputation verdict, CI) must survive an upstream merge untouched and stay reviewable.
+          if ! git merge --no-edit --no-stat upstream/HEAD; then
+            echo "::error::Upstream merge conflicts. Resolve on my-releases and re-run."
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+          git diff --stat "$base" HEAD | tail -20
+      - name: Verify fork features survived the merge
+        if: steps.merge.outputs.merged == 'true'
+        run: |
+          set -euo pipefail
+          python3 tools/verify_brand.py
+          for f in \
+            V2rayNG/app/src/main/java/com/v2ray/ang/handler/ProfileRisk.kt \
+            V2rayNG/app/src/main/java/com/v2ray/ang/handler/ServerFlaggedLookup.kt \
+            V2rayNG/app/src/main/java/com/v2ray/ang/handler/ProfileCountry.kt \
+            V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/RiskBadge.kt; do
+            test -f "$f" || { echo "::error::fork feature file lost in merge: $f"; exit 1; }
+          done
+      - name: Push the merge so the branch keeps its history
+        if: steps.merge.outputs.merged == 'true'
+        run: git push origin my-releases
+
+  release:
+    needs: sync
+    if: needs.sync.outputs.merged == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          ref: my-releases
+      - name: Derive the next -ning version from existing tags
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=$(gh release list -R herbert-kara/NiNG --limit 100 --json tagName \
+            --jq '[.[].tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-ning\\.[0-9]+$"))] | max // "v0.0.0-ning.0"')
+          base="${latest%-ning.*}"
+          patch=$(( ${latest##*.} + 1 ))
+          echo "tag=v${base#v}-ning.${patch}" >> "$GITHUB_OUTPUT"
+          echo "version=${base#v}-ning.${patch}" >> "$GITHUB_OUTPUT"
+      - name: Build and publish the signed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Reuse the reviewed release workflow rather than duplicating the signing steps here.
+          gh workflow run build.yml -R herbert-kara/NiNG --ref my-releases -f release_tag="$TAG"
+          echo "Dispatched build.yml for $TAG"

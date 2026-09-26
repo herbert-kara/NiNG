@@ -18,6 +18,9 @@ jobs:
     timeout-minutes: 120
     env:
       RUST_TOOLCHAIN: '1.98.1'
+      # The APK filenames and the in-app updater's ABI match both read the version from here, so a
+      # dispatch that declares one tag must not silently build another version's files.
+      RELEASE_TAG: ${{ inputs.release_tag || 'v0.0.0-ning.0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,6 +87,12 @@ jobs:
           test -n "$KEYSTORE"
           umask 077
           printf '%s' "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/ning-release.p12"
+      - name: Reject a malformed release tag before building
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-ning\.[0-9]+$ ]] || {
+            echo "::error::release_tag must look like v2.3.9-ning.1, got '$RELEASE_TAG'"; exit 1; }
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_ENV"
       - name: Assemble signed release
         working-directory: V2rayNG
         env:
@@ -92,18 +101,27 @@ jobs:
           KEY_PASSWORD: ${{ secrets.NING_KEY_PASSWORD }}
         run: |
           ./gradlew :app:assemblePlaystoreRelease --stacktrace \
+            -PningVersion="$version" \
             -Pandroid.injected.signing.store.file="$RUNNER_TEMP/ning-release.p12" \
             -Pandroid.injected.signing.store.password="$STORE_PASSWORD" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
             -Pandroid.injected.signing.key.password="$KEY_PASSWORD" \
             -Pandroid.injected.signing.store.type=PKCS12
       - name: Verify signatures and package contents
+        env:
+          VERSION: ${{ env.version }}
         run: |
           set -euo pipefail
           mkdir -p release-files
-          for abi in arm64-v8a armeabi-v7a x86_64 x86 universal; do
-            apk="V2rayNG/app/build/outputs/apk/playstore/release/NiNG_2.3.8-ning.1_${abi}.apk"
-            test -f "$apk"
+          for abi in arm64-v8a armeabi-v7a x86 x86_64 universal; do
+            # Read the version from the built file, so a mismatch between the tag and the
+            # Gradle property fails here instead of shipping a mislabelled APK.
+            apk="V2rayNG/app/build/outputs/apk/playstore/release/NiNG_${VERSION}_${abi}.apk"
+            test -f "$apk" || {
+              echo "::error::expected $apk for declared version $VERSION"
+              ls V2rayNG/app/build/outputs/apk/playstore/release/ || true
+              exit 1
+            }
             "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$apk" | tee "release-files/${abi}-signature.txt"
             grep -q 'e489aa56f25cee8c062840d7822b0a4e20d31f1b95de147675d1a50e5cac09c6' "release-files/${abi}-signature.txt"
             "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" > "release-files/${abi}-package.txt"

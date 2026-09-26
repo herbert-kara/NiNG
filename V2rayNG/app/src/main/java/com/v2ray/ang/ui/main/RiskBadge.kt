@@ -11,7 +11,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -92,24 +91,30 @@ internal fun RefreshFlagsGlyph(tint: Color, modifier: Modifier) {
     Canvas(modifier) {
         val stroke = size.minDimension * 0.14f
         val inset = stroke / 2
-        val arc = Rect.fromLTRB(inset, inset, size.width - inset, size.height - inset)
+        val diameter = minOf(size.width, size.height) - stroke
+        val topLeft = Offset(
+            x = (size.width - diameter) / 2,
+            y = (size.height - diameter) / 2,
+        )
         // A three-quarter sweep leaves the gap a refresh arrow reads by.
         drawArc(
             color = tint,
             startAngle = -40f,
             sweepAngle = 290f,
             useCenter = false,
-            topLeft = arc.topLeft,
-            size = arc.size,
+            topLeft = topLeft,
+            size = Size(diameter, diameter),
             style = Stroke(width = stroke, cap = StrokeCap.Round),
         )
-        val head = Path().apply {
-            moveTo(size.width * 0.94f, size.height * 0.06f)
-            lineTo(size.width * 0.62f, size.height * 0.10f)
-            lineTo(size.width * 0.86f, size.height * 0.34f)
-            close()
-        }
-        drawPath(tint, head)
+        drawPath(
+            color = tint,
+            path = Path().apply {
+                moveTo(size.width * 0.90f, size.height * 0.04f)
+                lineTo(size.width * 0.58f, size.height * 0.12f)
+                lineTo(size.width * 0.84f, size.height * 0.36f)
+                close()
+            },
+        )
     }
 }
 

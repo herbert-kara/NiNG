@@ -9,6 +9,31 @@ import org.junit.Test
 import java.net.InetAddress
 
 class ServerCountryLookupTest {
+    @Test fun everyProviderShapeYieldsACountry() {
+        // The three providers disagree on the field name and on the success wrapper.
+        assertEquals("FR", ServerCountryLookup.parseResponse("""{"success":true,"country_code":"FR"}"""))
+        assertEquals("DE", ServerCountryLookup.parseResponse("""{"country_code":"DE","ip":"1.2.3.4"}"""))
+        assertEquals("JP", ServerCountryLookup.parseResponse("""{"country":"JP","ip":"1.2.3.4"}"""))
+        assertEquals("NL", ServerCountryLookup.parseResponse("""{"countryCode":"NL"}"""))
+    }
+
+    @Test fun aFailedOrUnknownPayloadYieldsNoCountry() {
+        assertNull(ServerCountryLookup.parseResponse("""{"success":false,"message":"quota"}"""))
+        assertNull(ServerCountryLookup.parseResponse("""{"country_code":"ZZ"}"""))
+        assertNull(ServerCountryLookup.parseResponse("""{"error":"nope"}"""))
+        assertNull(ServerCountryLookup.parseResponse("not json"))
+    }
+
+    @Test fun moreThanOneEndpointIsConfiguredSoOneCanBeBlocked() {
+        assertTrue(
+            "a single endpoint leaves the flag blank whenever that one is blocked",
+            ServerCountryLookup.COUNTRY_ENDPOINTS.size > 1,
+        )
+        assertTrue(
+            ServerCountryLookup.COUNTRY_ENDPOINTS.all { it.startsWith("https://") && it.contains("{ip}") }
+        )
+    }
+
     @Test fun privateReservedAndMalformedInputsNeverLeaveDevice() = runTest {
         var dns = 0
         var http = 0

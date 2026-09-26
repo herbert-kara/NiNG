@@ -1,7 +1,6 @@
 package com.v2ray.ang.handler
 
-import com.google.gson.Gson
-import com.v2ray.ang.dto.IPAPIInfo
+import com.google.gson.JsonParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -114,8 +113,19 @@ internal class ServerCountryLookup(
         }
     }
 
-    private suspend fun defaultFetch(ip: String): String? = suspendCancellableCoroutine { continuation ->
-        val request = Request.Builder().url("https://ipwho.is/$ip").get().build()
+    private suspend fun defaultFetch(ip: String): String? {
+        // A single blocked or rate-limited endpoint must not leave the row without a flag, so
+        // each provider is tried in turn and the first usable answer wins.
+        for (endpoint in COUNTRY_ENDPOINTS) {
+            val body = fetchFrom(endpoint.replace("{ip}", ip)) ?: continue
+            val code = parseResponse(body) ?: continue
+            return code
+        }
+        return null
+    }
+
+    private suspend fun fetchFrom(url: String): String? = suspendCancellableCoroutine { continuation ->
+        val request = Request.Builder().url(url).get().build()
         val call = client.newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
@@ -129,8 +139,7 @@ internal class ServerCountryLookup(
                         if (!it.isSuccessful) null else {
                             // Bound memory even when Content-Length is absent or dishonest.
                             val source = it.body?.source()
-                            if (source == null || source.request(16_385)) null
-                            else parseResponse(source.readUtf8())
+                            if (source == null || !source.request(16_385)) null else source.readUtf8()
                         }
                     }
                 } catch (_: Exception) { null }
@@ -149,9 +158,30 @@ internal class ServerCountryLookup(
     }
 
     companion object {
+        /**
+         * Tried in order. Each returns the same shape that [parseResponse] reads, so a provider
+         * being blocked or rate-limited costs one round trip instead of the whole flag.
+         */
+        internal val COUNTRY_ENDPOINTS = listOf(
+            "https://ipwho.is/{ip}",
+            "https://ipapi.co/{ip}/json/",
+            "https://ipinfo.io/{ip}/json",
+        )
+
+        /**
+         * Every provider is parsed through the same tolerant reader: they disagree on the field
+         * name, and none of them agree on the success wrapper, so a shape difference must not be
+         * read as "this provider said no country".
+         */
         internal fun parseResponse(body: String): String? = try {
-            val info = Gson().fromJson(body, IPAPIInfo::class.java)
-            if (info?.success == true) ProfileCountry.normalize(info.country_code) else null
+            val json = JsonParser.parseString(body).asJsonObject
+            if (json.keySet().any { it.equals("success", true) && json[it].asBoolean.not() }) return null
+            val code = sequenceOf("country_code", "countryCode", "country")
+                .mapNotNull { key -> json.entries.firstOrNull { it.key.equals(key, true) } }
+                .mapNotNull { (_, value) -> if (value.isJsonPrimitive) value.asString else null }
+                .mapNotNull(ProfileCountry::normalize)
+                .firstOrNull()
+            code
         } catch (_: Exception) { null }
 
         internal fun canonicalTarget(value: String?): String? {
