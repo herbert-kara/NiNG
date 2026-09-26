@@ -83,11 +83,25 @@ def check_release_workflow():
     assert True in doc or 'on' in doc, 'build.yml lost its triggers'
     jobs = doc['jobs']
     own_secrets = ('NING_',)
+    # The build job owns the pinned toolchain versions; a job that compiles native code or
+    # reads those scripts needs them in its own env, because job envs do not leak sideways.
+    toolchain = jobs.get('build', {}).get('env', {})
+    required_env = ('RUST_TOOLCHAIN', 'NDK_HOME', 'GO_VERSION')
     for name, job in jobs.items():
         # Secrets appear both in env: and inline in run:, so both have to be scanned.
         blob = '\n'.join(
             [str(s.get('run', '')) + '\n' + str(s.get('env', {})) for s in job.get('steps', [])]
         ) + '\n' + str(job.get('env', {}))
+        steps_blob = '\n'.join(str(s.get('with', {})) for s in job.get('steps', []))
+        # A variable set through GITHUB_ENV earlier in the same job is defined, even though it is
+        # absent from env:. Only variables the job never sets anywhere count as missing.
+        sets_in_run = '\n'.join(str(s.get('run', '')) for s in job.get('steps', []))
+        for key in required_env:
+            referenced = f'env.{key}' in steps_blob or f'env.{key}' in blob
+            defined = key in (job.get('env') or {}) or f'{key}=' in sets_in_run
+            assert not referenced or defined, (
+                f"job '{name}' uses ${{{{ env.{key} }}}} but never sets it; "
+                'a job env does not inherit another job env')
         uses = [str(s.get('uses', '')) for s in job.get('steps', [])]
         reads_tree = 'git -C ' in blob or './gradlew' in blob or 'V2rayNG' in blob
         assert reads_tree is False or any(u.startswith('actions/checkout') for u in uses), (

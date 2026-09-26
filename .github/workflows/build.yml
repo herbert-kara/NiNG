@@ -184,6 +184,13 @@ jobs:
     needs: build
     runs-on: ubuntu-26.04
     if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    # A job's env does not inherit another job's env. This job compiles native code and reads
+    # the native cache keys, so the pins the build job exports have to be repeated here; an
+    # empty RUST_TOOLCHAIN makes dtolnay/rust-toolchain fail with an unhelpful error.
+    env:
+      RUST_TOOLCHAIN: '1.98.1'
+      GO_VERSION: '1.26'
+      RELEASE_TAG: ${{ inputs.release_tag || 'v0.0.0-ning.0' }}
 
     steps:
       - uses: actions/checkout@v4
