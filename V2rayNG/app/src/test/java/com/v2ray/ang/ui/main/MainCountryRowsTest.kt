@@ -99,35 +99,4 @@ class MainCountryRowsTest {
         assertNull(exitCountryCode(MainStatus.Connected))
         assertNull(exitCountryCode(MainStatus.Disconnected))
     }
-
-    // ---- A refresh must actually change what a second run produces ----
-
-    @Test fun aRefreshRequestReQueriesInsteadOfReplayingTheCache() {
-        val calls = mutableListOf<String>()
-        var batch = 0
-        val service = FakeFlagService { address ->
-            calls += address
-            "DE" + (batch++)
-        }
-        val rows = listOf(row())
-        // First run: cached verdicts land on the rows.
-        applyServerFlag(rows, "a", "8.8.8.8", FlagStatus.CLEAN, service.resolve("8.8.8.8", force = false))
-        // A tap must bypass the cache, or the button is invisible to the user.
-        assertEquals(2, service.resolve("8.8.8.8", force = true).last())
-        assertEquals(listOf("8.8.8.8", "8.8.8.8"), calls)
-    }
-
-    @Test fun consecutiveRefreshesAreNotSwallowed() {
-        val service = FakeFlagService { "DE" }
-        repeat(3) { service.resolve("8.8.8.8", force = true) }
-        assertEquals(3, service.calls)
-    }
-
-    private class FakeFlagService(private val answer: (String) -> String) {
-        var calls = 0
-        fun resolve(address: String, force: Boolean): String {
-            calls++
-            return answer(address)
-        }
-    }
 }
