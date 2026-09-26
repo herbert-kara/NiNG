@@ -12,7 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+// Upstream migrated from Coil 2 to Coil 3; the artifact and the package both changed.
+import coil3.compose.AsyncImage
 import com.v2ray.ang.handler.ProfileCountry
 
 /** Asset decoding is handled asynchronously by Coil; the adjacent text names the source. */
