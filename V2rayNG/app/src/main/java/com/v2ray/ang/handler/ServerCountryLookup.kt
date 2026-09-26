@@ -57,6 +57,22 @@ internal class ServerCountryLookup(
 
     private val client by clientHolder
 
+    /**
+     * Public IP behind a server address, or null when it is not public. The flagged-reputation
+     * lookup shares this path so neither service owns a second DNS pool or a second set of
+     * private-range rules.
+     */
+    suspend fun publicIpOf(target: String?): String? {
+        val key = canonicalTarget(target) ?: return null
+        val literal = literalIp(key)
+        if (literal != null) return if (isPublicIp(literal)) literal.hostAddress else null
+        return resolvePublicIp(key)
+    }
+
+    private suspend fun resolvePublicIp(key: String): String? = withTimeoutOrNull(3500) {
+        (resolveDns?.invoke(key) ?: defaultDns(key)).firstOrNull(::isPublicIp)
+    }?.hostAddress
+
     suspend fun resolve(address: String?): String? {
         val key = canonicalTarget(address) ?: return null
         val literal = literalIp(key)
@@ -66,15 +82,14 @@ internal class ServerCountryLookup(
         return gate.withLock {
             cache[key]?.takeIf { nowMillis() < it.expires }?.let { return@withLock it.code }
             val result = try {
-                val ip = literal ?: withTimeoutOrNull(3500) {
-                    (resolveDns?.invoke(key) ?: defaultDns(key)).firstOrNull(::isPublicIp)
-                }
+                // The literal is already known public here, or absent.
+                val ip = literal?.hostAddress ?: resolvePublicIp(key)
                 if (ip == null) null else {
                     val elapsed = lastStart?.let { nowMillis() - it }
                     if (elapsed != null && elapsed < 1100) delay(1100 - elapsed)
                     lastStart = nowMillis()
                     withTimeoutOrNull(5500) {
-                        ProfileCountry.normalize(fetch?.invoke(ip.hostAddress!!) ?: if (fetch == null) defaultFetch(ip.hostAddress!!) else null)
+                        ProfileCountry.normalize(fetch?.invoke(ip) ?: if (fetch == null) defaultFetch(ip) else null)
                     }
                 }
             } catch (cancelled: CancellationException) {
