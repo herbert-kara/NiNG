@@ -95,13 +95,23 @@ fun MainBottomBar(
                 // and is drawn over this bar, so a refresh button placed at the end sat underneath
                 // it and every tap started or stopped the service instead.
                 SmallFloatingActionButton(
-                    onClick = { onAction(MainAction.RefreshFlags) },
+                    // This button has no enabled parameter, so a pass in flight is guarded here
+                    // and shown with muted colours: a tap that lands mid-pass would otherwise
+                    // queue another one behind the same rows.
+                    onClick = { if (!isRefreshingFlags) onAction(MainAction.RefreshFlags) },
                     modifier = Modifier.padding(end = 96.dp),
-                    enabled = !isRefreshingFlags,
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    containerColor = if (isRefreshingFlags) {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    },
                 ) {
                     RefreshFlagsGlyph(
-                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        tint = if (isRefreshingFlags) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        },
                         modifier = Modifier.size(18.dp),
                     )
                 }

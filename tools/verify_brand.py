@@ -96,11 +96,14 @@ def check_refresh_button_clears_the_connect_fab():
     larger end padding than the bar's own inset or the two overlap and the button is dead.
     """
     bar = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt').read_text('utf-8')
-    match = re.search(r'SmallFloatingActionButton\(\s*onClick\s*=\s*\{\s*onAction\(MainAction\.RefreshFlags\)'
-                      r'\s*\}\s*,\s*modifier\s*=\s*Modifier\.padding\(end\s*=\s*([\d.]+)dp\)', bar)
-    assert match, 'the refresh button lost its end padding; it is drawn under the connect FAB again'
-    assert float(match.group(1)) >= 96, (
-        f'refresh button end padding is {match.group(1)}dp, under the 56dp FAB plus its 24dp inset')
+    # The button may carry a comment or an extra argument between onClick and modifier, so this
+    # reads the padding from the button block rather than assuming an exact argument order.
+    block = re.search(r'SmallFloatingActionButton\((.*?)\n\s*\) \{', bar, re.S)
+    assert block, 'the refresh button is gone'
+    padding = re.search(r'Modifier\.padding\(end\s*=\s*([\d.]+)dp\)', block.group(1))
+    assert padding, 'the refresh button lost its end padding; it is drawn under the connect FAB again'
+    assert float(padding.group(1)) >= 96, (
+        f'refresh button end padding is {padding.group(1)}dp, under the 56dp FAB plus its 24dp inset')
 
 def check_refresh_button_actually_refreshes():
     """A tap used to be swallowed, so the button looked dead even though the click arrived.
@@ -115,7 +118,9 @@ def check_refresh_button_actually_refreshes():
     assert 'runFlagBatch(' in view_model, 'the flag batch no longer runs through the completion helper'
     assert 'isNewerRequested' in view_model, 'a mid-pass tap is dropped instead of queued'
     bar = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt').read_text('utf-8')
-    assert 'enabled = !isRefreshingFlags' in bar, (
+    assert 'if (!isRefreshingFlags) onAction(MainAction.RefreshFlags)' in bar, (
+        'a tap during a pass is no longer guarded, so it queues a duplicate pass')
+    assert 'if (isRefreshingFlags) {' in bar, (
         'the refresh button gives no feedback while a pass is running')
     test = (ROOT / 'V2rayNG/app/src/test/java/com/v2ray/ang/ui/main/FlagRefreshBatchTest.kt')
     assert test.exists(), 'the regression test for a swallowed tap is gone'
