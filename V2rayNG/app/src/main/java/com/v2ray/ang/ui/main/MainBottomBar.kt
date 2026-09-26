@@ -77,8 +77,8 @@ fun MainBottomBar(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 // Exit-IP geography only: shown with the current connection-test result,
-                // separate from per-profile ingress hints rendered in the server rows.
-                Column(Modifier.weight(1f).padding(end = 64.dp)) {
+                // separate from the per-profile location flag rendered in the server rows.
+                Column(Modifier.weight(1f).padding(end = 104.dp)) {
                     CountryBadge(exitCountryCode, R.string.country_exit)
                     Text(
                         text = displayText,
@@ -90,9 +90,12 @@ fun MainBottomBar(
                 }
                 // Re-queries the reputation provider, next to the ping test it parallels. The
                 // click does not start the service and does not activate the row behind it.
+                // The end padding clears the connect FAB: a FAB is 56dp wide with 24dp of inset
+                // and is drawn over this bar, so a refresh button placed at the end sat underneath
+                // it and every tap started or stopped the service instead.
                 SmallFloatingActionButton(
                     onClick = { onAction(MainAction.RefreshFlags) },
-                    modifier = Modifier.padding(end = 8.dp),
+                    modifier = Modifier.padding(end = 96.dp),
                     containerColor = MaterialTheme.colorScheme.secondaryContainer,
                 ) {
                     RefreshFlagsGlyph(

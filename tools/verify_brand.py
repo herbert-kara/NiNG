@@ -26,9 +26,13 @@ def verify():
     assert 'R.drawable.ic_ning_logo' in drawer
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
+    check_one_location_flag()
+    check_refresh_button_clears_the_connect_fab()
     check_release_workflow()
     print('NiNG app ID, internal namespace, updater, locale names, drawer and adaptive icons: OK')
     print('No user-visible PattNG string and every fork feature file is present: OK')
+    print('One location flag, taken from the main server verdict: OK')
+    print('Refresh button clears the connect FAB: OK')
     print('Release workflow structure (checkout, secrets, artifact graph): OK')
 
 # Upstream adds new user-visible strings with ITS brand in them. app_name was checked before,
@@ -62,6 +66,40 @@ def check_fork_feature_files():
         assert (APP / name).exists(), f'fork feature file lost in merge: {name}'
     for name in ('risk_strings.xml', 'flag_strings.xml'):
         assert (APP / 'src/main/res/values' / name).exists(), f'fork string file lost: {name}'
+
+def check_one_location_flag():
+    """The row must carry exactly one location flag, for the main server.
+
+    It used to carry two: one guessed from the profile name and one from a separate address
+    lookup. The name hint described the label rather than the server reached, so the two could
+    disagree and both were rendered. The verdict response already carries the country of the
+    address it was asked about, which is the main server, and that is now the only source.
+    """
+    models = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainServerRowModels.kt').read_text('utf-8')
+    assert 'labelCountryCode' not in models, (
+        'a name-derived labelCountryCode is back; the location flag must describe the server')
+    pager = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainServerPager.kt').read_text('utf-8')
+    assert 'row.labelCountryCode' not in pager, 'the row renders a second, name-based location flag'
+    assert 'row.serverCountryCode' in pager, 'the row no longer renders the server location flag'
+    rows = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainCountryRows.kt').read_text('utf-8')
+    assert 'country: String? = null' in rows, (
+        'applyServerFlag no longer carries the country from the verdict')
+    view_model = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt').read_text('utf-8')
+    assert 'verdict.countryCode' in view_model, (
+        'the verdict country is discarded again, leaving the location flag empty')
+
+def check_refresh_button_clears_the_connect_fab():
+    """The refresh button sat under the connect FAB, so its taps started the service instead.
+
+    A FAB is 56dp wide with 24dp of end inset, drawn on top of this bar, so the button needs a
+    larger end padding than the bar's own inset or the two overlap and the button is dead.
+    """
+    bar = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt').read_text('utf-8')
+    match = re.search(r'SmallFloatingActionButton\(\s*onClick\s*=\s*\{\s*onAction\(MainAction\.RefreshFlags\)'
+                      r'\s*\}\s*,\s*modifier\s*=\s*Modifier\.padding\(end\s*=\s*([\d.]+)dp\)', bar)
+    assert match, 'the refresh button lost its end padding; it is drawn under the connect FAB again'
+    assert float(match.group(1)) >= 96, (
+        f'refresh button end padding is {match.group(1)}dp, under the 56dp FAB plus its 24dp inset')
 
 def check_release_workflow():
     """Catch the release-pipeline mistakes that compile fine and fail only at run time.

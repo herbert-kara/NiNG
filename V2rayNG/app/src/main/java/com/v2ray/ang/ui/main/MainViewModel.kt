@@ -164,7 +164,10 @@ class MainViewModel(
                                     if (uiState.value.selectedGroupId == groupId) {
                                         mutableServerGroupState(groupId).update { state ->
                                             state.copy(
-                                                rows = applyServerFlag(state.rows, guid, address, verdict.status)
+                                                rows = applyServerFlag(
+                                                    state.rows, guid, address,
+                                                    verdict.status, verdict.countryCode,
+                                                )
                                             )
                                         }
                                     }
@@ -215,8 +218,9 @@ class MainViewModel(
     }
 
     /**
-     * Re-query the reputation provider for the visible page. The country lookup keeps its own
-     * cache on purpose: a manual verdict refresh must not also spend the user's quota.
+     * Re-query the reputation provider for the visible page. The verdict response also carries
+     * the country of the address it was asked about, so this is the single source for both the
+     * verdict and the location flag; a tap therefore refreshes everything the row shows.
      */
     private fun refreshFlags() {
         viewModelScope.launch {

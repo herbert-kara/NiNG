@@ -8,7 +8,6 @@ import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.nullIfBlank
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.FlagStatus
-import com.v2ray.ang.handler.ProfileCountry
 import com.v2ray.ang.handler.ProfileRisk
 import com.v2ray.ang.handler.RiskLevel
 import com.v2ray.ang.handler.RiskReason
@@ -21,7 +20,8 @@ internal data class ServerRowUiModel(
     val typeDescription: String,
     val testDelayMillis: Long,
     val subscriptionBadge: String,
-    val labelCountryCode: String? = null,
+    // Only the main server's own location, from the reputation verdict for that address. A
+    // name-based hint is deliberately absent: it describes the label, not the server reached.
     val serverCountryCode: String? = null,
     val riskLevel: RiskLevel = RiskLevel.UNKNOWN,
     val riskReason: RiskReason? = null,
@@ -43,7 +43,6 @@ internal fun buildServerRowUiModel(
         guid = server.guid,
         profile = profile,
         remarks = profile.remarks,
-        labelCountryCode = ProfileCountry.fromLabel(profile.remarks),
         statistics = profile.description.nullIfBlank()
             ?: AngConfigManager.generateDescription(profile),
         typeDescription = serverProtocolDescription(profile),

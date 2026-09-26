@@ -405,9 +405,9 @@ private fun ServerListItem(
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
-            // Separate lines fit narrow double-column layouts and large font settings.
-            // A label never replaces the independently acquired ingress country.
-            CountryBadge(row.labelCountryCode, R.string.country_label_hint)
+            // One location flag, for the main server the profile connects to. A separate
+            // name-based hint and a separate ingress lookup are not shown: they can disagree with
+            // the address the verdict was actually about.
             CountryBadge(row.serverCountryCode, R.string.country_server)
             RiskFlag(row.riskLevel, row.riskReason)
             FlaggedBadge(row.flagStatus)
