@@ -37,18 +37,30 @@ class ProfileRiskTest {
     }
 
     @Test fun brokenCipherIsUnsafeAndLegacyCipherIsCaution() {
-        assertEquals(
-            RiskReason.WEAK_CIPHER,
-            ProfileRisk.evaluate(vless(cipherSuites = "ECDHE-RSA-AES256-GCM-SHA384,3DES-CBC-SHA")).primary?.reason,
-        )
+        // Real cipherSuites values are hyphen-delimited suite names, not bare algorithm names.
         assertEquals(
             RiskLevel.UNSAFE,
-            ProfileRisk.evaluate(vless(cipherSuites = "AES256-SHA")).level,
+            ProfileRisk.evaluate(vless(cipherSuites = "ECDHE-RSA-AES256-GCM-SHA384,3DES-CBC-SHA")).level,
         )
+        for (suite in listOf("3DES-CBC-SHA", "RC4-SHA", "DES-CBC-SHA", "EXP-RC2-CBC-SHA", "NULL-MD5")) {
+            assertEquals(
+                "$suite must be unsafe",
+                RiskLevel.UNSAFE,
+                ProfileRisk.evaluate(vless(cipherSuites = suite)).level,
+            )
+        }
         assertEquals(
-            RiskLevel.CAUTION,
-            ProfileRisk.evaluate(vless(cipherSuites = "ECDHE-RSA-AES128-SHA")).level,
+            RiskReason.WEAK_CIPHER,
+            ProfileRisk.evaluate(vless(cipherSuites = "3DES-CBC-SHA")).primary?.reason,
         )
+        // A SHA-1 MAC suite still negotiates, so it is a caution rather than a break.
+        for (suite in listOf("ECDHE-RSA-AES128-SHA", "AES256-SHA", "CAMELLIA128-SHA")) {
+            assertEquals(
+                "$suite must be a caution",
+                RiskLevel.CAUTION,
+                ProfileRisk.evaluate(vless(cipherSuites = suite)).level,
+            )
+        }
     }
 
     @Test fun modernCipherSuiteIsNotFlagged() {
@@ -121,7 +133,7 @@ class ProfileRiskTest {
     @Test fun worstFindingDecidesLevelAndPrimaryReason() {
         val report = ProfileRisk.evaluate(vless(insecure = true, cipherSuites = "3DES-CBC-SHA"))
         assertEquals(RiskLevel.UNSAFE, report.level)
-        assertEquals(3, report.findings.size)
+        assertEquals(2, report.findings.size)
         assertEquals(RiskReason.INSECURE_TLS, report.primary?.reason)
     }
 
