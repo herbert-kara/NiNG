@@ -48,6 +48,7 @@ fun MainBottomBar(
     isRunning: Boolean,
     isDarkTheme: Boolean,
     exitCountryCode: String? = null,
+    isRefreshingFlags: Boolean = false,
     onAction: (MainAction) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -96,6 +97,7 @@ fun MainBottomBar(
                 SmallFloatingActionButton(
                     onClick = { onAction(MainAction.RefreshFlags) },
                     modifier = Modifier.padding(end = 96.dp),
+                    enabled = !isRefreshingFlags,
                     containerColor = MaterialTheme.colorScheme.secondaryContainer,
                 ) {
                     RefreshFlagsGlyph(

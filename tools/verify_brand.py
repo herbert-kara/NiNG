@@ -28,6 +28,7 @@ def verify():
     check_fork_feature_files()
     check_one_location_flag()
     check_refresh_button_clears_the_connect_fab()
+    check_refresh_button_actually_refreshes()
     check_release_workflow()
     print('NiNG app ID, internal namespace, updater, locale names, drawer and adaptive icons: OK')
     print('No user-visible PattNG string and every fork feature file is present: OK')
@@ -100,6 +101,24 @@ def check_refresh_button_clears_the_connect_fab():
     assert match, 'the refresh button lost its end padding; it is drawn under the connect FAB again'
     assert float(match.group(1)) >= 96, (
         f'refresh button end padding is {match.group(1)}dp, under the 56dp FAB plus its 24dp inset')
+
+def check_refresh_button_actually_refreshes():
+    """A tap used to be swallowed, so the button looked dead even though the click arrived.
+
+    The batch was restarted on every tap while each lookup is rate limited, so a full page never
+    finished and no badge ever changed. The pass must now be able to run to completion, a tap that
+    arrives mid-pass must be honoured afterwards, and the button must show that it is busy.
+    """
+    batch = (APP / 'src/main/java/com/v2ray/ang/ui/main/FlagBatch.kt')
+    assert batch.exists(), 'the flag batch runner is gone; a tap can cancel a pass again'
+    view_model = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt').read_text('utf-8')
+    assert 'runFlagBatch(' in view_model, 'the flag batch no longer runs through the completion helper'
+    assert 'isNewerRequested' in view_model, 'a mid-pass tap is dropped instead of queued'
+    bar = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt').read_text('utf-8')
+    assert 'enabled = !isRefreshingFlags' in bar, (
+        'the refresh button gives no feedback while a pass is running')
+    test = (ROOT / 'V2rayNG/app/src/test/java/com/v2ray/ang/ui/main/FlagRefreshBatchTest.kt')
+    assert test.exists(), 'the regression test for a swallowed tap is gone'
 
 def check_release_workflow():
     """Catch the release-pipeline mistakes that compile fine and fail only at run time.

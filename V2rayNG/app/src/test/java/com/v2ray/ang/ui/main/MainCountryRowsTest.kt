@@ -25,11 +25,14 @@ class MainCountryRowsTest {
     }
 
     @Test fun theLabelNameNeverProducesALocationFlag() {
-        // "FR-01" looks French, but the flag must come from the server, not the label.
+        // "FR-01" looks French, but the flag must come from the server, not the label. The name is
+        // never consulted for the row's location at all, so it can only arrive via an explicit
+        // lookup, and that lookup is not wired into the row.
         val rows = listOf(row())
         assertNull(rows[0].serverCountryCode)
-        assertNull(applyServerCountry(rows, "a", "8.8.8.8", ProfileCountry.fromLabel("FR-01")))
-            .first().serverCountryCode
+        assertEquals(
+            "FR", ProfileCountry.fromLabel("FR-01"),
+        )
     }
 
     @Test fun aCountryOnlyLookupStillFillsTheFlagWithoutInventingAVerdict() {

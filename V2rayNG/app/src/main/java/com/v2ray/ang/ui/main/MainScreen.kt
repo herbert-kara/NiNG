@@ -43,6 +43,7 @@ fun MainScreen(
     val uiState by mainViewModel.uiState.collectAsStateWithLifecycle()
     val groups = uiState.groups
     val isLoading by mainViewModel.isLoading.collectAsStateWithLifecycle()
+    val isRefreshingFlags by mainViewModel.isRefreshingFlags.collectAsStateWithLifecycle()
     val isRunning = uiState.isRunning
     val displayText = mainViewModel.formatStatus(uiState.status)
     val exitCountryCode = exitCountryCode(uiState.status)
@@ -191,6 +192,7 @@ fun MainScreen(
                     exitCountryCode = exitCountryCode,
                     isRunning = isRunning,
                     isDarkTheme = isDarkTheme,
+                    isRefreshingFlags = isRefreshingFlags,
                     onAction = onAction
                 )
             },

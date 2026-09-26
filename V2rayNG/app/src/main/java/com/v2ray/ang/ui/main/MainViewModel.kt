@@ -126,6 +126,10 @@ class MainViewModel(
      */
     private val flagRefreshTick = MutableStateFlow(0)
 
+    /** True while a pass is in flight, so a tap is queued instead of cancelling the pass. */
+    private val flagRefreshRunning = MutableStateFlow(false)
+    val isRefreshingFlags: StateFlow<Boolean> = flagRefreshRunning.asStateFlow()
+
     // ---------- Service events ----------
     init {
         collectServerCountries()
@@ -135,9 +139,14 @@ class MainViewModel(
     }
 
     /**
-     * Reputation verdicts, independent of the country lookup above: a row can carry an ingress
-     * country, a verdict, or both. [forceFlagRefresh] makes the batch re-query the provider
-     * instead of replaying a cached verdict up to a day old.
+     * Reputation verdicts and the location flag, which the same response carries for the same
+     * address. [forceFlagRefresh] makes the batch re-query the provider instead of replaying a
+     * cached verdict up to a day old.
+     *
+     * A tap advances [flagRefreshTick] and [flagRefreshRunning] blocks a pass already in flight:
+     * the provider is rate limited, so restarting mid-page would leave the last rows unresolved
+     * and the button would look inert even though the click arrived. The pending tap is honoured
+     * by the pass that is already running.
      */
     private fun collectServerFlags() {
         viewModelScope.launch {
@@ -156,23 +165,30 @@ class MainViewModel(
                 ) { targets, tick -> targets to (tick > 0) }
                     .collectLatest { (targets, force) ->
                         withContext(ioDispatcher) {
-                            for ((guid, address) in targets) {
-                                ensureActive()
-                                val verdict = serverFlags.resolve(address, force) ?: continue
-                                withContext(Dispatchers.Main.immediate) {
-                                    ensureActive()
-                                    if (uiState.value.selectedGroupId == groupId) {
-                                        mutableServerGroupState(groupId).update { state ->
-                                            state.copy(
-                                                rows = applyServerFlag(
-                                                    state.rows, guid, address,
-                                                    verdict.status, verdict.countryCode,
-                                                )
-                                            )
+                            var requested = force
+                            do {
+                                flagRefreshRunning.value = true
+                                requested = runFlagBatch(
+                                    targets = targets,
+                                    isNewerRequested = { flagRefreshTick.value > 0 },
+                                    lookup = { address, _ -> serverFlags.resolve(address, requested) },
+                                    publish = { guid, address, verdict ->
+                                        withContext(Dispatchers.Main.immediate) {
+                                            if (uiState.value.selectedGroupId == groupId) {
+                                                mutableServerGroupState(groupId).update { state ->
+                                                    state.copy(
+                                                        rows = applyServerFlag(
+                                                            state.rows, guid, address,
+                                                            verdict.status, verdict.countryCode,
+                                                        )
+                                                    )
+                                                }
+                                            }
                                         }
-                                    }
-                                }
-                            }
+                                    },
+                                )
+                            } while (requested)
+                            flagRefreshRunning.value = false
                         }
                     }
             }
