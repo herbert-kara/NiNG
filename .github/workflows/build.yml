@@ -186,6 +186,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
       - name: Download APK artifacts
         uses: actions/download-artifact@v8
         with:

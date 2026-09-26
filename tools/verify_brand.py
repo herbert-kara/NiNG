@@ -26,8 +26,10 @@ def verify():
     assert 'R.drawable.ic_ning_logo' in drawer
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
+    check_release_workflow()
     print('NiNG app ID, internal namespace, updater, locale names, drawer and adaptive icons: OK')
     print('No user-visible PattNG string and every fork feature file is present: OK')
+    print('Release workflow structure (checkout, secrets, artifact graph): OK')
 
 # Upstream adds new user-visible strings with ITS brand in them. app_name was checked before,
 # but a string added after that check arrives with the upstream name and is only noticed on a
@@ -60,6 +62,54 @@ def check_fork_feature_files():
         assert (APP / name).exists(), f'fork feature file lost in merge: {name}'
     for name in ('risk_strings.xml', 'flag_strings.xml'):
         assert (APP / 'src/main/res/values' / name).exists(), f'fork string file lost: {name}'
+
+def check_release_workflow():
+    """Catch the release-pipeline mistakes that compile fine and fail only at run time.
+
+    Three separate upstream merges broke the build this way, all invisible to CI because each
+    one compiles and lints cleanly:
+      1. merge markers left inside a workflow, which hide its triggers from GitHub;
+      2. an upstream signing path referencing secrets this fork never had;
+      3. a job that reads the working tree with no checkout of its own, and a job that
+         downloads an artifact no job it depends on uploads.
+    """
+    import re
+    import yaml
+    path = ROOT / '.github/workflows/build.yml'
+    text = path.read_text(encoding='utf-8')
+    for marker in ('<<<<<<<', '>>>>>>>'):
+        assert marker not in text, f'merge markers left in {path.name}'
+    doc = yaml.safe_load(text)
+    assert True in doc or 'on' in doc, 'build.yml lost its triggers'
+    jobs = doc['jobs']
+    own_secrets = ('NING_',)
+    for name, job in jobs.items():
+        # Secrets appear both in env: and inline in run:, so both have to be scanned.
+        blob = '\n'.join(
+            [str(s.get('run', '')) + '\n' + str(s.get('env', {})) for s in job.get('steps', [])]
+        ) + '\n' + str(job.get('env', {}))
+        uses = [str(s.get('uses', '')) for s in job.get('steps', [])]
+        reads_tree = 'git -C ' in blob or './gradlew' in blob or 'V2rayNG' in blob
+        assert reads_tree is False or any(u.startswith('actions/checkout') for u in uses), (
+            f"job '{name}' uses the working tree but has no actions/checkout; "
+            'jobs are independent workspaces')
+        for secret in set(re.findall(r'secrets\.([A-Z_0-9]+)', blob)):
+            assert any(secret.startswith(p) for p in own_secrets), (
+                f"job '{name}' references secrets.{secret}, which this fork does not have")
+        deps = job.get('needs')
+        deps = [deps] if isinstance(deps, str) else (deps or [])
+        uploaded = set()
+        for dep in deps:
+            for s in jobs.get(dep, {}).get('steps', []):
+                if 'upload-artifact' in str(s.get('uses', '')):
+                    artifact = (s.get('with') or {}).get('name')
+                    if artifact:
+                        uploaded.add(artifact)
+        for s in job.get('steps', []):
+            if 'download-artifact' in str(s.get('uses', '')):
+                want = (s.get('with') or {}).get('name')
+                assert not want or want in uploaded, (
+                    f"job '{name}' downloads '{want}' but none of {deps} uploads it")
 
 if __name__ == '__main__':
     verify()
