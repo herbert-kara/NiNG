@@ -175,10 +175,13 @@ internal class ServerCountryLookup(
          */
         internal fun parseResponse(body: String): String? = try {
             val json = JsonParser.parseString(body).asJsonObject
-            if (json.keySet().any { it.equals("success", true) && json[it].asBoolean.not() }) return null
+            if (json.get("success")?.takeIf { it.isJsonPrimitive }?.asBoolean == false) return null
+            // Read the three accepted spellings directly rather than iterating the map, which
+            // keeps this independent of the Gson version's JsonObject API surface.
             val code = sequenceOf("country_code", "countryCode", "country")
-                .mapNotNull { key -> json.entries.firstOrNull { it.key.equals(key, true) } }
-                .mapNotNull { (_, value) -> if (value.isJsonPrimitive) value.asString else null }
+                .mapNotNull { key -> json.get(key) }
+                .filter { it.isJsonPrimitive }
+                .map { it.asString }
                 .mapNotNull(ProfileCountry::normalize)
                 .firstOrNull()
             code

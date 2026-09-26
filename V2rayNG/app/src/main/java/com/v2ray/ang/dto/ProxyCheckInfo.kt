@@ -23,11 +23,13 @@ data class ProxyCheckInfo(
     companion object {
         fun parse(body: String?): ProxyCheckInfo? = try {
             val root = JsonParser.parseString(body ?: return null).asJsonObject
-            val entries = root.entrySet()
-                .filter { it.key != "status" }
-                .associate { (ip, value) ->
-                    val node = value.takeIf { it.isJsonObject }?.asJsonObject
-                    ip to Entry(
+            // keySet() rather than entrySet(): only the key list is needed, and entrySet() is not
+            // available on this Gson version's JsonObject.
+            val entries = root.keySet()
+                .filter { it != "status" }
+                .associateWith { key ->
+                    val node = root.get(key).takeIf { it.isJsonObject }?.asJsonObject
+                    Entry(
                         proxy = node?.text("proxy"),
                         type = node?.text("type"),
                         risk = node?.int("risk"),
