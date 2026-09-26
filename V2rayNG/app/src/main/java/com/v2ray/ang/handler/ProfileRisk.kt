@@ -53,7 +53,8 @@ object ProfileRisk {
         findings += realityFinding(profile)
         findings += transportFinding(profile)
         if (findings.isEmpty()) return RiskReport(RiskLevel.SAFE)
-        return RiskReport(findings.maxByOrNull { it.level.severity } ?: return RiskReport(RiskLevel.SAFE), findings)
+        val worst = findings.maxByOrNull { it.level.severity } ?: return RiskReport(RiskLevel.SAFE)
+        return RiskReport(worst.level, findings)
     }
 
     /** `insecure` disables server certificate validation, which defeats TLS authentication. */
