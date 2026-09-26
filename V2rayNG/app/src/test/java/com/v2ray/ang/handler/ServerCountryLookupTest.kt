@@ -98,10 +98,13 @@ class ServerCountryLookupTest {
         assertEquals(4, calls)
     }
 
-    @Test fun responseRequiresSuccessAndValidCountry() {
+    @Test fun responseRejectsUnusablePayloads() {
         assertEquals("JP", ServerCountryLookup.parseResponse("""{"success":true,"country_code":"JP"}"""))
+        // A missing "success" key is no longer a rejection: ipapi.co and ipinfo.io both answer in
+        // that shape, and requiring the wrapper left those two providers unusable. A payload is
+        // only rejected when it explicitly reports failure or carries no usable country.
         listOf("{}", "bad json", """{"success":false,"country_code":"US"}""",
-            """{"country_code":"US"}""", """{"success":true,"country_code":"ZZ"}""").forEach {
+            """{"success":true,"country_code":"ZZ"}""", """{"error":"nope"}""").forEach {
             assertNull(ServerCountryLookup.parseResponse(it))
         }
     }
