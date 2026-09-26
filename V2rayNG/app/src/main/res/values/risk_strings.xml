@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="risk_flagged">Flagged: %1$s</string>
+    <string name="risk_not_flagged">Not flagged</string>
+    <string name="risk_unknown">Not verifiable</string>
+    <string name="risk_reason_insecure_tls">certificate check off</string>
+    <string name="risk_reason_weak_cipher">weak cipher</string>
+    <string name="risk_reason_missing_public_key">Reality public key missing</string>
+    <string name="risk_reason_missing_sni">no server name</string>
+    <string name="risk_reason_no_tls">no TLS or Reality</string>
+</resources>

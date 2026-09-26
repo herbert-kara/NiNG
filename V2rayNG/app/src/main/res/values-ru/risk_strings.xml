@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="risk_flagged">Помечено: %1$s</string>
+    <string name="risk_not_flagged">Не помечено</string>
+    <string name="risk_unknown">Нельзя проверить</string>
+    <string name="risk_reason_insecure_tls">проверка сертификата отключена</string>
+    <string name="risk_reason_weak_cipher">слабый шифр</string>
+    <string name="risk_reason_missing_public_key">нет публичного ключа Reality</string>
+    <string name="risk_reason_missing_sni">нет имени сервера</string>
+    <string name="risk_reason_no_tls">без TLS или Reality</string>
+</resources>

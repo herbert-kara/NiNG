@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="risk_flagged">Đã gắn cờ: %1$s</string>
+    <string name="risk_not_flagged">Không gắn cờ</string>
+    <string name="risk_unknown">Không kiểm chứng được</string>
+    <string name="risk_reason_insecure_tls">tắt kiểm tra chứng chỉ</string>
+    <string name="risk_reason_weak_cipher">thuật toán yếu</string>
+    <string name="risk_reason_missing_public_key">thiếu khóa công khai Reality</string>
+    <string name="risk_reason_missing_sni">không có tên máy chủ</string>
+    <string name="risk_reason_no_tls">không có TLS hoặc Reality</string>
+</resources>

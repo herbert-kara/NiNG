@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="risk_flagged">پرچم‌دار: %1$s</string>
+    <string name="risk_not_flagged">پرچم ندارد</string>
+    <string name="risk_unknown">قابل ارزیابی نیست</string>
+    <string name="risk_reason_insecure_tls">بررسی گواهی غیرفعال</string>
+    <string name="risk_reason_weak_cipher">رمزنگاری ضعیف</string>
+    <string name="risk_reason_missing_public_key">کلید عمومی Reality نیست</string>
+    <string name="risk_reason_missing_sni">نام سرور نیست</string>
+    <string name="risk_reason_no_tls">بدون TLS یا Reality</string>
+</resources>

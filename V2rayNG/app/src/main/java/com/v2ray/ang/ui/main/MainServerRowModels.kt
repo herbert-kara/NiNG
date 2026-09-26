@@ -8,6 +8,9 @@ import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.nullIfBlank
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.ProfileCountry
+import com.v2ray.ang.handler.ProfileRisk
+import com.v2ray.ang.handler.RiskLevel
+import com.v2ray.ang.handler.RiskReason
 
 internal data class ServerRowUiModel(
     val guid: String,
@@ -19,6 +22,8 @@ internal data class ServerRowUiModel(
     val subscriptionBadge: String,
     val labelCountryCode: String? = null,
     val serverCountryCode: String? = null,
+    val riskLevel: RiskLevel = RiskLevel.UNKNOWN,
+    val riskReason: RiskReason? = null,
 )
 
 internal data class ServerGroupUiState(
@@ -31,6 +36,7 @@ internal fun buildServerRowUiModel(
     subscriptionRemarks: String,
 ): ServerRowUiModel {
     val profile = server.profile
+    val risk = ProfileRisk.evaluate(profile)
     return ServerRowUiModel(
         guid = server.guid,
         profile = profile,
@@ -41,6 +47,8 @@ internal fun buildServerRowUiModel(
         typeDescription = serverProtocolDescription(profile),
         testDelayMillis = server.testDelayMillis,
         subscriptionBadge = subscriptionRemarks.firstOrNull()?.toString().orEmpty(),
+        riskLevel = risk.level,
+        riskReason = risk.primary?.reason,
     )
 }
 

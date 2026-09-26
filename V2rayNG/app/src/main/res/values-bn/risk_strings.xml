@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="risk_flagged">চিহ্নিত: %1$s</string>
+    <string name="risk_not_flagged">চিহ্নিত নয়</string>
+    <string name="risk_unknown">যাচাই করা যায় না</string>
+    <string name="risk_reason_insecure_tls">সার্টিফিকেট যাচাই বন্ধ</string>
+    <string name="risk_reason_weak_cipher">দুর্বল সাইফার</string>
+    <string name="risk_reason_missing_public_key">Reality পাবলিক কী নেই</string>
+    <string name="risk_reason_missing_sni">সার্ভারের নাম নেই</string>
+    <string name="risk_reason_no_tls">TLS বা Reality নেই</string>
+</resources>

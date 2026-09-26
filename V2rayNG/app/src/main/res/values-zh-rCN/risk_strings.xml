@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="risk_flagged">已标记：%1$s</string>
+    <string name="risk_not_flagged">未标记</string>
+    <string name="risk_unknown">无法核验</string>
+    <string name="risk_reason_insecure_tls">已关闭证书校验</string>
+    <string name="risk_reason_weak_cipher">弱加密</string>
+    <string name="risk_reason_missing_public_key">缺少 Reality 公钥</string>
+    <string name="risk_reason_missing_sni">缺少服务器名称</string>
+    <string name="risk_reason_no_tls">无 TLS 或 Reality</string>
+</resources>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="risk_flagged">مُعلَّم: %1$s</string>
+    <string name="risk_not_flagged">غير مُعلَّم</string>
+    <string name="risk_unknown">غير قابل للتحقّق</string>
+    <string name="risk_reason_insecure_tls">التحقّق من الشهادة مُعطَّل</string>
+    <string name="risk_reason_weak_cipher">تشفير ضعيف</string>
+    <string name="risk_reason_missing_public_key">المفتاح العام لـ Reality مفقود</string>
+    <string name="risk_reason_missing_sni">لا يوجد اسم خادم</string>
+    <string name="risk_reason_no_tls">بدون TLS أو Reality</string>
+</resources>
