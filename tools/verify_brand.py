@@ -29,6 +29,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_a_reader_keeps_the_listener_a_latency_test_drops()
     check_a_probe_waits_for_its_core_before_asking_it()
     check_no_silent_catch_where_the_user_is_waiting()
     check_every_for_loop_written_the_way_this_compiler_accepts()
@@ -225,6 +226,43 @@ def check_a_probe_waits_for_its_core_before_asking_it():
         "app waits for the core after starting it for the same reason; the probe has to as well.")
     # and the wait must be bounded, or a core that never comes up hangs the row forever
     assert "READY_BUDGET_MS" in src, "the wait for the core must have a budget, not just a poll"
+
+
+def check_a_reader_keeps_the_listener_a_latency_test_drops():
+    """postProcessForSpeedtest clears the inbounds, so a config built for a reader has none.
+
+    A latency test sends nothing and so drops the listener. A probe that asks a question from
+    inside the tunnel is the opposite case, and it was built with the same call: the core came up
+    with no SOCKS port, the request was refused, and the answer -- no country -- read as a server
+    that could not be reached. Two seconds of waiting for a listener that was never going to open
+    is what the wait cost.
+
+    So the config builder takes the choice, and a caller that needs to send through the tunnel has
+    to say so. The check is on the call rather than the shape, because a flag that defaults to the
+    old behaviour is correct and only a reader has to pass it.
+    """
+    cfg = (APP / "src/main/java/com/v2ray/ang/core/CoreConfigManager.kt").read_text("utf-8")
+    i = cfg.find("fun postProcessForSpeedtest")
+    assert i > 0, "postProcessForSpeedtest is gone; nothing trims a latency config any more"
+    sig = cfg[i:cfg.find(")", i)]
+    assert "keepInbound" in sig, (
+        "postProcessForSpeedtest takes no keepInbound, so it always clears the inbounds. A latency "
+        "test wants that; a config someone has to send a request through does not, and without the "
+        "choice the only way to keep the listener is to stop using this builder at all.")
+    clear = cfg[cfg.find("v2rayConfig.inbounds.clear()", i) - 200:cfg.find("v2rayConfig.inbounds.clear()", i)]
+    assert "if (!keepInbound)" in clear, (
+        "the inbound is cleared unconditionally again, so keepInbound is accepted and ignored. A "
+        "flag that does not change the behaviour is worse than none: it reads as the thing that "
+        "was fixed, and the probe still comes up with nothing listening.")
+
+    probe = (APP / "src/main/java/com/v2ray/ang/handler/ExitCountryProbe.kt").read_text("utf-8")
+    call = probe[probe.find("getV2rayConfig4Speedtest"):]
+    call = call[:call.find(")") + 1]
+    assert "keepInbound = true" in call, (
+        "the probe builds its config without keepInbound, so it gets a latency-test config with no "
+        "listener. The core starts, the probe waits for a port that was never opened, the request "
+        "is refused, and the row keeps the flag it had -- which reads as a server that could not "
+        "be reached rather than a config built for the wrong purpose.")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():

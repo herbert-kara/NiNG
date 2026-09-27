@@ -95,7 +95,14 @@ internal object ExitCountryProbe {
         CoreConfigManager.socksPortOverride = port
         var started = false
         return try {
-            val result = CoreConfigManager.getV2rayConfig4Speedtest(context, guid)
+            // keepInbound: a latency test drops the listener, and this is not a latency test.
+            // Without it the core comes up with nothing to connect to and the request fails as
+            // though the server were unreachable.
+            val result = CoreConfigManager.getV2rayConfig4Speedtest(
+                context,
+                guid,
+                keepInbound = true,
+            )
             if (!result.status || result.content.isEmpty()) {
                 LogUtil.w(TAG, "country probe: no config for this profile")
                 return null

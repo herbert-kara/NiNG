@@ -63,7 +63,12 @@ object CoreConfigManager {
      * on an Aether core is pointed at [aetherPort] when the test opens a core of its own; null
      * leaves it on the port it was written for.
      */
-    fun getV2rayConfig4Speedtest(context: Context, guid: String, aetherPort: Int? = null): ConfigResult {
+    fun getV2rayConfig4Speedtest(
+        context: Context,
+        guid: String,
+        aetherPort: Int? = null,
+        keepInbound: Boolean = false,
+    ): ConfigResult {
         try {
             val configContext = CoreConfigContextBuilder.build(context, guid)
                 ?: return ConfigResult(
@@ -78,7 +83,7 @@ object CoreConfigManager {
             val dependency = AetherDependency.of(configContext.resolvedOutbounds.take(1))
             aetherFailure(context, guid, dependency)?.let { return it }
             val v2rayConfig = buildUnifiedConfig(configContext)
-            postProcessForSpeedtest(v2rayConfig)
+            postProcessForSpeedtest(v2rayConfig, keepInbound)
             if (aetherPort != null && dependency is AetherDependency.Single) {
                 rebindAetherOutbounds(v2rayConfig.outbounds, from = dependency.core.port, port = aetherPort)
             }
@@ -480,9 +485,13 @@ object CoreConfigManager {
     /**
      * Trim runtime sections that are not needed for latency testing.
      */
-    private fun postProcessForSpeedtest(v2rayConfig: V2rayConfig) {
+    private fun postProcessForSpeedtest(v2rayConfig: V2rayConfig, keepInbound: Boolean) {
         v2rayConfig.log.loglevel = MmkvManager.decodeSettingsString(AppConfig.PREF_LOGLEVEL) ?: "warning"
-        v2rayConfig.inbounds.clear()
+        // A latency test sends nothing, so it drops the listener. A reader that has to ask a
+        // question from inside the tunnel is the opposite case: the listener is the only way the
+        // request gets out, and without it the core comes up, accepts nothing, and reports the
+        // server as unreachable.
+        if (!keepInbound) v2rayConfig.inbounds.clear()
         v2rayConfig.routing.rules.clear()
         v2rayConfig.dns = null
         v2rayConfig.fakedns = null
