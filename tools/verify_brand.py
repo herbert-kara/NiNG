@@ -41,6 +41,7 @@ def verify():
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
     check_the_flag_lookup_asks_through_the_tunnel()
+    check_a_compiler_diagnostic_bait_would_be_caught_without_a_build()
     check_a_failed_lookup_reports_why_it_failed()
     check_flag_diagnostics_use_a_level_that_survives_the_default()
     check_the_flag_path_says_where_it_stops()
@@ -932,6 +933,37 @@ def check_the_country_lookup_client_is_a_valid_read_write_property():
             assert ".build()" in line, (
                 "the client is assigned " + line.strip() + " without building it, so the request "
                 "path holds an OkHttpClient.Builder where it needs a client")
+
+
+def check_a_compiler_diagnostic_bait_would_be_caught_without_a_build():
+    """A name appearing in a usage is not a declaration, and the difference cost a release.
+
+    A field that was never declared was reported as present because the check searched for the
+    name, and the name was already on the usage line. The guard that was meant to prevent exactly
+    this -- a stale or missing declaration -- passed on the missing declaration, so the compiler,
+    not the guard, was the thing that noticed.
+
+    Every name this project introduced on the flag path is now checked as a declaration, at the
+    form a declaration takes, so a name that survives only as a usage cannot satisfy the check.
+    """
+    lookup = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
+    for declaration, why in (
+        ("private var client: OkHttpClient",
+         "the client is never declared, so the lookup has no client to build a request with and the "
+         "route and the timeout are both configured on something that is not there"),
+        ("var reasonsForOutcome: List<String> = emptyList()",
+         "the reasons are read on the outcome but no per-lookup list is declared, so either it does "
+         "not compile or the reasons are being shared by every lookup in a concurrent walk"),
+    ):
+        assert declaration in lookup, why + " -- searched as a declaration, not as a name"
+    # A shared field would compile, and would silently misattribute one address's failures to
+    # another. The list has to be a local of resolve().
+    assert "private var reasonsForOutcome" not in lookup, (
+        "the reasons list is a class field, so the eight lookups of a single walk would overwrite "
+        "each other's reasons and the device would be told another address's failure")
+    assert "private data class Attempt(val body: String?, val reason: String)" in lookup, (
+        "the attempt type must stay exactly as declared, carrying a nullable body beside a "
+        "non-null reason")
 
 
 def check_a_failed_lookup_reports_why_it_failed():

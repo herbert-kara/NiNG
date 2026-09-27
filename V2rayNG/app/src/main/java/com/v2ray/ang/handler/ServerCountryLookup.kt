@@ -175,6 +175,9 @@ internal class ServerCountryLookup(
             cache[key]?.takeIf { nowMillis() < it.expires }?.let { return it.code }
         }
         var ipForOutcome: String? = null
+        // Per-lookup, not per-class: the walk runs eight lookups at once, so a shared list
+        // would let one address's provider failures reach another address's outcome.
+        var reasonsForOutcome: List<String> = emptyList()
         val result = try {
             // The literal is already known public here, or absent.
             val ip = literal?.hostAddress ?: resolvePublicIp(key)
@@ -184,12 +187,14 @@ internal class ServerCountryLookup(
             } else {
                 fetchOnce(key, ip) { host ->
                     rateLimit()
-                    // The reasons belong to this one lookup, not to the seam, so they are collected here and
-        // attached to the outcome rather than pushed through the seam the tests drive.
-        val reasons = mutableListOf<String>()
-        val body = fetch?.invoke(host) ?: if (fetch == null) defaultFetch(host, reasons) else null
-        lastReasons = reasons
-        ProfileCountry.normalize(body)
+                    // Collected here rather than pushed through the seam the tests drive, and held
+                    // in a local rather than a field: a walk runs eight of these at once, and a
+                    // field would let one lookup's reasons reach another lookup's outcome.
+                    val reasons = mutableListOf<String>()
+                    val body = fetch?.invoke(host)
+                        ?: if (fetch == null) defaultFetch(host, reasons) else null
+                    reasonsForOutcome = reasons
+                    ProfileCountry.normalize(body)
                 }
             }
         } catch (cancelled: CancellationException) {
@@ -216,7 +221,7 @@ internal class ServerCountryLookup(
                 keyLength = key.length,
                 literal = literal != null,
                 resolvedIp = ipForOutcome,
-                reasons = if (result != null) emptyList() else lastReasons,
+                reasons = if (result != null) emptyList() else reasonsForOutcome,
             )
         )
         return result
@@ -282,7 +287,7 @@ internal class ServerCountryLookup(
                 reasons.add(attempt.reason)
                 continue
             }
-            val code = parseResponse(attempt.body)
+            val code = parseResponse(attempt.body ?: continue)
             if (code == null) {
                 reasons.add("unparsed")
                 continue
