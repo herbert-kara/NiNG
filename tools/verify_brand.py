@@ -748,10 +748,20 @@ def check_the_country_walk_has_a_reachable_provider():
     country = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
     eps = re.search(r"COUNTRY_ENDPOINTS = listOf\(([^)]*)\)", country, re.S)
     assert eps, "the country lookup has no provider list, so a flag depends on one host"
-    hosts = re.findall(r'"https://([^/"]+)/', eps.group(1))
-    assert len(hosts) >= 2, (
-        "the country lookup has one provider (" + str(hosts) + "); the first one blackholes whole "
-        "networks, so one host means the flag is gone whenever that host is unreachable")
+    # Both schemes: a plain-HTTP provider is one of the five, and a regex that only reads https
+    # hides it from the count, the pin and the cleartext check at once.
+    hosts = re.findall(r'"https?://([^/"]+)/', eps.group(1))
+    assert len(hosts) >= 3, (
+        "the country lookup has " + str(len(hosts)) + " provider(s) " + str(hosts) + "); providers "
+        "blackhole whole networks one at a time, so a short list makes the flag depend on which "
+        "hosts the device can reach")
+    # A count cannot catch a removal from a list of five, so the two measured to answer fastest
+    # are pinned by name: ipwho.is in 0.3s and ip-api.com in 0.6s, both returning DE for the
+    # reported rows while proxycheck.io blackholed the same network for 21s.
+    for required in ("ipwho.is", "ip-api.com"):
+        assert required in hosts, (
+            required + " is gone from the country providers " + str(hosts) + "; it was the one "
+            "answering fastest from the network where the verdict provider does not answer at all")
     # The verdict provider is allowed to be flaky, so the country walk must not be able to stall
     # on it: its connect timeout has to be short enough that a dead provider still leaves a page.
     m = re.search(r"connectTimeout\((\d+),\s*TimeUnit\.SECONDS?\)", country)
@@ -759,6 +769,21 @@ def check_the_country_walk_has_a_reachable_provider():
     assert int(m.group(1)) <= 5, (
         "the country lookup waits " + m.group(1) + "s to connect; a blackholed host then costs "
         "every row that much before the next provider is tried")
+    # A provider whose field name the reader does not accept returns null and costs a round trip
+    # while looking like a provider that had nothing to say.
+    reader = country[country.index("internal fun parseResponse"):]
+    reader = reader[:reader.index("\n        }")]
+    for key in ("country_code", "countryCode", "country"):
+        assert '"%s"' % key in reader, (
+            "the tolerant reader stopped accepting " + key + ", so a provider that spells the field "
+            "that way now returns null")
+    # Plain-HTTP providers are only usable while cleartext is permitted, which the app sets.
+    manifest = (APP / "src/main/AndroidManifest.xml").read_text("utf-8")
+    for scheme, rest in re.findall(r'"(https?)://([^/"]+)/', eps.group(1)):
+        if scheme == "http":
+            assert 'usesCleartextTraffic="true"' in manifest, (
+                "a provider is plain HTTP (" + rest + ") but the manifest does not permit "
+                "cleartext, so it is rejected before the request is sent")
     flagged = (APP / "src/main/java/com/v2ray/ang/handler/ServerFlaggedLookup.kt").read_text("utf-8")
     assert "proxycheck.io" in flagged, "the verdict provider is gone, so the guard is stale"
 

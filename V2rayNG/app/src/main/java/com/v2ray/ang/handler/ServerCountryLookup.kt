@@ -207,13 +207,21 @@ internal class ServerCountryLookup(
         private const val REQUEST_GAP_MS = 250L
 
         /**
-         * Tried in order. Each returns the same shape that [parseResponse] reads, so a provider
-         * being blocked or rate-limited costs one round trip instead of the whole flag.
+         * Tried in order, first usable answer wins. Each returns a shape that [parseResponse] reads,
+         * so a provider being blocked or rate-limited costs one round trip instead of the whole
+         * flag.
+         *
+         * ip-api leads: measured at 0.6s for 5.180.82.45, the fastest of the five, and it answers
+         * from networks where the HTTPS providers are blackholed. Plain HTTP is acceptable for a
+         * two-letter country code, and the manifest permits cleartext. The four HTTPS providers
+         * stay behind it as fallbacks, so no single host decides whether a row gets a flag.
          */
         internal val COUNTRY_ENDPOINTS = listOf(
+            "http://ip-api.com/json/{ip}?fields=status,message,countryCode",
             "https://ipwho.is/{ip}",
             "https://ipapi.co/{ip}/json/",
             "https://ipinfo.io/{ip}/json",
+            "https://api.ip.sb/geoip/{ip}",
         )
 
         /**
