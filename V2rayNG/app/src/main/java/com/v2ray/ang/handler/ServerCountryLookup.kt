@@ -74,34 +74,43 @@ internal class ServerCountryLookup(
         return Proxy(Proxy.Type.HTTP, InetSocketAddress(AppConfig.LOOPBACK, port))
     }
 
-    private val clientHolder = lazy {
-        OkHttpClient.Builder()
-            .followRedirects(false).followSslRedirects(false)
-            .callTimeout(5, TimeUnit.SECONDS).connectTimeout(3, TimeUnit.SECONDS)
-            .readTimeout(3, TimeUnit.SECONDS).build()
-    }
+    /**
+     * Rebuilt when the route changes, so a row asked while disconnected is asked again once the
+     * tunnel is up. A builder, not a client: the proxy is chosen per build, and a `Lazy` cannot
+     * delegate a read-write property, so a client held behind one can only be swapped by
+     * reassignment.
+     */
+    private fun newClientBuilder() = OkHttpClient.Builder()
+        .followRedirects(false).followSslRedirects(false)
+        .callTimeout(5, TimeUnit.SECONDS).connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(3, TimeUnit.SECONDS)
 
-    /** Rebuilt whenever the route changes, so a row asked before connecting is asked again after. */
-    private var client by clientHolder
+    private var client: OkHttpClient = newClientBuilder().proxy(Proxy.NO_PROXY).build()
     private var routedThroughTunnel = false
 
-    private fun routeThroughTunnelIfUp() {
-        val proxy = tunnelProxy()
-        val wanted = proxy != null
-        if (wanted == routedThroughTunnel) return
-        client = if (proxy == null) clientHolder.value.proxy(Proxy.NO_PROXY).build()
-        else clientHolder.value.proxy(proxy)
-            .proxyAuthenticator { _, response ->
-                val user = SettingsManager.getSocksUsername()
-                val pass = SettingsManager.getSocksPassword()
-                if (user.isNullOrBlank() || pass.isNullOrBlank()) null
-                else if (response.request.header("Proxy-Authorization") != null) null
-                else response.request.newBuilder()
-                    .header("Proxy-Authorization", Credentials.basic(user, pass)).build()
-            }.build()
-        routedThroughTunnel = wanted
-    }
+    /** Set by close(); a closed lookup must not rebuild a client on a dead executor. */
+    private var closed = false
 
+    private fun routeThroughTunnelIfUp() {
+        if (closed) return
+        val proxy = tunnelProxy()
+        if ((proxy != null) == routedThroughTunnel) return
+        client = if (proxy == null) {
+            newClientBuilder().proxy(Proxy.NO_PROXY).build()
+        } else {
+            newClientBuilder().proxy(proxy)
+                .proxyAuthenticator { _, response ->
+                    val user = SettingsManager.getSocksUsername()
+                    val pass = SettingsManager.getSocksPassword()
+                    if (user.isNullOrBlank() || pass.isNullOrBlank()) null
+                    else if (response.request.header("Proxy-Authorization") != null) null
+                    else response.request.newBuilder()
+                        .header("Proxy-Authorization", Credentials.basic(user, pass)).build()
+                }
+                .build()
+        }
+        routedThroughTunnel = proxy != null
+    }
 
     /**
      * Public IP behind a server address, or null when it is not public. The flagged-reputation
@@ -247,12 +256,11 @@ internal class ServerCountryLookup(
     }
 
     override fun close() {
+        closed = true
         if (dnsExecutorHolder.isInitialized()) dnsExecutor.shutdownNow()
-        if (clientHolder.isInitialized()) {
-            client.dispatcher.cancelAll()
-            client.connectionPool.evictAll()
-            client.dispatcher.executorService.shutdown()
-        }
+        client.dispatcher.cancelAll()
+        client.connectionPool.evictAll()
+        client.dispatcher.executorService.shutdown()
     }
 
     companion object {

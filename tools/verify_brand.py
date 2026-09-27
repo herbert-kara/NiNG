@@ -41,6 +41,7 @@ def verify():
     check_a_flag_walk_survives_its_own_publish()
     check_the_flag_lookup_asks_through_the_tunnel()
     check_the_flag_path_leaves_a_log()
+    check_the_country_lookup_client_is_a_valid_read_write_property()
     check_the_country_walk_has_a_reachable_provider()
     check_concurrent_lookups_of_one_address_share_a_round_trip()
     check_no_concurrency_test_freezes_the_clock_it_depends_on()
@@ -790,6 +791,49 @@ def check_the_country_walk_has_a_reachable_provider():
     assert "proxycheck.io" in flagged, "the verdict provider is gone, so the guard is stale"
 
 
+def check_the_country_lookup_client_is_a_valid_read_write_property():
+    """A read-write property cannot delegate to a Lazy, and the failure is a compile error.
+
+    Routing the lookup through the tunnel needs the client swapped at runtime, so the client is a
+    var. It was first written as `private var client by clientHolder` over a `lazy {}` holding a
+    built client, which does not compile -- Lazy has no setValue -- and because the property never
+    got its real type, every call on it resolved against Proxy instead: `fun proxy(): Proxy?` is
+    deprecated in favour of a val, `Too many arguments for 'fun proxy()'`, `Unresolved reference
+    'build' on receiver of type 'Proxy?'`. Six errors in one build, all from one line.
+
+    close() had the same shape: it guarded on `clientHolder.isInitialized()`, which no longer
+    exists. And a closed lookup must not rebuild a client, because close() has already shut the
+    executor down.
+    """
+    country = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
+    assert "clientHolder" not in country, (
+        "the country lookup still holds its client behind a Lazy; a var cannot delegate to one, so "
+        "this does not compile and every call on client resolves against the wrong type")
+    m = re.search(r"private var client:\s*([\w<>?. ]+)\s*=", country)
+    assert m, "the country lookup has no read-write client to swap when the route changes"
+    assert "OkHttpClient" in m.group(1), (
+        "the client property is typed " + m.group(1) + ", so the tunnel branch assigns a "
+        "Proxy where an OkHttpClient is expected")
+    assert "by clientHolder" not in country, (
+        "the client is delegated to a Lazy, which cannot back a var: Lazy has no setValue")
+    # The builder has to exist as a function, since the proxy is chosen per build.
+    assert "newClientBuilder()" in country, (
+        "the client is no longer built through a builder function, so the tunnel branch and the "
+        "direct branch can drift apart in timeouts")
+    closes = country[country.index("override fun close()"):]
+    closes = closes[:closes.index("\n    }")]
+    assert "closed = true" in closes, "close() does not mark the lookup closed"
+    assert "if (closed) return" in country, (
+        "a closed lookup still rebuilds its client, on an executor close() already shut down")
+    # And every builder call must actually build, so no branch returns a builder where a client
+    # is expected.
+    for line in country.splitlines():
+        if "newClientBuilder()" in line and "=" in line and "fun " not in line:
+            assert ".build()" in line, (
+                "the client is assigned " + line.strip() + " without building it, so the request "
+                "path holds an OkHttpClient.Builder where it needs a client")
+
+
 def check_the_flag_path_leaves_a_log():
     """A missing flag and a lookup that never ran looked identical from adb.
 
@@ -852,11 +896,15 @@ def check_the_flag_lookup_asks_through_the_tunnel():
     # Proxy.NO_PROXY is only allowed as the disconnected fallback. What must not exist any more is
     # the client being built with it unconditionally, which is the bug: every row asked from
     # outside the tunnel, and outside the tunnel the providers are blocked.
-    built = country[country.index("private val clientHolder"):country.index("suspend fun publicIpOf")]
-    assert "Proxy.NO_PROXY" not in built.split("routeThroughTunnelIfUp")[0], (
-        "the client is still built with Proxy.NO_PROXY unconditionally, so every row asks the "
-        "provider from outside the tunnel and returns null wherever the providers are blocked "
-        "directly -- which is why no row showed a flag while the panel showed DE")
+    # Proxy.NO_PROXY is the disconnected fallback. What must not exist is the initial client
+    # being the only one, with the tunnel branch missing: that is the state the panel's DE proves
+    # was wrong, since the panel asks through the tunnel and every row asked without it.
+    initial = re.search(r"private var client:[^\n]*", country)
+    assert initial, "the country lookup has no client property"
+    assert "Proxy.NO_PROXY" in initial.group(0), (
+        "with no tunnel the lookup has to fall back to the direct route, or it has no client at all "
+        "before the first connection")
+    assert "routeThroughTunnelIfUp" in country, "the country lookup never re-routes"
     assert "tunnelProxy" in country, "the country lookup has no tunnel route to switch to"
     res = country[country.index("suspend fun resolve(address: String?): String? {"):]
     res = res[:res.index("\n    }")]
