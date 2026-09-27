@@ -5,7 +5,6 @@ import com.v2ray.ang.AppConfig
 import java.io.Closeable
 import java.io.IOException
 import java.net.InetAddress
-import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.Locale
 import java.util.concurrent.ArrayBlockingQueue
@@ -22,7 +21,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Call
 import okhttp3.Callback
-import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -37,14 +35,6 @@ internal class ServerCountryLookup(
     private val fetch: (suspend (String) -> String?)? = null,
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
     private val cacheLimit: Int = 256,
-    // Default: no tunnel. A tunnel is only meaningful while the service is listening, and reading
-    // the port costs a settings-store read that throws before initialize() in a unit test, so a
-    // default that reached for it would make every construction depend on Android -- which is
-    // what broke twelve tests twice. The one production caller wires the real settings; a
-    // construction that does not is asking for the direct route, which is a valid answer.
-    private val tunnelPort: () -> Int? = { null },
-    private val tunnelUser: () -> String? = { null },
-    private val tunnelPassword: () -> String? = { null },
     // Who records the outcome, if anyone. Default: nobody. LogUtil reads the log level from the
     // settings store, so a LogUtil call anywhere on this path makes every unit test that constructs
     // the lookup fail on MMKV.initialize() -- which is how a diagnostic added to find this bug
@@ -59,7 +49,6 @@ internal class ServerCountryLookup(
      */
     data class CountryOutcome(
         val hit: Boolean,
-        val viaTunnel: Boolean,
         val keyLength: Int,
         val literal: Boolean,
         val resolvedIp: String?,
@@ -83,70 +72,17 @@ internal class ServerCountryLookup(
         }
     }
     private val dnsExecutor by dnsExecutorHolder
-    /**
-     * Where the provider request goes.
-     *
-     * Through the app's own loopback HTTP port when the tunnel is up, exactly as the connection
-     * panel's (DE) line does. That panel is the one place the app already shows a country, and it
-     * works because SpeedtestManager.getRemoteIPInfo() asks through the tunnel, so the answer
-     * describes the exit the user actually has. This lookup was pinned to Proxy.NO_PROXY, which
-     * asks the provider from outside the tunnel, and from a network where the providers are
-     * blocked that is a request to a black hole: it returned null for every row, so no row got a
-     * flag, while the panel two inches above it showed DE. When no tunnel is running there is no
-     * exit to describe, so it falls back to the direct path.
-     */
-    /**
-     * Where the request goes when the tunnel is up.
-     *
-     * A seam like [resolveDns] and [fetch], and for the same reason: reading the app's HTTP port
-     * goes through the settings store, which throws before initialize() in a unit test, so the
-     * lookup tests could not construct the class at all once the route depended on it. Reading the
-     * port is the only settings read on this path, so it is the only thing injected -- the proxy it
-     * builds, the loopback address and the credentials all stay here.
-     */
-    private fun tunnelProxy(): Proxy? {
-        val port = tunnelPort() ?: return null
-        if (port == 0) return null
-        return Proxy(Proxy.Type.HTTP, InetSocketAddress(AppConfig.LOOPBACK, port))
-    }
 
-    /**
-     * Rebuilt when the route changes, so a row asked while disconnected is asked again once the
-     * tunnel is up. A builder, not a client: the proxy is chosen per build, and a `Lazy` cannot
-     * delegate a read-write property, so a client held behind one can only be swapped by
-     * reassignment.
-     */
-    private fun newClientBuilder() = OkHttpClient.Builder()
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .proxy(Proxy.NO_PROXY)
         .followRedirects(false).followSslRedirects(false)
         .callTimeout(5, TimeUnit.SECONDS).connectTimeout(3, TimeUnit.SECONDS)
         .readTimeout(3, TimeUnit.SECONDS)
-
-    private var client: OkHttpClient = newClientBuilder().proxy(Proxy.NO_PROXY).build()
-    private var routedThroughTunnel = false
+        .build()
 
     /** Set by close(); a closed lookup must not rebuild a client on a dead executor. */
     private var closed = false
 
-    private fun routeThroughTunnelIfUp() {
-        if (closed) return
-        val proxy = tunnelProxy()
-        if ((proxy != null) == routedThroughTunnel) return
-        client = if (proxy == null) {
-            newClientBuilder().proxy(Proxy.NO_PROXY).build()
-        } else {
-            newClientBuilder().proxy(proxy)
-                .proxyAuthenticator { _, response ->
-                    val user = tunnelUser()
-                    val pass = tunnelPassword()
-                    if (user.isNullOrBlank() || pass.isNullOrBlank()) null
-                    else if (response.request.header("Proxy-Authorization") != null) null
-                    else response.request.newBuilder()
-                        .header("Proxy-Authorization", Credentials.basic(user, pass)).build()
-                }
-                .build()
-        }
-        routedThroughTunnel = proxy != null
-    }
 
     /**
      * Public IP behind a server address, or null when it is not public. The flagged-reputation
@@ -165,7 +101,6 @@ internal class ServerCountryLookup(
     }?.hostAddress
 
     suspend fun resolve(address: String?): String? {
-        routeThroughTunnelIfUp()
         val key = canonicalTarget(address) ?: return null
         val literal = literalIp(key)
         if (literal != null && !isPublicIp(literal)) return null
@@ -217,7 +152,6 @@ internal class ServerCountryLookup(
         onOutcome?.invoke(
             CountryOutcome(
                 hit = result != null,
-                viaTunnel = routedThroughTunnel,
                 keyLength = key.length,
                 literal = literal != null,
                 resolvedIp = ipForOutcome,

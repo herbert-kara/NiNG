@@ -40,14 +40,14 @@ def verify():
     check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
-    check_the_flag_lookup_asks_through_the_tunnel()
+    check_a_prose_apostrophe_does_not_swallow_kotlin_in_the_bracket_scan()
+    check_a_row_flag_does_not_depend_on_a_running_service()
     check_a_compiler_diagnostic_bait_would_be_caught_without_a_build()
     check_a_failed_lookup_reports_why_it_failed()
     check_flag_diagnostics_use_a_level_that_survives_the_default()
     check_the_flag_path_says_where_it_stops()
     check_the_flag_path_records_without_depending_on_the_settings_store()
     check_the_country_lookup_client_is_a_valid_read_write_property()
-    check_the_tunnel_route_is_injectable_and_testable()
     check_the_route_test_stubs_speak_the_seams_language()
     check_the_country_walk_has_a_reachable_provider()
     check_concurrent_lookups_of_one_address_share_a_round_trip()
@@ -825,7 +825,7 @@ def check_the_route_test_stubs_speak_the_seams_language():
     a dead route, or a request that was never made, which is where the previous two days went. A
     test that returns the wrong type fails the same way as the bug it is looking for.
     """
-    tests = TEST / "com/v2ray/ang/handler/CountryTunnelRouteTest.kt"
+    tests = TEST / "com/v2ray/ang/handler/CountryRouteTest.kt"
     body = tests.read_text("utf-8")
     stubs = re.findall(r'fetch\s*=\s*\{[^}]*?"([^"]*)"', body) + \
         re.findall(r'fetch: suspend \(String\) -> String\? = \{ "([^"]*)"', body)
@@ -835,61 +835,6 @@ def check_the_route_test_stubs_speak_the_seams_language():
             "a fetch stub returns " + value + ", which is a provider body. The seam's result goes "
             "into ProfileCountry.normalize, which wants a bare country code, so the stub yields "
             "null and the test fails exactly like the blocked-provider bug it is looking for.")
-
-
-def check_the_tunnel_route_is_injectable_and_testable():
-    """The route that fixes the flag had no test, and the first version of it broke seven.
-
-    Reading the app's HTTP port goes through MMKV, which throws IllegalStateException before
-    initialize() in a unit test, so ServerCountryLookup could not be constructed at all: every
-    lookup test failed on the line before the one it was written to check. The fix is the same seam
-    resolveDns and fetch already use, and it covers the credentials too, which are also MMKV.
-
-    The assertions that matter are that the port is actually consulted, that the proxy is the
-    loopback port rather than a direct route, and that the provider is still asked about the row's
-    own address -- the tunnel is the route, not the question. Without that last one, a row's flag
-    would report the selected server's exit.
-    """
-    country = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
-    ctor = country[country.index("class ServerCountryLookup("):]
-    ctor = ctor[:ctor.index(") : Closeable")]
-    for seam in ("tunnelPort", "tunnelUser", "tunnelPassword"):
-        assert seam in ctor, (
-            seam + " is not a constructor seam, so reading it reaches MMKV and every lookup test "
-            "dies on MMKV.initialize() before it can assert anything")
-    # Nothing on this class may read the settings store at all, and the seams must default to no
-    # tunnel rather than to the store: a default that reads a global made twelve tests fail on
-    # MMKV.initialize() twice, and a test that constructs the lookup without thinking about the
-    # route would keep inheriting that dependency.
-    assert "SettingsManager." not in country, (
-        "the country lookup reads the settings store itself, so constructing it needs Android and "
-        "every unit test that builds it dies before reaching its own assertion")
-    ctor_txt = ctor
-    for seam in ("tunnelPort", "tunnelUser", "tunnelPassword"):
-        line = [l for l in ctor_txt.splitlines() if seam in l]
-        assert line and "null" in line[0], (
-            seam + " defaults to something other than no tunnel (" + (line[0].strip() if line else "missing")
-            + "), so a construction that does not wire it silently reads the settings store")
-    # The production caller has to do the wiring, or the fix is a no-op in the field: the flag would
-    # go back to the direct route and the panel's DE would stand alone again.
-    vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
-    wiring = vm[vm.index("private val serverCountries"):]
-    wiring = wiring[:wiring.index("private val serverFlags")]   # the whole declaration
-    for seam in ("tunnelPort", "tunnelUser", "tunnelPassword"):
-        assert seam in wiring, (
-            "the ViewModel no longer wires " + seam + ", so the lookup asks the provider directly "
-            "again and no row gets a flag -- the blank page returns with no failing test")
-    tests = TEST / "com/v2ray/ang/handler/CountryTunnelRouteTest.kt"
-    assert tests.exists() and "class CountryTunnelRouteTest {" in tests.read_text("utf-8"), (
-        "no test class covers the tunnel route, so it can be renamed or deleted silently -- the "
-        "route is the whole fix and nothing else asserts it")
-    body = tests.read_text("utf-8")
-    for name, why in (
-        ("theTunnelPortIsConsulted", "nothing checks that the port is read at all"),
-        ("aTunnelOnALoopbackPortDoesNotChangeWhichAddressIsAskedAbout", "nothing checks that the route does not change the question"),
-        ("theRowFlagStillComesFromTheRowAndNotFromTheExit", "nothing checks that a row's flag is its own country"),
-    ):
-        assert name in body, why + " (" + name + ")"
 
 
 def check_the_country_lookup_client_is_a_valid_read_write_property():
@@ -910,29 +855,142 @@ def check_the_country_lookup_client_is_a_valid_read_write_property():
     assert "clientHolder" not in country, (
         "the country lookup still holds its client behind a Lazy; a var cannot delegate to one, so "
         "this does not compile and every call on client resolves against the wrong type")
-    m = re.search(r"private var client:\s*([\w<>?. ]+)\s*=", country)
+    m = re.search(r"private val client:\s*([\w<>?. ]+)\s*=", country)
     assert m, "the country lookup has no read-write client to swap when the route changes"
     assert "OkHttpClient" in m.group(1), (
         "the client property is typed " + m.group(1) + ", so the tunnel branch assigns a "
         "Proxy where an OkHttpClient is expected")
     assert "by clientHolder" not in country, (
         "the client is delegated to a Lazy, which cannot back a var: Lazy has no setValue")
-    # The builder has to exist as a function, since the proxy is chosen per build.
-    assert "newClientBuilder()" in country, (
-        "the client is no longer built through a builder function, so the tunnel branch and the "
-        "direct branch can drift apart in timeouts")
+    # One client, one set of timeouts. The two-route shape this guard used to require is the
+    # shape that made the flag depend on a running service, so what matters now is that the
+    # timeouts are configured once on a single client rather than on two branches.
+    assert "newClientBuilder()" not in country, (
+        "a per-build client is back, which only existed to choose between two routes; with one "
+        "route it can only let the timeouts drift apart from the client actually in use")
+    for timeout in ("callTimeout(5, TimeUnit.SECONDS)", "connectTimeout(3, TimeUnit.SECONDS)",
+                    "readTimeout(3, TimeUnit.SECONDS)"):
+        assert timeout in country, (
+            "the single client no longer sets " + timeout + ", so a hung provider would hold a "
+            "walk open instead of timing out")
     closes = country[country.index("override fun close()"):]
     closes = closes[:closes.index("\n    }")]
     assert "closed = true" in closes, "close() does not mark the lookup closed"
-    assert "if (closed) return" in country, (
-        "a closed lookup still rebuilds its client, on an executor close() already shut down")
-    # And every builder call must actually build, so no branch returns a builder where a client
-    # is expected.
+    # close() still has to mark the lookup closed, but there is no client left to rebuild: the
+    # single client is built once and never replaced, so the only thing close() protects is the
+    # executor it shuts down.
+    assert "if (closed) return" not in country or "client =" not in country, (
+        "the client is being reassigned again, which only made sense while there were two routes")
     for line in country.splitlines():
         if "newClientBuilder()" in line and "=" in line and "fun " not in line:
             assert ".build()" in line, (
                 "the client is assigned " + line.strip() + " without building it, so the request "
                 "path holds an OkHttpClient.Builder where it needs a client")
+
+
+def check_a_prose_apostrophe_does_not_swallow_kotlin_in_the_bracket_scan():
+    """The bracket scanner reads a single quote in a KDoc as a char literal and runs to the next one.
+
+    That swallowed the code after the apostrophe and reported an unclosed brace in a file that
+    compiles, so the guard blamed a test rather than itself. The scanner is a plain Python
+    tokenizer, not a Kotlin parser, and teaching it Kotlin is not worth it: the cost is to keep
+    contractions out of the doc comments, which is a rule worth stating because the alternative
+    -- "fixing" the prose -- restores a false failure.
+
+    The check is on the guard's own behaviour, not on prose: it runs the same scanner and requires
+    it to be balanced, so a future apostrophe shows up as a scanner result and can be read as the
+    scanner artefact it is.
+    """
+    depth = {"{": 0, "(": 0, "[": 0}
+    pairs = {"}": "{", ")": "(", "]": "["}
+    text = (APP / "src/test/java/com/v2ray/ang/handler/CountryRouteTest.kt").read_text("utf-8")
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        two = text[i:i + 2]
+        if two == "//":
+            i = text.find("\n", i)
+            if i < 0:
+                break
+            continue
+        if two == "/*":
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            continue
+        if text[i:i + 3] == '"""':
+            j = text.find('"""', i + 3)
+            i = n if j < 0 else j + 3
+            continue
+        if c == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            continue
+        if c == "'":
+            i += 1
+            while i < n and text[i] != "'":
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            continue
+        if c in depth:
+            depth[c] += 1
+        elif c in pairs:
+            depth[pairs[c]] -= 1
+        i += 1
+    for opener, left in depth.items():
+        assert left == 0, (
+            "the bracket scanner is left " + str(left) + " " + opener + " deep on a file that "
+            "compiles, which means an apostrophe in the prose was read as a char literal. The "
+            "scanner is not a Kotlin parser: keep contractions out of doc comments rather than "
+            "reinstating the false failure.")
+
+
+def check_a_row_flag_does_not_depend_on_a_running_service():
+    """The row lookup was routed through the app's loopback, and the route was the wrong thing to copy.
+
+    The connection panel's (DE) line asks the provider through that loopback because it asks
+    *without* an address, so it can only learn anything by leaving through the tunnel the user is
+    connected to. The row lookup asks *with* the address, so its answer is that endpoint's country
+    whichever route carries the question. Copying the panel's route therefore bought nothing and
+    cost the feature: every lookup failed with ConnectException whenever the service was not
+    listening, which is to say whenever the user had not connected yet.
+
+    The dependency is now gone from the class, and this refuses it coming back -- as a constructor
+    seam, as an import, or as a proxy built at request time. Those are the three shapes it had, and
+    a flag that only appears after connecting is not a flag.
+    """
+    lookup = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
+    for token, why in (
+        ("tunnelPort", "the port seam is back, so the lookup can depend on a running service again"),
+        ("tunnelUser", "the credential seam is back, with it the dependency"),
+        ("tunnelPassword", "the credential seam is back, with it the dependency"),
+        ("tunnelProxy", "a tunnel proxy can be built again, so the flag can vanish while the app "
+                        "is disconnected -- the one state in which a user looks for a flag"),
+        ("InetSocketAddress", "the lookup can address a listening socket again, which is the "
+                              "dependency in one import"),
+        ("Proxy.Type.HTTP", "an http proxy can be configured again, which is the dependency in "
+                            "one expression"),
+    ):
+        assert token not in lookup, why + " (" + token + ")"
+    # The reason it is safe to ask directly: the question carries the address.
+    placeholder = "{" + "ip}"
+    assert placeholder in lookup, (
+        "the provider is no longer asked about a specific address, so a direct request would "
+        "return the caller's country -- the panel's question, not this one")
+    vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
+    assert "tunnelPort = {" not in vm, (
+        "the production wiring passes a tunnel port again, so the flag will go back to failing "
+        "while the app is disconnected")
+    test = Path("C:/Users/nima/PattNG/V2rayNG/app/src/test/java/com/v2ray/ang/handler/CountryRouteTest.kt")
+    assert test.exists(), (
+        "the route test is gone, so nothing stops the loopback dependency from being reintroduced "
+        "by a well-meaning change that copies the panel's route again")
+    body = test.read_text("utf-8")
+    for needed in ("no tunnel seam", "the address of the row", "no tunnel and no connection"):
+        assert needed in body, (
+            "the route test no longer asserts " + needed + ", so it will pass whatever the route "
+            "happens to be")
 
 
 def check_a_compiler_diagnostic_bait_would_be_caught_without_a_build():
@@ -948,7 +1006,7 @@ def check_a_compiler_diagnostic_bait_would_be_caught_without_a_build():
     """
     lookup = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
     for declaration, why in (
-        ("private var client: OkHttpClient",
+        ("private val client: OkHttpClient",
          "the client is never declared, so the lookup has no client to build a request with and the "
          "route and the timeout are both configured on something that is not there"),
         ("var reasonsForOutcome: List<String> = emptyList()",
@@ -1143,69 +1201,13 @@ def check_the_flag_path_records_without_depending_on_the_settings_store():
     # The outcome must carry what distinguishes those two, and no hostname.
     outcome = country[country.index("data class CountryOutcome"):]
     outcome = outcome[:outcome.index(")")] if ")" in outcome else outcome
-    for field in ("hit", "viaTunnel", "keyLength"):
+    for field in ("hit", "keyLength", "resolvedIp", "reasons"):
         assert field in outcome, (
-            "the outcome no longer carries " + field + ", so a blocked provider and a row that was "
-            "never asked report the same thing")
+            "the outcome no longer carries " + field + ", so a blocked provider, a provider that "
+            "answered with something unreadable and a row that was never asked all report the "
+            "same silence -- and the reasons are the only thing that tells them apart")
     assert "key" not in outcome.replace("keyLength", ""), (
         "the outcome carries the address itself, which the root guide forbids logging")
-
-
-def check_the_flag_lookup_asks_through_the_tunnel():
-    """The (DE) in the connection panel and the flag on a row are two different questions.
-
-    The panel asks the provider about nobody: SpeedtestManager.getRemoteIPInfo() calls
-    api.ip.sb/geoip with no address, through the app's loopback HTTP port, and the provider answers
-    with the exit the tunnel currently has. It works, and it is the one place the app already shows
-    a country.
-
-    A row flag asks about one address. This lookup was pinned to Proxy.NO_PROXY, so it asked from
-    outside the tunnel, and on a network where the providers are blocked that is a request into a
-    black hole: null for every row, no flag anywhere, while the panel two inches above showed DE.
-
-    So the route changes and the question does not. A row flag must never be taken from the
-    tunnel's own exit, because that is the selected server's country, not the row's, and every
-    other row would silently inherit it.
-    """
-    country = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
-    # Proxy.NO_PROXY is only allowed as the disconnected fallback. What must not exist any more is
-    # the client being built with it unconditionally, which is the bug: every row asked from
-    # outside the tunnel, and outside the tunnel the providers are blocked.
-    # Proxy.NO_PROXY is the disconnected fallback. What must not exist is the initial client
-    # being the only one, with the tunnel branch missing: that is the state the panel's DE proves
-    # was wrong, since the panel asks through the tunnel and every row asked without it.
-    initial = re.search(r"private var client:[^\n]*", country)
-    assert initial, "the country lookup has no client property"
-    assert "Proxy.NO_PROXY" in initial.group(0), (
-        "with no tunnel the lookup has to fall back to the direct route, or it has no client at all "
-        "before the first connection")
-    assert "routeThroughTunnelIfUp" in country, "the country lookup never re-routes"
-    assert "tunnelProxy" in country, "the country lookup has no tunnel route to switch to"
-    res = country[country.index("suspend fun resolve(address: String?): String? {"):]
-    res = res[:res.index("\n    }")]
-    assert "routeThroughTunnelIfUp()" in res, (
-        "resolve() never re-routes, so a client built while disconnected keeps asking from "
-        "outside the tunnel for the life of the ViewModel and no row gets a flag")
-    # The port is read by the ViewModel, not by the lookup: reading it inside the class would put
-    # a settings-store read on its construction. The wiring is checked above and here.
-    vm_txt = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
-    assert "SettingsManager.getHttpPort()" in vm_txt, (
-        "nothing reads the app's own HTTP port, so the lookup cannot ask through the tunnel the way "
-        "the connection panel does")
-    # The per-address question must survive the route change: every provider has to ask about an
-    # address, because a provider that asks about nobody returns the tunnel's own exit and every
-    # row would inherit the selected server's country.
-    eps = re.search(r"COUNTRY_ENDPOINTS = listOf\((.*?)\n        \)", country, re.S)
-    assert eps, "the country providers could not be read"
-    for endpoint in re.findall(r'"([^"]+)"', eps.group(1)):
-        assert "{ip}" in endpoint, (
-            "a country provider (" + endpoint + ") asks about nobody, so it returns the tunnel's "
-            "own exit and every row would show the selected server's country")
-    # And the same route has to be available to the panel's own lookup, or the two disagree.
-    speed = (APP / "src/main/java/com/v2ray/ang/handler/SpeedtestManager.kt").read_text("utf-8")
-    assert "httpPort = httpPort" in speed and "IP_API_URL" in speed, (
-        "the connection panel no longer asks through the tunnel, so its country and the row flags "
-        "would come from different egresses and could disagree on the same server")
 
 
 def check_a_flag_walk_survives_its_own_publish():

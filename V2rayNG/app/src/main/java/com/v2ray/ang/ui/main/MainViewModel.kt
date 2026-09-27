@@ -130,17 +130,21 @@ class MainViewModel(
     // here, at the one call site that runs on a device, because reading them inside the lookup
     // would put a settings-store read on its construction and every unit test would fail on it.
     private val serverCountries = ServerCountryLookup(
-        tunnelPort = { SettingsManager.getHttpPort() },
-        tunnelUser = { SettingsManager.getSocksUsername() },
-        tunnelPassword = { SettingsManager.getSocksPassword() },
-        // The line that was missing while the flag was. It goes through the seam because LogUtil
-        // reads the log level from the settings store, and calling it from inside the lookup made
-        // every unit test fail on MMKV.initialize() instead of running.
+        // No tunnel. The panel's (DE) asks through the loopback because it asks *without* an
+        // address -- it describes the exit the user is currently standing behind. This lookup asks
+        // *with* the address: the {ip} of the row's own endpoint, so the answer is that
+        // endpoint's country whichever route carries the question. Routing it through the
+        // loopback made every lookup fail with ConnectException whenever the service was not
+        // listening, which is to say whenever the user had not connected yet -- the one moment a
+        // flag is wanted.
+        //
+        // The recorder goes through a seam because LogUtil reads the log level from the settings
+        // store, and calling it from inside the lookup made every unit test fail on
+        // MMKV.initialize() instead of running.
         onOutcome = { outcome ->
             LogUtil.w(
                 AppConfig.TAG,
                 "country lookup ${if (outcome.hit) "hit" else "miss"} " +
-                    "route=${if (outcome.viaTunnel) "tunnel" else "direct"} " +
                     "keyLen=${outcome.keyLength} ip=${outcome.resolvedIp != null} " +
                     "literal=${outcome.literal} " +
                     "why=${outcome.reasons.joinToString(",").ifEmpty { "-" }}"
