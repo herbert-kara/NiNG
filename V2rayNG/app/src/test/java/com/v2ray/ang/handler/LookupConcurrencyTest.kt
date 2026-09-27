@@ -94,12 +94,21 @@ class LookupConcurrencyTest {
             },
             nowMillis = { testScheduler.currentTime },
         )
+        val timeline = mutableListOf<String>()
         coroutineScope {
-            (1..8).map { i -> async { lookup.resolve("10.0.0.$i") } }.awaitAll()
+            (1..8).map { i ->
+                async {
+                    val at = lookup.resolve("10.0.0.$i")
+                    timeline += "10.0.0.$i -> $at at t=${testScheduler.currentTime}"
+                    at
+                }
+            }.awaitAll()
         }
         lookup.close()
         assertTrue(
-            "the country fallback is still serialised, so a failed verdict costs a second wait",
+            "the country fallback is still serialised, so a failed verdict costs a second wait. "
+                + "peak in flight was " + peak.get() + "; the batch finished at "
+                + testScheduler.currentTime + "ms and the row order was " + timeline,
             peak.get() > 1,
         )
     }
