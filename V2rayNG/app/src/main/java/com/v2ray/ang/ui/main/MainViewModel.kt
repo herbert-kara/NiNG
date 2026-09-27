@@ -575,8 +575,11 @@ class MainViewModel(
                 if (code != null) applyMeasuredCountry(guid, code)
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
-                // A profile that cannot be stood up keeps the flag it already had.
+            } catch (e: Exception) {
+                // A profile that cannot be stood up keeps the flag it already had -- but the
+                // failure is named, because a silent catch here is what made a button that did
+                // nothing look identical to a button that was never wired.
+                LogUtil.w("NiNG-country-probe", "measure failed, ${e.javaClass.simpleName}")
             } finally {
                 measuringCountries.remove(guid)
             }

@@ -29,6 +29,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_no_silent_catch_where_the_user_is_waiting()
     check_every_for_loop_written_the_way_this_compiler_accepts()
     check_no_test_file_left_out_of_a_commit()
     check_a_measured_delay_resolves_the_flags()
@@ -168,6 +169,34 @@ def check_every_for_loop_written_the_way_this_compiler_accepts():
         "reports for the other form points at iterator() rather than at the loop, so the "
         "message does not name the thing to change. Every other loop in this tree has "
         "parentheses; write it the same way.")
+
+
+def check_no_silent_catch_where_the_user_is_waiting():
+    """A catch that names nothing makes a working button and a dead one look the same.
+
+    The measure button did nothing on the device and the log was empty, because the coroutine
+    caught Exception, said nothing, and left the row as it was -- which is the correct behaviour
+    for the row and useless for the reader. Nothing said the probe had run, so nothing said it had
+    not, and three builds were spent on a wiring question the log could have answered in one line.
+
+    A catch that swallows a failure the user is waiting on has to say what it swallowed. This only
+    covers the two paths where a user taps and waits: the row measurement and the probe. A catch
+    that reports stays allowed; a catch that does not is what hides a broken button.
+    """
+    vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
+    i = vm.find("fun measureCountryOf(")
+    assert i > 0, "the row measurement is gone; the button would do nothing and nothing would say so"
+    body = vm[i:vm.find("\n    }", i)]
+    assert "catch (_: Exception)" not in body, (
+        "the row measurement catches Exception without naming it. A profile that fails to stand "
+        "up should keep its flag -- and say that it failed, or a button that is wired but broken "
+        "is indistinguishable from a button that was never wired. The catch is where this branch "
+        "lost three builds.")
+    probe = (APP / "src/main/java/com/v2ray/ang/handler/ExitCountryProbe.kt").read_text("utf-8")
+    assert probe.count("LogUtil.w(TAG") >= 4, (
+        "a probe costs a whole core and the user waits on a row, so each step has to be visible: "
+        "asked, port chosen, core up, answer read. Four lines, and without them a failure here "
+        "leaves no trace at all.")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():

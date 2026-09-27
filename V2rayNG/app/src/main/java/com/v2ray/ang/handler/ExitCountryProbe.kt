@@ -53,9 +53,20 @@ internal object ExitCountryProbe {
      * connection, and only the answer is of any use to a reader.
      */
     suspend fun countryOf(context: Context, guid: String): String? = runInterruptible(Dispatchers.IO) {
+        // Every step of a probe says so. A probe costs a core and the user is waiting on a row,
+        // so a failure that leaves no trace is indistinguishable from a button that does nothing.
+        LogUtil.w(TAG, "country probe: asked")
         val port = Utils.findRandomFreePort()
+        LogUtil.w(TAG, "country probe: free port $port")
         val answer = askThrough(context, guid, port)
-        if (answer == null) null else parseCountry(answer)
+        if (answer == null) {
+            LogUtil.w(TAG, "country probe: no answer")
+            null
+        } else {
+            val code = parseCountry(answer)
+            LogUtil.w(TAG, "country probe: read a country, normalized=${code != null}")
+            code
+        }
     }
 
     /**
@@ -86,7 +97,9 @@ internal object ExitCountryProbe {
             // probe never claims the device network the way a VPN run would.
             controller.startLoop(result.content, 0)
             started = true
-            requestThrough(port)
+            val answer = requestThrough(port)
+            LogUtil.w(TAG, "country probe: through the tunnel, got=${answer != null}")
+            answer
         } catch (e: Exception) {
             LogUtil.w(TAG, "country probe failed, ${e.javaClass.simpleName}")
             null
