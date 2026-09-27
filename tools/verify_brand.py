@@ -29,6 +29,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_a_probe_waits_for_its_core_before_asking_it()
     check_no_silent_catch_where_the_user_is_waiting()
     check_every_for_loop_written_the_way_this_compiler_accepts()
     check_no_test_file_left_out_of_a_commit()
@@ -197,6 +198,33 @@ def check_no_silent_catch_where_the_user_is_waiting():
         "a probe costs a whole core and the user waits on a row, so each step has to be visible: "
         "asked, port chosen, core up, answer read. Four lines, and without them a failure here "
         "leaves no trace at all.")
+
+
+def check_a_probe_waits_for_its_core_before_asking_it():
+    """startLoop returns before the core listens, so a request sent right after it is refused.
+
+    The probe asked 165ms after startLoop and got nothing, and the answer looked like a server
+    that could not be reached: the listener was not open yet. The app knows this -- the service
+    start path checks isRunning() after startLoop for exactly this reason -- and the probe skipped
+    it, so the only difference between a profile that is broken and a profile that was asked too
+    early was invisible.
+
+    So the wait is required, and it has to come between the two calls rather than near them: a
+    check in the file is not a check in the order it runs.
+    """
+    src = (APP / "src/main/java/com/v2ray/ang/handler/ExitCountryProbe.kt").read_text("utf-8")
+    start = src.find("startLoop(")
+    assert start > 0, "the probe no longer starts a core, so it can no longer read an exit"
+    ask = src.find("requestThrough(port)", start)
+    assert ask > start, "the probe must ask through the tunnel it just started"
+    between = src[start:ask]
+    assert "awaitReady" in between, (
+        "the probe asks through the tunnel immediately after startLoop. startLoop returns before "
+        "the SOCKS listener is open, so the request is refused and the answer -- no country -- "
+        "reads as a server that cannot be reached rather than a question asked too early. The "
+        "app waits for the core after starting it for the same reason; the probe has to as well.")
+    # and the wait must be bounded, or a core that never comes up hangs the row forever
+    assert "READY_BUDGET_MS" in src, "the wait for the core must have a budget, not just a poll"
 
 
 def check_a_modifier_extension_is_imported_not_a_member():

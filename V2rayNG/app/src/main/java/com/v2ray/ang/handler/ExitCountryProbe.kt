@@ -43,6 +43,12 @@ internal object ExitCountryProbe {
     private const val ENDPOINT = "https://ipwho.is/"
 
     private const val LOOPBACK = "127.0.0.1"
+    /** How long the core is given to open its SOCKS listener, inside the overall budget. */
+    private const val READY_BUDGET_MS = 2_500L
+
+    /** How often the listener is checked while waiting for it. */
+    private const val READY_POLL_MS = 100L
+
     private const val TAG = "NiNG-country-probe"
 
     /**
@@ -97,6 +103,7 @@ internal object ExitCountryProbe {
             // probe never claims the device network the way a VPN run would.
             controller.startLoop(result.content, 0)
             started = true
+            awaitReady(port, READY_BUDGET_MS)
             val answer = requestThrough(port)
             LogUtil.w(TAG, "country probe: through the tunnel, got=${answer != null}")
             answer
@@ -116,6 +123,28 @@ internal object ExitCountryProbe {
     }
 
     /**
+     * Waits for the core to have its SOCKS listener open, up to [budgetMs].
+     *
+     * startLoop returns before the core is listening, so a request made straight after it is
+     * refused: the answer then says nothing about the country, only that the question was asked
+     * too early. This is the same wait CoreServiceManager does after a real start, and it is
+     * bounded, so a core that never comes up costs the budget once rather than hanging a row.
+     */
+    private fun awaitReady(port: Int, budgetMs: Long) {
+        val deadline = System.currentTimeMillis() + budgetMs
+        while (System.currentTimeMillis() < deadline) {
+            if (canConnect(port)) return
+            Thread.sleep(READY_POLL_MS)
+        }
+    }
+
+    private fun canConnect(port: Int): Boolean = try {
+        java.net.Socket().use { it.connect(InetSocketAddress(LOOPBACK, port), READY_POLL_MS.toInt()) }
+    } catch (_: Exception) {
+        false
+    }
+
+    /**
      * One request through the SOCKS listener the profile was just brought up on.
      *
      * The client is built per probe and shut down with it, so a probe cannot leave a connection
@@ -127,13 +156,19 @@ internal object ExitCountryProbe {
             .connectTimeout(PROBE_BUDGET_MS, TimeUnit.MILLISECONDS)
             .callTimeout(PROBE_BUDGET_MS, TimeUnit.MILLISECONDS)
             .readTimeout(PROBE_BUDGET_MS, TimeUnit.MILLISECONDS)
+            .retryOnConnectionFailure(false)
             .build()
         return try {
             val request = Request.Builder().url(ENDPOINT).build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) null else response.body?.string()
             }
-        } catch (_: IOException) {
+        } catch (e: IOException) {
+            // The failure is named because the difference between a refused connection, a timeout
+            // and a TLS failure is the difference between a core that is not listening yet, a
+            // server that needs a moment, and a profile that cannot reach the service at all.
+            // None of them names the server, so none of them puts a credential in the log.
+            LogUtil.w(TAG, "country probe: request failed, ${e.javaClass.simpleName}")
             null
         } catch (_: IllegalArgumentException) {
             // The endpoint was not accepted: nothing to read and nothing worth reporting.
