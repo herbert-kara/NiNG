@@ -40,6 +40,7 @@ def verify():
     check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
+    check_a_changed_return_type_does_not_leave_boolean_assertions_behind()
     check_a_measured_country_is_the_one_that_lands_on_the_row()
     check_a_bounded_read_bounds_instead_of_judging_the_size()
     check_a_test_address_would_survive_the_public_ip_filter()
@@ -889,6 +890,32 @@ def check_the_country_lookup_client_is_a_valid_read_write_property():
             assert ".build()" in line, (
                 "the client is assigned " + line.strip() + " without building it, so the request "
                 "path holds an OkHttpClient.Builder where it needs a client")
+
+
+def check_a_changed_return_type_does_not_leave_boolean_assertions_behind():
+    """completeCurrent stopped returning Boolean when it started carrying the tested server.
+
+    The return type changed from Boolean to Completed? so a completed test with no selected server
+    could be told apart from a reply belonging to a test already replaced. Seven call sites in the
+    existing test kept asserting a Boolean, and the build failed at compile rather than at the
+    assertion -- which is the only reason it was caught at all. A signature change is exactly the
+    kind of edit a reviewer reads past, so the callers are checked here rather than trusted.
+    """
+    queue = (APP / "src/main/java/com/v2ray/ang/ui/main/MainTestRequests.kt").read_text("utf-8")
+    assert "fun completeCurrent(id: String): Completed?" in queue, (
+        "completeCurrent must return Completed? so a completed test with no server is "
+        "distinguishable from a reply for a test that was already replaced")
+    for name in ("MainTestRequestsTest.kt", "MeasuredCountryTest.kt"):
+        path = Path("C:/Users/nima/PattNG/V2rayNG/app/src/test/java/com/v2ray/ang/ui/main") / name
+        if not path.exists():
+            continue
+        text = path.read_text("utf-8")
+        for stale in ("assertTrue(requests.completeCurrent", "assertFalse(requests.completeCurrent",
+                      "assertTrue(queue.completeCurrent", "assertFalse(queue.completeCurrent"):
+            assert stale not in text, (
+                name + " still asserts a Boolean from " + stale.rstrip(")(") + ", which no longer "
+                "returns one. The assertion is about whether the test completed, so it has to ask "
+                "the new question or the file will not compile.")
 
 
 def check_a_measured_country_is_the_one_that_lands_on_the_row():
