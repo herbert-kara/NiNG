@@ -426,35 +426,144 @@ def check_the_sources_have_no_defect_a_compiler_would_catch():
                 + " and returns Unit, so the result never leaves the function")
 
 
+def check_the_sources_have_no_defect_a_compiler_would_catch():
+    """Three builds died on mistakes a compiler finds in seconds and a text pass can also find.
+
+    Duplicate imports, a helper whose declared parameter type does not match its body's, and a
+    function that returns the wrong type are all local, all mechanical, and all cost a full native
+    build to discover. Nothing here needs to understand Kotlin; it only needs to check that the
+    file is internally consistent.
+    """
+    files = list((APP / "src/main/java").rglob("*.kt")) + list((APP / "src/test/java").rglob("*.kt"))
+    for src in files:
+        text = src.read_text("utf-8")
+        rel = src.relative_to(APP)
+        imports = [l.strip() for l in text.splitlines() if l.startswith("import ")]
+        dupes = sorted({i for i in imports if imports.count(i) > 1})
+        assert not dupes, str(rel) + " imports " + dupes[0] + " twice, which the compiler rejects"
+        # Brackets counted with a scanner rather than a regex: a hand edit that drops a closing
+        # brace must not read as balanced. A regex cannot do this reliably, because a Kotlin string
+        # may hold any character, including the ones a pattern treats as syntax.
+        depth = {"{": 0, "(": 0, "[": 0}
+        pairs = {"}": "{", ")": "(", "]": "["}
+        i, n = 0, len(text)
+        while i < n:
+            c = text[i]
+            two = text[i:i + 2]
+            if two == "//":
+                i = text.find("\n", i)
+                if i < 0: break
+                continue
+            if two == "/*":
+                j = text.find("*/", i + 2)
+                i = n if j < 0 else j + 2
+                continue
+            if text[i:i + 3] == '"""':
+                j = text.find('"""', i + 3)
+                i = n if j < 0 else j + 3
+                continue
+            if c == '"':
+                i += 1
+                while i < n and text[i] != '"':
+                    i += 2 if text[i] == "\\" else 1
+                i += 1
+                continue
+            if c == "'":
+                i += 1
+                while i < n and text[i] != "'":
+                    i += 2 if text[i] == "\\" else 1
+                i += 1
+                continue
+            if c in depth:
+                depth[c] += 1
+            elif c in pairs:
+                depth[pairs[c]] -= 1
+            i += 1
+        for opener in depth:
+            closer = {"{": "}", "(": ")", "[": "]"}[opener]
+            assert depth[opener] == 0, (
+                str(rel) + " leaves " + str(depth[opener]) + " " + opener
+                + " unclosed, so it cannot compile")
+        # A signature that promises one type and returns another. A suspend (String) -> T lambda
+        # parameter is matched on its own, since the inner parentheses are not the call's own.
+        for m in re.finditer(r"\bfun\s+(fetchOnce|fetchFrom|fetch)\b", text):
+            name = m.group(1)
+            sig = text[m.start():m.start() + 300]
+            lam = re.search(r"request\s*:\s*suspend\s*\(\s*String\s*\)\s*->\s*([\w?<>]+)", sig)
+            if not lam:
+                continue
+            ret = re.search(r"\)\s*:\s*([\w?<>]+)", sig)
+            assert ret, str(rel) + ": " + name + "() has no declared return type to compare"
+            assert lam.group(1) == ret.group(1), (
+                str(rel) + ": " + name + "() takes a request returning " + lam.group(1)
+                + " but declares " + ret.group(1) + ", so every call is a type error")
+        # A block-bodied function whose last statement is a bare value is a discarded result.
+        for m in re.finditer(r"\n    (?:private |internal )?(?:suspend )?fun (\w+)\([^)]*\)(?:: ([\w?<>]+))? \{", text):
+            name = m.group(1)
+            if name in ("main", "toString", "equals", "hashCode", "invoke", "get", "compareTo"):
+                continue
+            i = m.end()
+            depth, j = 1, i
+            while j < len(text) and depth:
+                if text[j] == "{": depth += 1
+                elif text[j] == "}": depth -= 1
+                j += 1
+            body = text[i:j - 1]
+            if "return" in body:
+                continue
+            tail = [l.strip() for l in body.rstrip().splitlines() if l.strip()]
+            if not tail or tail[-1].endswith(("}", ")", ",")):
+                continue
+            # A trailing bare expression in a Unit function is fine; in a valued one it is not.
+            assert not re.fullmatch(r"[\w.]+\([^()]*\)", tail[-1]), (
+                str(rel) + ": " + name + "() ends with the discarded expression " + tail[-1]
+                + " and returns Unit, so the result never leaves the function")
+
+
 def check_concurrent_lookups_of_one_address_share_a_round_trip():
     """Splitting the single lock dropped deduplication as a side effect.
 
     The old resolve() held one mutex, so two callers wanting the same address necessarily shared
     one request. Splitting it into a cache lock and a pacing lock let those two requests race, and
-    four of the tests caught it. The pacing gap is what the provider needs; deduplication is a
-    separate property and needs its own guard, or the next lock change takes it away again.
+    four of the tests caught it. Deduplication is a separate property from pacing and needs its own
+    guard, or the next lock change takes it away again.
+
+    The first implementation held a Deferred per address, which is the textbook answer and does not
+    work here: the Deferred has to be started in a scope that is not the caller's, and a detached
+    coroutine is cancelled out from under runTest, so the tests failed for a reason no amount of
+    source inspection would show. What is in place is a lock per address, so the guard looks for
+    that and refuses the Deferred coming back.
     """
-    for name, result in (("ServerFlaggedLookup", "FlagVerdict?"), ("ServerCountryLookup", "String?")):
+    for name in ("ServerFlaggedLookup", "ServerCountryLookup"):
         src = (APP / ("src/main/java/com/v2ray/ang/handler/" + name + ".kt")).read_text("utf-8")
-        assert "inFlight" in src, name + " has no in-flight map, so equal addresses race each other"
-        # Checking that the name appears is not enough: the call has to be on the path that
-        # resolve() actually takes, or a leftover "fetchOnce(" in a comment keeps the guard green.
+        # Strip comments first: a KDoc that explains the mechanism would otherwise keep the guard
+        # green after the mechanism is gone.
+        code = re.sub(r"/\*[\s\S]*?\*/", "", src)
+        code = re.sub(r"//[^\n]*", "", code)
+        assert re.search(r"private val perAddress\s*=", code), (
+            name + " has no per-address lock, so equal addresses race each other")
         body = re.search(r"    suspend fun resolve[(].*?\n    \}", src, re.S)
         assert body, name + " has no resolve() to follow"
         assert "fetchOnce(" in body.group(0), (
             name + ": resolve() no longer goes through the shared round trip, so equal addresses "
             "race each other again")
-        m = re.search(r"private val inFlight = mutableMapOf<String, Deferred<([^>]*)>>", src)
-        assert m, name + " does not type its in-flight map; a plain map would leak a half-built entry"
-        assert m.group(1) == result, (
-            name + " holds Deferred<" + m.group(1) + "> but resolve() returns " + result)
-        # The entry has to be dropped in a finally, or a failed lookup poisons the key for its TTL.
         fn = re.search(r"private suspend fun fetchOnce[(].*?\n    \}", src, re.S)
         assert fn, name + " has no fetchOnce()"
-        assert "finally" in fn.group(0), (
-            name + ": a cancelled or failed fetchOnce() would leave its key in the in-flight map")
-        assert "inFlight.remove" in fn.group(0), name + ": fetchOnce() never removes its in-flight entry"
-
+        f = fn.group(0)
+        assert "computeIfAbsent" in f or "perAddress[" in f, (
+            name + ": fetchOnce() does not look its lock up by address, so it serialises everything")
+        assert "withLock" in f, name + ": fetchOnce() does not hold a lock across the request"
+        fcode = re.sub(r"/\*[\s\S]*?\*/", "", f)
+        fcode = re.sub(r"//[^\n]*", "", fcode)
+        assert "finally" in fcode, (
+            name + ": a failed fetchOnce() would leave its lock in the map forever")
+        assert re.search(r"perAddress\.remove\(", fcode), (
+            name + ": fetchOnce() never drops its lock, so the map grows with every address seen")
+        # A detached coroutine is the mistake this replaced; it must not creep back.
+        assert "async(" not in code, (
+            name + ": fetchOnce() starts a detached coroutine again, which runTest cancels")
+        assert "Deferred" not in code, (
+            name + ": a shared Deferred is back; it needs a detached scope to start")
 
 def check_the_launcher_wordmark_is_teal_and_20_percent_smaller():
     """The wordmark was asked to shrink by a fifth and take the palette teal.

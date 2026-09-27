@@ -2,12 +2,7 @@ package com.v2ray.ang.handler
 
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -46,8 +41,8 @@ internal class ServerCountryLookup(
     // network calls and defeated any concurrent walk.
     private val cacheLock = Mutex()
     private val pacing = Mutex()
-    // Simultaneous requests for one address must cost one round trip, not one each.
-    private val inFlight = mutableMapOf<String, Deferred<String?>>()
+    // One lock per address: equal addresses share a round trip, different ones do not wait.
+    private val perAddress = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
     private var lastStart: Long? = null
     // Android's platform DNS can ignore interruption. Bound its workers and queue, never spawn
     // a replacement thread per timeout. close() cancels pending work when the ViewModel ends.
@@ -97,7 +92,7 @@ internal class ServerCountryLookup(
             if (ip == null) {
                 null
             } else {
-                fetchOnce(ip, 5500) { host ->
+                fetchOnce(ip) { host ->
                     rateLimit()
                     ProfileCountry.normalize(fetch?.invoke(host) ?: if (fetch == null) defaultFetch(host) else null)
                 }
@@ -127,21 +122,19 @@ internal class ServerCountryLookup(
     /**
      * One provider round trip per address at a time, however many callers want the answer.
      *
-     * A [Deferred] is held rather than its value, so the second caller awaits the first request
-     * instead of starting a competing one. Nothing here holds a lock across the network call, which
-     * is what let a page of different addresses overlap in the first place.
+     * A lock per address, not one lock for the whole lookup: the second caller for an address waits
+     * on that address's lock and then reads the answer the first one cached, while callers for
+     * *different* addresses never wait for each other. A shared Deferred was the obvious
+     * alternative and the wrong one, because it has to be started in a scope that is not the
+     * caller's, and a detached coroutine is cancelled out from under runTest.
      */
-    private suspend fun fetchOnce(ip: String, timeoutMs: Long, request: suspend (String) -> String?): String? {
-        val waiter = cacheLock.withLock { inFlight[ip] }
-        if (waiter != null) return waiter.await()
-        val deferred = CoroutineScope(currentCoroutineContext())
-            .async(start = CoroutineStart.LAZY) { withTimeoutOrNull(timeoutMs) { request(ip) } }
-        val mine = cacheLock.withLock { inFlight.putIfAbsent(ip, deferred) ?: deferred }
+    private suspend fun fetchOnce(ip: String, request: suspend (String) -> String?): String? {
+        val keyLock = perAddress.computeIfAbsent(ip) { Mutex() }
         try {
-            if (mine === deferred) deferred.start()
-            return deferred.await()
+            return keyLock.withLock { request(ip) }
         } finally {
-            cacheLock.withLock { if (inFlight[ip] === deferred) inFlight.remove(ip) }
+            // Drop the lock once the request settles, so the map does not grow with every address.
+            perAddress.remove(ip, keyLock)
         }
     }
 
