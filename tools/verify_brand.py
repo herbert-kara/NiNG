@@ -191,6 +191,21 @@ def check_the_flag_path_is_covered_by_a_real_test():
         assert 'FakeFlagService' not in body, (
             f'{t.name} tests a hand-made fake instead of the real lookup, so it cannot fail when '
             'the real one does')
+    # A resolved verdict used to be dropped by the next list rebuild, so the badge fell back to
+    # "unchecked" right after resolving. The carry-over and its test have to stay.
+    carry = APP / 'src/main/java/com/v2ray/ang/ui/main/RowLookupCarryOver.kt'
+    assert carry.exists(), 'the row carry-over is gone; a rebuild drops the verdict again'
+    body = carry.read_text('utf-8')
+    assert 'serverCountryCode = old.serverCountryCode' in body, 'the location flag is dropped on rebuild'
+    assert 'flagStatus = old.flagStatus' in body, (
+        'the reputation verdict is dropped on rebuild, so a resolved row falls back to "unchecked"')
+    view_model = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt').read_text('utf-8')
+    assert 'RowLookupCarryOver.carry(' in view_model, (
+        'the list rebuild no longer uses the carry-over, so lookups are lost on every update')
+    carry_test = ROOT / 'V2rayNG/app/src/test/java/com/v2ray/ang/ui/main/RowLookupCarryOverTest.kt'
+    assert carry_test.exists(), 'the regression test for a verdict lost on rebuild is gone'
+    assert 'aResolvedVerdictSurvivesAListRebuild' in carry_test.read_text('utf-8'), (
+        'no test asserts a resolved verdict survives a rebuild')
 
 def check_release_workflow():
     """Catch the release-pipeline mistakes that compile fine and fail only at run time.

@@ -532,15 +532,15 @@ class MainViewModel(
         val filteredServers = applyKeywordFilter(servers)
         val rows = buildServerRows(groupId, filteredServers)
         mutableServerGroupState(groupId).update { previous ->
-            val previousRows = previous.rows.associateBy { it.guid }
             ServerGroupUiState(
                 servers = filteredServers,
-                rows = rows.map { row ->
-                    val old = previousRows[row.guid]
-                    if (old?.profile?.server == row.profile.server) {
-                        row.copy(serverCountryCode = old?.serverCountryCode)
-                    } else row
-                }
+                // Every list update rebuilds the rows from the profile, and a rebuilt row starts
+                // with no country and no verdict. The lookup results are per address, so they are
+                // carried over by RowLookupCarryOver; previously only the country was, and the
+                // verdict was dropped on every rebuild. Any ping test or list refresh then reset
+                // the reputation badge to "unchecked" a moment after it had resolved, which is why
+                // the rows showed a verdict that never stuck.
+                rows = RowLookupCarryOver.carry(rows, previous.rows)
             )
         }
     }
