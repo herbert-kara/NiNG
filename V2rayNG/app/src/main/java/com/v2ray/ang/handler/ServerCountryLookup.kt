@@ -1,6 +1,17 @@
 package com.v2ray.ang.handler
 
 import com.google.gson.JsonParser
+import com.v2ray.ang.AppConfig
+import java.io.Closeable
+import java.io.IOException
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.util.Locale
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -11,18 +22,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import java.io.Closeable
-import java.io.IOException
-import java.net.InetAddress
-import java.net.Proxy
-import java.util.Locale
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
 
 /**
  * Ingress geography, independent of the existing proxied exit-IP test in SpeedtestManager.
@@ -52,14 +55,52 @@ internal class ServerCountryLookup(
         }
     }
     private val dnsExecutor by dnsExecutorHolder
+    /**
+     * Where the provider request goes.
+     *
+     * Through the app's own loopback HTTP port when the tunnel is up, exactly as the connection
+     * panel's (DE) line does. That panel is the one place the app already shows a country, and it
+     * works because SpeedtestManager.getRemoteIPInfo() asks through the tunnel, so the answer
+     * describes the exit the user actually has. This lookup was pinned to Proxy.NO_PROXY, which
+     * asks the provider from outside the tunnel, and from a network where the providers are
+     * blocked that is a request to a black hole: it returned null for every row, so no row got a
+     * flag, while the panel two inches above it showed DE. When no tunnel is running there is no
+     * exit to describe, so it falls back to the direct path.
+     */
+    private fun tunnelProxy(): Proxy? {
+        val port = SettingsManager.getHttpPort()
+        if (port == 0) return null
+        return Proxy(Proxy.Type.HTTP, InetSocketAddress(AppConfig.LOOPBACK, port))
+    }
+
     private val clientHolder = lazy {
-        OkHttpClient.Builder().proxy(Proxy.NO_PROXY)
+        OkHttpClient.Builder()
             .followRedirects(false).followSslRedirects(false)
             .callTimeout(5, TimeUnit.SECONDS).connectTimeout(3, TimeUnit.SECONDS)
             .readTimeout(3, TimeUnit.SECONDS).build()
     }
 
-    private val client by clientHolder
+    /** Rebuilt whenever the route changes, so a row asked before connecting is asked again after. */
+    private var client by clientHolder
+    private var routedThroughTunnel = false
+
+    private fun routeThroughTunnelIfUp() {
+        val proxy = tunnelProxy()
+        val wanted = proxy != null
+        if (wanted == routedThroughTunnel) return
+        client = if (proxy == null) clientHolder.value.proxy(Proxy.NO_PROXY).build()
+        else clientHolder.value.proxy(proxy)
+            .proxyAuthenticator { _, response ->
+                val user = SettingsManager.getSocksUsername()
+                val pass = SettingsManager.getSocksPassword()
+                if (user.isNullOrBlank() || pass.isNullOrBlank()) null
+                else if (response.request.header("Proxy-Authorization") != null) null
+                else response.request.newBuilder()
+                    .header("Proxy-Authorization", Credentials.basic(user, pass)).build()
+            }.build()
+        routedThroughTunnel = wanted
+    }
+
 
     /**
      * Public IP behind a server address, or null when it is not public. The flagged-reputation
@@ -78,6 +119,7 @@ internal class ServerCountryLookup(
     }?.hostAddress
 
     suspend fun resolve(address: String?): String? {
+        routeThroughTunnelIfUp()
         val key = canonicalTarget(address) ?: return null
         val literal = literalIp(key)
         if (literal != null && !isPublicIp(literal)) return null

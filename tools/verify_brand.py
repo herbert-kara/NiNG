@@ -39,6 +39,7 @@ def verify():
     check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
+    check_the_flag_lookup_asks_through_the_tunnel()
     check_the_country_walk_has_a_reachable_provider()
     check_concurrent_lookups_of_one_address_share_a_round_trip()
     check_no_concurrency_test_freezes_the_clock_it_depends_on()
@@ -786,6 +787,56 @@ def check_the_country_walk_has_a_reachable_provider():
                 "cleartext, so it is rejected before the request is sent")
     flagged = (APP / "src/main/java/com/v2ray/ang/handler/ServerFlaggedLookup.kt").read_text("utf-8")
     assert "proxycheck.io" in flagged, "the verdict provider is gone, so the guard is stale"
+
+
+def check_the_flag_lookup_asks_through_the_tunnel():
+    """The (DE) in the connection panel and the flag on a row are two different questions.
+
+    The panel asks the provider about nobody: SpeedtestManager.getRemoteIPInfo() calls
+    api.ip.sb/geoip with no address, through the app's loopback HTTP port, and the provider answers
+    with the exit the tunnel currently has. It works, and it is the one place the app already shows
+    a country.
+
+    A row flag asks about one address. This lookup was pinned to Proxy.NO_PROXY, so it asked from
+    outside the tunnel, and on a network where the providers are blocked that is a request into a
+    black hole: null for every row, no flag anywhere, while the panel two inches above showed DE.
+
+    So the route changes and the question does not. A row flag must never be taken from the
+    tunnel's own exit, because that is the selected server's country, not the row's, and every
+    other row would silently inherit it.
+    """
+    country = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
+    # Proxy.NO_PROXY is only allowed as the disconnected fallback. What must not exist any more is
+    # the client being built with it unconditionally, which is the bug: every row asked from
+    # outside the tunnel, and outside the tunnel the providers are blocked.
+    built = country[country.index("private val clientHolder"):country.index("suspend fun publicIpOf")]
+    assert "Proxy.NO_PROXY" not in built.split("routeThroughTunnelIfUp")[0], (
+        "the client is still built with Proxy.NO_PROXY unconditionally, so every row asks the "
+        "provider from outside the tunnel and returns null wherever the providers are blocked "
+        "directly -- which is why no row showed a flag while the panel showed DE")
+    assert "tunnelProxy" in country, "the country lookup has no tunnel route to switch to"
+    res = country[country.index("suspend fun resolve(address: String?): String? {"):]
+    res = res[:res.index("\n    }")]
+    assert "routeThroughTunnelIfUp()" in res, (
+        "resolve() never re-routes, so a client built while disconnected keeps asking from "
+        "outside the tunnel for the life of the ViewModel and no row gets a flag")
+    assert "SettingsManager.getHttpPort()" in country, (
+        "the country lookup does not read the app's own HTTP port, so it cannot ask through the "
+        "tunnel the way the connection panel does")
+    # The per-address question must survive the route change: every provider has to ask about an
+    # address, because a provider that asks about nobody returns the tunnel's own exit and every
+    # row would inherit the selected server's country.
+    eps = re.search(r"COUNTRY_ENDPOINTS = listOf\((.*?)\n        \)", country, re.S)
+    assert eps, "the country providers could not be read"
+    for endpoint in re.findall(r'"([^"]+)"', eps.group(1)):
+        assert "{ip}" in endpoint, (
+            "a country provider (" + endpoint + ") asks about nobody, so it returns the tunnel's "
+            "own exit and every row would show the selected server's country")
+    # And the same route has to be available to the panel's own lookup, or the two disagree.
+    speed = (APP / "src/main/java/com/v2ray/ang/handler/SpeedtestManager.kt").read_text("utf-8")
+    assert "httpPort = httpPort" in speed and "IP_API_URL" in speed, (
+        "the connection panel no longer asks through the tunnel, so its country and the row flags "
+        "would come from different egresses and could disagree on the same server")
 
 
 def check_a_flag_walk_survives_its_own_publish():
