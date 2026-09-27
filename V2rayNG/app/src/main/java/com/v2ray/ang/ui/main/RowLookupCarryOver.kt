@@ -1,11 +1,5 @@
 package com.v2ray.ang.ui.main
 
-import com.v2ray.ang.handler.FlagStatus
-import com.v2ray.ang.handler.RiskLevel
-import com.v2ray.ang.handler.RiskReason
-import com.v2ray.ang.handler.RiskReport
-import com.v2ray.ang.dto.entities.ProfileItem
-import com.v2ray.ang.dto.entities.ServersCache
 
 /**
  * Row identity across a list rebuild.
@@ -36,20 +30,3 @@ internal object RowLookupCarryOver {
         }
     }
 }
-
-private fun row(
-    guid: String,
-    server: String,
-    country: String? = null,
-    flag: FlagStatus = FlagStatus.UNKNOWN,
-) = ServerRowUiModel(
-    guid = guid,
-    profile = ProfileItem(server = server),
-    remarks = "",
-    statistics = "",
-    typeDescription = "",
-    testDelayMillis = 0L,
-    subscriptionBadge = "",
-    serverCountryCode = country,
-    flagStatus = flag,
-)

@@ -13,7 +13,10 @@ class RowLookupCarryOverTest {
     private fun row(guid: String, server: String, country: String?, flag: FlagStatus) =
         ServerRowUiModel(
             guid = guid,
-            profile = com.v2ray.ang.dto.entities.ProfileItem(server = server),
+            profile = com.v2ray.ang.dto.entities.ProfileItem(
+                configType = com.v2ray.ang.enums.EConfigType.VLESS,
+                server = server,
+            ),
             remarks = "",
             statistics = "",
             typeDescription = "",
