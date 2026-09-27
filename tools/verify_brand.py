@@ -40,6 +40,7 @@ def verify():
     check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
+    check_a_measured_country_is_the_one_that_lands_on_the_row()
     check_a_bounded_read_bounds_instead_of_judging_the_size()
     check_a_test_address_would_survive_the_public_ip_filter()
     check_a_prose_apostrophe_does_not_swallow_kotlin_in_the_bracket_scan()
@@ -888,6 +889,54 @@ def check_the_country_lookup_client_is_a_valid_read_write_property():
             assert ".build()" in line, (
                 "the client is assigned " + line.strip() + " without building it, so the request "
                 "path holds an OkHttpClient.Builder where it needs a client")
+
+
+def check_a_measured_country_is_the_one_that_lands_on_the_row():
+    """The country a connection exited in is available and was being discarded.
+
+    CoreServiceManager already asks SpeedtestManager for the exit country of every real test -- the
+    same reading the connection panel shows at the bottom -- and puts it on ConnectionTestResult.
+    The ViewModel copied that result into a status string and threw the country away, so the only
+    thing on a row was whatever a name resolved to. Behind a CDN or a relay that is the
+    intermediary's address, and the flag was a real flag for the wrong machine: right-looking and
+    wrong, which is the worst shape a wrong answer can have.
+
+    So the measured value has to reach the row, it has to be attributed to the row that was
+    tested, and it has to replace the earlier value rather than sit beside it.
+    """
+    vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
+    for what, why in (
+        ("applyMeasuredCountry",
+         "the measured country is not applied to a row, so it is still only printed in the status "
+         "line and every row keeps the location a name happened to resolve to"),
+        ("event.result.country",
+         "the country on the result is never read, so the one reading that describes the server "
+         "delay is lost along with it"),
+    ):
+        assert what in vm, why + " (" + what + ")"
+    assert "tested.serverGuid" in vm, (
+        "the completed test's server is not read, so the country cannot be attributed to a row and "
+        "would have to be applied to whichever row happened to be visible")
+    # A measurement replaces the earlier value. Keeping both would leave a row that is known to be
+    # wrong still on display.
+    i = vm.index("private fun applyMeasuredCountry")
+    body = vm[i:vm.index("\n    }", i)]
+    assert "row.copy(serverCountryCode = code)" in body, (
+        "the measured country does not replace the row value, so a row keeps showing the location "
+        "it is known to have got wrong")
+    assert "?:" not in body.split("val code")[0], "unreachable"
+    queue = (APP / "src/main/java/com/v2ray/ang/ui/main/MainTestRequests.kt").read_text("utf-8")
+    assert "data class Completed" in queue, (
+        "a superseded reply and a test with no selected server have collapsed into one answer, so "
+        "a caller cannot tell a dropped result from one with nothing to annotate, and the latency "
+        "is lost along with it")
+    assert "currentServerGuid" in queue, (
+        "the request queue does not remember which server is under test, so a result cannot be "
+        "attributed to a row and the measured country has nowhere to go")
+    test = Path("C:/Users/nima/PattNG/V2rayNG/app/src/test/java/com/v2ray/ang/ui/main/MeasuredCountryTest.kt")
+    assert test.exists() and "superseded" in test.read_text("utf-8"), (
+        "nothing pins the distinction between a dropped reply and a test with no server, which is "
+        "the difference between losing a latency and losing a country")
 
 
 def check_a_bounded_read_bounds_instead_of_judging_the_size():

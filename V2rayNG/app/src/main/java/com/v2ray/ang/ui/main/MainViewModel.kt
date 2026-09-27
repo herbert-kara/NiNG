@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import com.v2ray.ang.handler.ProfileCountry
 import com.v2ray.ang.handler.ServerCountryLookup
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.FlagStatus
@@ -369,7 +370,15 @@ class MainViewModel(
 
             MainServiceEvent.StateStopSuccess -> updateRunningState(false)
             is MainServiceEvent.MeasureDelayResult -> {
-                if (!uiState.value.isRunning || !testRequests.completeCurrent(event.requestId)) return
+                if (!uiState.value.isRunning) return
+                val tested = testRequests.completeCurrent(event.requestId) ?: return
+                // The country on this result is the one the connection actually exited in: the
+                // core was started on this profile, and SpeedtestManager asked through it. A row
+                // filled from DNS answers for whatever a CDN or relay put in front of the server,
+                // which is the intermediary's country and not the server's. So the measured
+                // country is the one that goes on the row, and it is the same value the panel
+                // shows at the bottom.
+                applyMeasuredCountry(tested.serverGuid, event.result.country)
                 _uiState.update { it.copy(isTesting = testRequests.isTesting, status = MainStatus.ConnectionTest(event.result)) }
             }
 
@@ -396,7 +405,7 @@ class MainViewModel(
             }
 
             is MainServiceEvent.MeasureDelayCancelled -> {
-                if (testRequests.completeCurrent(event.requestId)) resetTestStatus()
+                if (testRequests.completeCurrent(event.requestId) != null) resetTestStatus()
             }
 
             is MainServiceEvent.MeasureConfigCancelled -> {
@@ -505,6 +514,31 @@ class MainViewModel(
                 state.copy(rows = applyServerCountry(state.rows, guid, address, country))
             }
         }
+
+    /**
+     * Put the country a real connection exited in onto the row that connection belonged to.
+     *
+     * This is the same reading the connection panel shows at the bottom, and it is deliberately
+     * the only one that can put a country on a row. The other source resolves a name and asks a
+     * geoip service about the address it got back, which behind a CDN, a relay or any other
+     * intermediary is the intermediary's address: the flag was real, and it belonged to the wrong
+     * machine. A measured exit answers a different question -- the country the traffic came out in
+     * -- so it is the one that describes the server the user would actually connect to.
+     *
+     * A measurement replaces whatever the row showed. Keeping the older value would leave a row
+     * that is known to be wrong on display, which is worse than a row that briefly had none.
+     */
+    private fun applyMeasuredCountry(guid: String?, country: String?) {
+        val code = ProfileCountry.normalize(country) ?: return
+        val groupId = uiState.value.selectedGroupId
+        mutableServerGroupState(groupId).update { state ->
+            state.copy(rows = state.rows.map { row ->
+                if (row.guid != guid) row
+                else if (row.serverCountryCode == code) row
+                else row.copy(serverCountryCode = code)
+            })
+        }
+    }
 
     internal fun formatStatus(status: MainStatus): String = when (status) {
         MainStatus.Disconnected -> dataSource.getString(R.string.connection_not_connected)
@@ -1187,7 +1221,9 @@ class MainViewModel(
 
     fun testCurrentServerRealPing() {
         if (!uiState.value.isRunning) return
-        val requestId = testRequests.beginCurrent()
+        val requestId = testRequests.beginCurrent(
+            currentServers().firstOrNull { it.isSelected }?.guid
+        )
         _uiState.update { it.copy(isTesting = true, status = MainStatus.Testing) }
         dataSource.testCurrentServerRealPing(requestId)
     }
