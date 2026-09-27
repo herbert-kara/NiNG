@@ -40,6 +40,7 @@ def verify():
     check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
+    check_a_bounded_read_bounds_instead_of_judging_the_size()
     check_a_test_address_would_survive_the_public_ip_filter()
     check_a_prose_apostrophe_does_not_swallow_kotlin_in_the_bracket_scan()
     check_a_row_flag_does_not_depend_on_a_running_service()
@@ -887,6 +888,41 @@ def check_the_country_lookup_client_is_a_valid_read_write_property():
             assert ".build()" in line, (
                 "the client is assigned " + line.strip() + " without building it, so the request "
                 "path holds an OkHttpClient.Builder where it needs a client")
+
+
+def check_a_bounded_read_bounds_instead_of_judging_the_size():
+    """request() asks whether N bytes are buffered. read() takes up to N bytes. One of them works.
+
+    A country answer is a few hundred bytes and the cap was 16 KB, so request() returned false for
+    every provider, every attempt was reported as too large, and all nine lookups came back empty
+    with the same reason. The requests had gone out and the replies had come back; the replies were
+    thrown away before they were parsed. Measured on the device: ipwho.is 682 bytes, ipapi.co 742,
+    ipinfo.io 106, api.ip.sb 350, ip-api 20.
+
+    Both calls read like a bounded read, which is why this survived review and a device. The check
+    is on the call, not on the constant: a cap that is raised does not help, and a cap that is
+    lowered would make it worse, so the guard refuses the predicate entirely.
+    """
+    lookup = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
+    assert ".request(" not in lookup, (
+        "the body is read with request() again, which asks whether N bytes are buffered rather "
+        "than taking up to N. Every country answer is smaller than the cap, so every provider is "
+        "reported as too large on arrival and every row comes back empty -- with a reason that "
+        "looks like a provider problem and is not one")
+    assert "source.read(buffer, MAX_BODY_BYTES)" in lookup, (
+        "the bounded read is gone, so a body is either unbounded or judged by size, and the cap "
+        "has to be enforced by reading rather than by checking")
+    m = re.search(r"MAX_BODY_BYTES = (\d+)L? \* (\d+)L?", lookup)
+    assert m, "the body cap is not a simple multiple, so this guard cannot judge it"
+    cap = int(m.group(1)) * int(m.group(2))
+    assert cap >= 8192, (
+        "the body cap is " + str(cap) + " bytes. A provider answers a country query in a few "
+        "hundred, so a cap below 8 KB is inside the range of a legitimate answer and would cut "
+        "real data to protect memory that a few hundred bytes do not threaten")
+    test = Path("C:/Users/nima/PattNG/V2rayNG/app/src/test/java/com/v2ray/ang/handler/CountryBodyReadTest.kt")
+    assert test.exists() and "requestSatisfied" in test.read_text("utf-8"), (
+        "nothing pins the difference between the two calls, so read() can be swapped back for "
+        "request() by a change that looks like a simplification")
 
 
 def check_a_test_address_would_survive_the_public_ip_filter():

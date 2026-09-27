@@ -20,6 +20,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Call
+import okio.Buffer
 import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -256,12 +257,23 @@ internal class ServerCountryLookup(
             override fun onResponse(call: Call, response: Response) {
                 val attempt = try {
                     response.use {
-                        val source = it.body?.source()
-                        when {
-                            !it.isSuccessful -> Attempt(null, "http" + it.code)
-                            source == null -> Attempt(null, "noBody")
-                            !source.request(16_385) -> Attempt(null, "tooLarge")
-                            else -> Attempt(source.readUtf8(), "ok")
+                        if (!it.isSuccessful) {
+                            Attempt(null, "http" + it.code)
+                        } else {
+                            val source = it.body?.source()
+                            if (source == null) {
+                                Attempt(null, "noBody")
+                            } else {
+                                // read(), not request(). request(n) asks whether n bytes are already
+                                // buffered, so every answer smaller than the cap read as too large --
+                                // and a country answer is a few hundred bytes, so every provider
+                                // was rejected on arrival and every row came back empty. read(sink,
+                                // n) takes up to n bytes, which bounds the memory without deciding
+                                // anything about the size.
+                                val buffer = Buffer()
+                                source.read(buffer, MAX_BODY_BYTES)
+                                Attempt(buffer.readUtf8(), "ok")
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -286,7 +298,14 @@ internal class ServerCountryLookup(
          * politeness rather than a quota: 250ms still allows eight requests in two seconds instead
          * of eight and a half, and it is what lets a page of flags finish while the user watches.
          */
-        private const val REQUEST_GAP_MS = 250L
+        /**
+     * A country answer is a few hundred bytes; a provider page is a few kilobytes. The cap exists
+     * only so a body cannot be buffered without bound, and it sits far above what any of them send.
+     * It is not a filter: an answer under it is read whole, and only a body past it is cut.
+     */
+    private const val MAX_BODY_BYTES = 64L * 1024L
+
+    private const val REQUEST_GAP_MS = 250L
 
         /**
          * Tried in order, first usable answer wins. Each returns a shape that [parseResponse] reads,
