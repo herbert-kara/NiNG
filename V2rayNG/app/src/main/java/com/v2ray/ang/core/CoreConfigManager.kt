@@ -604,6 +604,29 @@ object CoreConfigManager {
     /**
      * Configure inbound listeners and related runtime options.
      */
+    /**
+     * Overrides the SOCKS port for one probe.
+     *
+     * A country probe brings this profile's core up on a port of its own, asks an IP service from
+     * inside it, and takes it back down. The port the app normally listens on belongs to the
+     * running connection, so binding a probe to it would either fail or, worse, answer the probe
+     * from the connection the user is already on -- which is a different server, and would put
+     * one profile's flag on another row.
+     *
+     * The override is read and cleared in one place, and only by the probe that set it, so a
+     * normal connection cannot pick it up.
+     */
+    /**
+     * The port one country probe owns, or null when no probe is in flight.
+     *
+     * A probe is a full core brought up and torn down to read one answer, so it must not share a
+     * port with the connection the user is running. Held in a companion rather than threaded
+     * through every call so the config builder keeps its shape, and written only from the probe
+     * that owns it.
+     */
+    @Volatile
+    internal var socksPortOverride: Int? = null
+
     private fun configureInbounds(v2rayConfig: V2rayConfig) {
         val vpn = SettingsManager.isVpnMode()
         val useHev = SettingsManager.isUsingHevTun()
@@ -613,7 +636,7 @@ object CoreConfigManager {
 
         val enableLocalProxy = forcedByHev || forcedBySocksRoot || MmkvManager.decodeSettingsBool(AppConfig.PREF_ENABLE_LOCAL_PROXY, true)
 
-        val socksPort = SettingsManager.getSocksPort()
+        val socksPort = socksPortOverride ?: SettingsManager.getSocksPort()
         val socksUsername = SettingsManager.getSocksUsername()
         val socksPassword = SettingsManager.getSocksPassword()
         val inbound1 = v2rayConfig.inbounds[0]
