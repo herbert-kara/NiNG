@@ -827,14 +827,28 @@ def check_the_tunnel_route_is_injectable_and_testable():
         assert seam in ctor, (
             seam + " is not a constructor seam, so reading it reaches MMKV and every lookup test "
             "dies on MMKV.initialize() before it can assert anything")
-    # Nothing on the request path may read MMKV directly any more.
-    body = country[country.index("private fun tunnelProxy"):]
-    assert "SettingsManager.getHttpPort()" not in body, (
-        "the tunnel proxy reads the port from SettingsManager instead of the seam, so the route "
-        "reaches MMKV and the lookup tests cannot construct the class")
-    assert "SettingsManager.getSocksUsername()" not in body and "SettingsManager.getSocksPassword()" not in body, (
-        "the proxy authenticator reads the credentials from SettingsManager instead of the seams, "
-        "so the tunnel branch reaches MMKV even when the port does not")
+    # Nothing on this class may read the settings store at all, and the seams must default to no
+    # tunnel rather than to the store: a default that reads a global made twelve tests fail on
+    # MMKV.initialize() twice, and a test that constructs the lookup without thinking about the
+    # route would keep inheriting that dependency.
+    assert "SettingsManager." not in country, (
+        "the country lookup reads the settings store itself, so constructing it needs Android and "
+        "every unit test that builds it dies before reaching its own assertion")
+    ctor_txt = ctor
+    for seam in ("tunnelPort", "tunnelUser", "tunnelPassword"):
+        line = [l for l in ctor_txt.splitlines() if seam in l]
+        assert line and "null" in line[0], (
+            seam + " defaults to something other than no tunnel (" + (line[0].strip() if line else "missing")
+            + "), so a construction that does not wire it silently reads the settings store")
+    # The production caller has to do the wiring, or the fix is a no-op in the field: the flag would
+    # go back to the direct route and the panel's DE would stand alone again.
+    vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
+    wiring = vm[vm.index("private val serverCountries"):]
+    wiring = wiring[:wiring.index("private val serverFlags")]   # the whole declaration
+    for seam in ("tunnelPort", "tunnelUser", "tunnelPassword"):
+        assert seam in wiring, (
+            "the ViewModel no longer wires " + seam + ", so the lookup asks the provider directly "
+            "again and no row gets a flag -- the blank page returns with no failing test")
     tests = TEST / "com/v2ray/ang/handler/CountryTunnelRouteTest.kt"
     assert tests.exists() and "class CountryTunnelRouteTest {" in tests.read_text("utf-8"), (
         "no test class covers the tunnel route, so it can be renamed or deleted silently -- the "
@@ -968,9 +982,12 @@ def check_the_flag_lookup_asks_through_the_tunnel():
     assert "routeThroughTunnelIfUp()" in res, (
         "resolve() never re-routes, so a client built while disconnected keeps asking from "
         "outside the tunnel for the life of the ViewModel and no row gets a flag")
-    assert "SettingsManager.getHttpPort()" in country, (
-        "the country lookup does not read the app's own HTTP port, so it cannot ask through the "
-        "tunnel the way the connection panel does")
+    # The port is read by the ViewModel, not by the lookup: reading it inside the class would put
+    # a settings-store read on its construction. The wiring is checked above and here.
+    vm_txt = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
+    assert "SettingsManager.getHttpPort()" in vm_txt, (
+        "nothing reads the app's own HTTP port, so the lookup cannot ask through the tunnel the way "
+        "the connection panel does")
     # The per-address question must survive the route change: every provider has to ask about an
     # address, because a provider that asks about nobody returns the tunnel's own exit and every
     # row would inherit the selected server's country.

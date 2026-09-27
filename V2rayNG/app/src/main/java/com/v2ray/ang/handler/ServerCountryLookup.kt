@@ -38,9 +38,14 @@ internal class ServerCountryLookup(
     private val fetch: (suspend (String) -> String?)? = null,
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
     private val cacheLimit: Int = 256,
-    private val tunnelPort: () -> Int? = { SettingsManager.getHttpPort() },
-    private val tunnelUser: () -> String? = { SettingsManager.getSocksUsername() },
-    private val tunnelPassword: () -> String? = { SettingsManager.getSocksPassword() },
+    // Default: no tunnel. A tunnel is only meaningful while the service is listening, and reading
+    // the port costs a settings-store read that throws before initialize() in a unit test, so a
+    // default that reached for it would make every construction depend on Android -- which is
+    // what broke twelve tests twice. The one production caller wires the real settings; a
+    // construction that does not is asking for the direct route, which is a valid answer.
+    private val tunnelPort: () -> Int? = { null },
+    private val tunnelUser: () -> String? = { null },
+    private val tunnelPassword: () -> String? = { null },
 ) : Closeable {
     private data class Entry(val code: String?, val expires: Long)
     private val cache = linkedMapOf<String, Entry>()
@@ -75,9 +80,9 @@ internal class ServerCountryLookup(
      * Where the request goes when the tunnel is up.
      *
      * A seam like [resolveDns] and [fetch], and for the same reason: reading the app's HTTP port
-     * goes through MMKV, which throws before initialize() in a unit test, so the seven lookup tests
-     * could not construct the class at all once the route depended on it. Reading the port is the
-     * only Android-owned thing on this path, so it is the only thing injected -- the proxy it
+     * goes through the settings store, which throws before initialize() in a unit test, so the
+     * lookup tests could not construct the class at all once the route depended on it. Reading the
+     * port is the only settings read on this path, so it is the only thing injected -- the proxy it
      * builds, the loopback address and the credentials all stay here.
      */
     private fun tunnelProxy(): Proxy? {

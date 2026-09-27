@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import com.v2ray.ang.handler.ServerCountryLookup
+import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.FlagStatus
 import com.v2ray.ang.handler.ServerFlaggedLookup
 import kotlinx.coroutines.flow.map
@@ -123,7 +124,16 @@ class MainViewModel(
     private var bulkTestJob: Job? = null
 
     private val initialPageReady = CompletableDeferred<Unit>()
-    private val serverCountries = ServerCountryLookup()
+    // The country lookup asks the provider through the app's own loopback HTTP port when the
+    // tunnel is up, the same route the connection panel's (DE) line uses and the one that works on
+    // a network where the providers refuse a direct request. The port and its credentials are read
+    // here, at the one call site that runs on a device, because reading them inside the lookup
+    // would put a settings-store read on its construction and every unit test would fail on it.
+    private val serverCountries = ServerCountryLookup(
+        tunnelPort = { SettingsManager.getHttpPort() },
+        tunnelUser = { SettingsManager.getSocksUsername() },
+        tunnelPassword = { SettingsManager.getSocksPassword() },
+    )
     private val serverFlags = ServerFlaggedLookup(publicIpOf = { serverCountries.publicIpOf(it) })
 
     /** True while a pass is in flight, so the button can show that a tap was received. */
