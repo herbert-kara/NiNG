@@ -405,12 +405,19 @@ private fun ServerListItem(
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
-            // One location flag, for the main server the profile connects to. A separate
-            // name-based hint and a separate ingress lookup are not shown: they can disagree with
-            // the address the verdict was actually about.
-            CountryBadge(row.serverCountryCode, R.string.country_server)
-            RiskFlag(row.riskLevel, row.riskReason)
-            FlaggedBadge(row.flagStatus)
+            // One strip of badges. The flag slot is what the row is read by: it is the location
+            // of the main server once the lookup has answered, and until then it stays in its
+            // unresolved grey state. Showing the country in a second place as well left the row
+            // with a permanent grey "unchecked" next to a real flag, which read as two flags for
+            // one thing. The reputation verdict only appears when it has something to say.
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                RiskFlag(row.riskLevel, row.riskReason)
+                ServerFlagSlot(row.serverCountryCode, row.flagStatus)
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(row.typeDescription, style = MaterialTheme.typography.bodySmall, color = colorConfigType, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(testResult, style = MaterialTheme.typography.bodySmall, color = if (row.testDelayMillis < 0L) colorPingRed else colorPing, maxLines = 1, overflow = TextOverflow.Ellipsis)

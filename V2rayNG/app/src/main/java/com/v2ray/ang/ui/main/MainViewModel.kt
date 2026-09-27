@@ -35,8 +35,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import com.v2ray.ang.handler.ServerCountryLookup
+import com.v2ray.ang.handler.FlagStatus
 import com.v2ray.ang.handler.ServerFlaggedLookup
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -118,16 +118,11 @@ class MainViewModel(
     private val serverCountries = ServerCountryLookup()
     private val serverFlags = ServerFlaggedLookup(publicIpOf = { serverCountries.publicIpOf(it) })
 
-    /**
-     * Monotonic refresh counter. A tap increments it, which re-runs the visible batch with the
-     * provider caches bypassed; every batch after the first refresh uses the normal cache again.
-     * A counter is used instead of a boolean toggle so a second tap can never be swallowed by
-     * a collector that is still busy with the first one.
-     */
-    private val flagRefreshTick = MutableStateFlow(0)
-
-    /** True while a pass is in flight, so a tap is queued instead of cancelling the pass. */
+    /** True while a pass is in flight, so the button can show that a tap was received. */
     private val flagRefreshRunning = MutableStateFlow(false)
+
+    /** The manual pass. Kept apart from the automatic one so a tap cannot cancel a walk in progress. */
+    private var flagRefreshJob: Job? = null
     val isRefreshingFlags: StateFlow<Boolean> = flagRefreshRunning.asStateFlow()
 
     // ---------- Service events ----------
@@ -143,7 +138,6 @@ class MainViewModel(
      * address. [forceFlagRefresh] makes the batch re-query the provider instead of replaying a
      * cached verdict up to a day old.
      *
-     * A tap advances [flagRefreshTick] and [flagRefreshRunning] blocks a pass already in flight:
      * the provider is rate limited, so restarting mid-page would leave the last rows unresolved
      * and the button would look inert even though the click arrived. The pending tap is honoured
      * by the pass that is already running.
@@ -151,59 +145,89 @@ class MainViewModel(
     private fun collectServerFlags() {
         viewModelScope.launch {
             uiState.map { it.selectedGroupId }.distinctUntilChanged().collectLatest { groupId ->
-                combine(
-                    serverGroupState(groupId).map { state ->
-                        state.rows.mapNotNull { row ->
-                            row.profile.server?.takeIf { !row.profile.configType.isComplexType() }
-                                ?.let { row.guid to it }
-                        }.take(128)
-                    }.distinctUntilChanged(),
-                    // A RefreshFlags tap advances this counter, which re-runs the whole batch
-                    // with the provider caches bypassed; without it in the trigger a tap would
-                    // be inert, because the target list itself has not changed.
-                    flagRefreshTick,
-                ) { targets, tick -> targets to (tick > 0) }
-                    .collectLatest { (targets, force) ->
-                        withContext(ioDispatcher) {
-                            var requested = force
-                            // The running flag has to be cleared on every exit path. This block is
-                            // inside collectLatest, so a group change or a new batch cancels it; a
-                            // plain assignment at the end was skipped on cancellation and left the
-                            // flag true forever, which is what made the button look permanently
-                            // dead: every later tap was blocked by its own in-flight guard.
-                            try {
-                                do {
-                                    flagRefreshRunning.value = true
-                                    requested = runFlagBatch(
-                                        targets = targets,
-                                        isNewerRequested = { flagRefreshTick.value > 0 },
-                                        lookup = { address, forceLookup ->
-                                            serverFlags.resolve(address, forceLookup || requested)
-                                        },
-                                        publish = { guid, address, verdict ->
-                                            withContext(Dispatchers.Main.immediate) {
-                                                if (uiState.value.selectedGroupId == groupId) {
-                                                    mutableServerGroupState(groupId).update { state ->
-                                                        state.copy(
-                                                            rows = applyServerFlag(
-                                                                state.rows, guid, address,
-                                                                verdict.status, verdict.countryCode,
-                                                            )
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        },
-                                    )
-                                } while (requested)
-                            } finally {
-                                flagRefreshRunning.value = false
-                            }
+                // Only the row list drives this collector. The refresh counter used to be a second
+                // combine input, which meant every tap published a new value and collectLatest
+                // cancelled the pass that was already running: each click restarted the walk from
+                // the first row, no row was ever reached twice within a pass, and the button
+                // looked completely inert. A tap is now handled by its own job below, and a pass
+                // that is under way is never cancelled by a later one.
+                serverGroupState(groupId).map { state ->
+                    state.rows.mapNotNull { row ->
+                        row.profile.server?.takeIf { !row.profile.configType.isComplexType() }
+                            ?.let { row.guid to it }
+                    }.take(128)
+                }.distinctUntilChanged().collectLatest { targets ->
+                    withContext(ioDispatcher) {
+                        try {
+                            runFlagBatch(
+                                targets = targets,
+                                force = false,
+                                lookup = { address, force ->
+                                    serverFlags.resolve(address, force)
+                                },
+                                publish = { guid, address, verdict ->
+                                    publishVerdict(groupId, guid, address, verdict.status, verdict.countryCode)
+                                },
+                            )
+                        } finally {
+                            flagRefreshRunning.value = false
                         }
                     }
+                }
             }
         }
     }
+
+    /**
+     * Re-query the provider for every visible row, from scratch.
+     *
+     * This is the body of a latency test. The user measures the delays and then reads the page,
+     * so the flags have to be right for that moment: a verdict cached before the test can be
+     * about an address that has since changed, so the provider is asked again and every row is
+     * re-asked rather than served from the cache.
+     *
+     * It replaces whatever pass was running instead of competing with it, because the newest
+     * measurement is the one the page has to reflect. A test that arrives a moment later starts
+     * its own pass and the older one is dropped, which keeps a slow first pass from overwriting
+     * a fresh answer with a stale one.
+     */
+    private fun refreshFlags() {
+        flagRefreshJob?.cancel()
+        flagRefreshJob = viewModelScope.launch(ioDispatcher) {
+            val groupId = uiState.value.selectedGroupId
+            try {
+                flagRefreshRunning.value = true
+                serverFlags.invalidate()
+                val targets = mutableServerGroupState(groupId).value.rows
+                    .filter { !it.profile.configType.isComplexType() }
+                    .mapNotNull { row -> row.profile.server?.let { row.guid to it } }
+                    .take(128)
+                runFlagBatch(
+                    targets = targets,
+                    force = true,
+                    lookup = { address, force -> serverFlags.resolve(address, force) },
+                    publish = { guid, address, verdict ->
+                        publishVerdict(groupId, guid, address, verdict.status, verdict.countryCode)
+                    },
+                )
+                // The fallback providers only run where the verdict did not name a country, and
+                // they never overwrite a country the verdict already reported.
+                runFlagBatch(
+                    targets = targets,
+                    force = true,
+                    lookup = { address, _ -> serverCountries.resolve(address)?.let { CountryOnly(it) } },
+                    publish = { guid, address, country ->
+                        publishCountry(groupId, guid, address, country.value)
+                    },
+                )
+            } finally {
+                flagRefreshRunning.value = false
+            }
+        }
+    }
+
+    /** Carries a bare country code through the generic batch shape. */
+    private data class CountryOnly(val value: String)
 
     private fun collectServerCountries() {
         viewModelScope.launch {
@@ -248,13 +272,6 @@ class MainViewModel(
      * the country of the address it was asked about, so this is the single source for both the
      * verdict and the location flag; a tap therefore refreshes everything the row shows.
      */
-    private fun refreshFlags() {
-        viewModelScope.launch {
-            serverFlags.invalidate()
-            flagRefreshTick.value = flagRefreshTick.value + 1
-        }
-    }
-
     private fun handleServiceEvent(event: MainServiceEvent) {
         when (event) {
             MainServiceEvent.StateRunning -> updateRunningState(true, clearTestingText = false)
@@ -354,7 +371,63 @@ class MainViewModel(
                 rows = applyTestDelayResultsToRows(current.rows, updates),
             )
         }
+        // A measured delay is the moment the user is actually looking at a row, so the lookup for
+        // exactly those rows runs here instead of waiting for the whole page to be walked one
+        // address at a time. Without this the badge stayed on "unchecked" until a later pass
+        // happened to reach the same address, which is what made the flag look broken.
+        resolveLookupsFor(request.groupId, updates.keys)
     }
+
+    /**
+     * Resolve the location flag and the reputation verdict for the given rows, off the main
+     * thread, and publish each answer as it arrives. Failures stay silent: the row keeps its
+     * current badge and a later pass can fill it in.
+     */
+    private fun resolveLookupsFor(groupId: String, guids: Set<String>) {
+        if (guids.isEmpty()) return
+        viewModelScope.launch(ioDispatcher) {
+            val targets = mutableServerGroupState(groupId).value.rows
+                .filter { it.guid in guids && !it.profile.configType.isComplexType() }
+                .mapNotNull { row -> row.profile.server?.let { row.guid to it } }
+            for ((guid, address) in targets) {
+                currentCoroutineContext().ensureActive()
+                if (uiState.value.selectedGroupId != groupId) return@launch
+                // The verdict response carries the country for the same address, so one request
+                // answers both the location flag and the reputation badge.
+                val verdict = serverFlags.resolve(address)
+                if (verdict != null) {
+                    publishVerdict(groupId, guid, address, verdict.status, verdict.countryCode)
+                }
+                val country = serverCountries.resolve(address)
+                if (country != null) {
+                    publishCountry(groupId, guid, address, country)
+                }
+            }
+        }
+    }
+
+    private suspend fun publishVerdict(
+        groupId: String,
+        guid: String,
+        address: String,
+        status: FlagStatus,
+        country: String?,
+    ) = withContext(Dispatchers.Main.immediate) {
+        if (uiState.value.selectedGroupId != groupId) return@withContext
+        mutableServerGroupState(groupId).update { state ->
+            state.copy(
+                rows = applyServerFlag(state.rows, guid, address, status, country)
+            )
+        }
+    }
+
+    private suspend fun publishCountry(groupId: String, guid: String, address: String, country: String) =
+        withContext(Dispatchers.Main.immediate) {
+            if (uiState.value.selectedGroupId != groupId) return@withContext
+            mutableServerGroupState(groupId).update { state ->
+                state.copy(rows = applyServerCountry(state.rows, guid, address, country))
+            }
+        }
 
     internal fun formatStatus(status: MainStatus): String = when (status) {
         MainStatus.Disconnected -> dataSource.getString(R.string.connection_not_connected)
@@ -416,14 +489,16 @@ class MainViewModel(
             MainAction.Initialize -> initialize()
             MainAction.RefreshServiceState -> dataSource.queryServiceState()
             MainAction.RefreshGroups -> setupGroupTab(forceRefresh = true)
-            MainAction.TestAllServers -> testAllRealPing(true)
-            MainAction.TestRealAllServers -> testAllRealPing()
+            // A latency test and a flag check are the same action: the user measures and then
+            // reads the page, so the flags are resolved alongside the test rather than on a
+            // timer of their own that can be minutes behind the measurement.
+            MainAction.TestAllServers -> { refreshFlags(); testAllRealPing(true) }
+            MainAction.TestRealAllServers -> { refreshFlags(); testAllRealPing() }
             MainAction.CancelTesting -> cancelAllPing()
             MainAction.RemoveAllServers -> removeAllServerAsync()
             MainAction.RemoveDuplicateServers -> removeDuplicateServerAsync()
             MainAction.RemoveInvalidServers -> removeInvalidServerAsync()
             MainAction.SortByTestResults -> sortByTestResultsAsync()
-            MainAction.RefreshFlags -> refreshFlags()
             MainAction.UpdateSubscriptions -> importConfigViaSub()
             MainAction.ExportAll -> exportAllAsync()
             is MainAction.SelectGroup -> subscriptionIdChanged(action.groupId)

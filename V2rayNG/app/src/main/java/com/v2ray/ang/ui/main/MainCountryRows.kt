@@ -49,8 +49,3 @@ internal fun applyServerFlag(
         }
     }
 }
-
-/** Exit results belong to the running connection, never to a profile's ingress or label. */
-internal fun exitCountryCode(status: MainStatus): String? =
-    (status as? MainStatus.ConnectionTest)?.result?.takeIf { it.delayMillis >= 0 }
-        ?.country?.let(ProfileCountry::normalize)

@@ -26,10 +26,11 @@ def verify():
     assert 'R.drawable.ic_ning_logo' in drawer
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
-    check_one_location_flag()
-    check_refresh_button_clears_the_connect_fab()
-    check_bottom_bar_text_stays_inside_the_bar()
-    check_refresh_button_actually_refreshes()
+    check_a_measured_delay_resolves_the_flags()
+    check_the_bottom_bar_is_the_original_one()
+    check_a_latency_test_also_resolves_the_flags()
+    check_the_flag_walk_is_concurrent()
+    check_the_row_has_one_flag_slot()
     check_the_flag_path_is_covered_by_a_real_test()
     check_release_workflow()
     print('NiNG app ID, internal namespace, updater, locale names, drawer and adaptive icons: OK')
@@ -70,97 +71,86 @@ def check_fork_feature_files():
     for name in ('risk_strings.xml', 'flag_strings.xml'):
         assert (APP / 'src/main/res/values' / name).exists(), f'fork string file lost: {name}'
 
-def check_one_location_flag():
-    """The row must carry exactly one location flag, for the main server.
+def check_a_measured_delay_resolves_the_flags():
+    """The badge stayed on "unchecked" because nothing resolved it when the user looked.
 
-    It used to carry two: one guessed from the profile name and one from a separate address
-    lookup. The name hint described the label rather than the server reached, so the two could
-    disagree and both were rendered. The verdict response already carries the country of the
-    address it was asked about, which is the main server, and that is now the only source.
+    A measured delay is when the user is reading a row, so the lookup for those rows runs from
+    the test result. Before this the only trigger was a background pass that walked the page one
+    rate-limited address at a time, which is why the flag never appeared where it was expected.
     """
-    models = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainServerRowModels.kt').read_text('utf-8')
-    assert 'labelCountryCode' not in models, (
-        'a name-derived labelCountryCode is back; the location flag must describe the server')
+    vm = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt').read_text('utf-8')
+    flush = re.search(r'private suspend fun flushPendingTestResults(.*?)\n    \}', vm, re.S)
+    assert flush, 'the delay-result flush is gone'
+    assert 'resolveLookupsFor(' in flush.group(1), (
+        'a measured delay no longer triggers the lookup, so the row keeps "unchecked"')
+
+def check_the_bottom_bar_is_the_original_one():
+    """The bottom bar was rebuilt with a second button and a flag in it, and both were wrong.
+
+    The bar is the status line and the connect control. A refresh button beside it read as dead,
+    and a flag in it put the running connection's exit country where the user reads each profile's
+    own location. It is back to the upstream shape: one button, no flag.
+    """
+    bar = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt').read_text('utf-8')
+    assert 'SmallFloatingActionButton' not in bar, 'a second button is back in the bottom bar'
+    assert 'CountryBadge' not in bar, 'a flag is back in the bottom bar'
+    assert 'exitCountryCode' not in bar, 'the bottom bar takes an exit country again'
+    assert 'MainAction.RefreshFlags' not in bar, 'the bottom bar dispatches a refresh again'
+    screen = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainScreen.kt').read_text('utf-8')
+    assert 'CountryBadge' not in screen, 'the screen still asks the bottom bar for a flag'
+    assert 'isRefreshingFlags' not in screen, 'the screen still wires a flag-refresh state'
+    assert 'MainAction.ToggleService' in bar, 'the bottom bar lost the connect control'
+    assert 'MainAction.TestCurrentServer' in bar, 'the bottom bar lost tap-to-test'
+    assert len(re.findall(r'FloatingActionButton\(', bar)) == 1, (
+        'the bar must have exactly one button, the connect control')
+
+def check_a_latency_test_also_resolves_the_flags():
+    """The flags were refreshed on their own schedule, behind the measurement.
+
+    The user measures the delays and then reads the page, so a latency test has to resolve the
+    flags as part of the same action. A pass on a timer of its own stays behind, which is the
+    state the flags were actually in.
+    """
+    vm = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt').read_text('utf-8')
+    for action in ('MainAction.TestAllServers', 'MainAction.TestRealAllServers'):
+        line = re.search(re.escape(action) + r' -> (.*)', vm)
+        assert line, f'{action} has no handler'
+        assert 'refreshFlags()' in line.group(1), (
+            f'{action} measures delays but does not resolve the flags, so the page keeps a '
+            'verdict from before the measurement')
+    contract = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainContract.kt').read_text('utf-8')
+    assert 'RefreshFlags' not in contract, 'the separate refresh action is back in the contract'
+    assert 'RefreshFlags' not in vm, 'the separate refresh action is back'
+
+def check_the_flag_walk_is_concurrent():
+    """A one-row-at-a-time walk of a rate-limited page never reaches the last row.
+
+    The walk was the bottleneck, not the network: the lookups are rate limited, so 128 rows came
+    to hours. It has to overlap a bounded number of them and stay bounded.
+    """
+    batch = (APP / 'src/main/java/com/v2ray/ang/ui/main/FlagBatch.kt').read_text('utf-8')
+    assert 'Semaphore' in batch, 'the walk is unbounded again'
+    assert 'async' in batch, 'the lookups no longer overlap'
+    assert 'FLAG_LOOKUP_CONCURRENCY' in batch, 'the concurrency bound is gone'
+    assert re.search(r'targets\.map\s*\{', batch), (
+        'the targets are walked in a plain loop again, so the walk is serial')
+    test = ROOT / 'V2rayNG/app/src/test/java/com/v2ray/ang/ui/main/FlagBatchConcurrencyTest.kt'
+    assert test.exists(), 'the regression test for a serial walk is gone'
+
+def check_the_row_has_one_flag_slot():
+    """The grey placeholder and the real flag were two badges for one fact.
+
+    The row needs a single slot that fills in place: nothing while the lookup is outstanding, the
+    real flag once it answers, and the verdict only when it is worth interrupting for.
+    """
+    badge = (APP / 'src/main/java/com/v2ray/ang/ui/main/CountryBadge.kt').read_text('utf-8')
+    assert 'fun ServerFlagSlot(' in badge, 'the single flag slot is gone'
+    slot = badge[badge.index('fun ServerFlagSlot('):]
+    assert 'ProfileCountry.flagAsset(code)' in slot, 'the slot no longer fills from a country'
     pager = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainServerPager.kt').read_text('utf-8')
-    assert 'row.labelCountryCode' not in pager, 'the row renders a second, name-based location flag'
-    assert 'row.serverCountryCode' in pager, 'the row no longer renders the server location flag'
-    rows = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainCountryRows.kt').read_text('utf-8')
-    assert 'country: String? = null' in rows, (
-        'applyServerFlag no longer carries the country from the verdict')
-    view_model = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt').read_text('utf-8')
-    assert 'verdict.countryCode' in view_model, (
-        'the verdict country is discarded again, leaving the location flag empty')
-
-def check_refresh_button_clears_the_connect_fab():
-    """The refresh button was drawn under the connect FAB, and ended up below it on screen.
-
-    Both controls now have to be siblings in one Row. Offsets and a second navigation-bar inset
-    are what put them in different places: the bar was already inset for the navigation bar and
-    the FAB carried its own inset, so the two drifted apart vertically and the refresh button
-    rendered below and left of connect instead of beside it.
-    """
-    bar = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt').read_text('utf-8')
-    # The Row that holds the two controls: the one carrying a spacedBy arrangement and TopEnd.
-    rows = re.findall(r'Row\(\s*modifier = Modifier(.*?)\n\s*\) \{', bar, re.S)
-    button_row = next((r for r in rows if 'TopEnd' in r and 'spacedBy' in r), None)
-    assert button_row is not None, 'the button row is gone, so connect and refresh can drift apart again'
-    body = bar[bar.index(button_row):]
-    body = body[:body.index('\n        }\n    }')] if '\n        }\n    }' in body else body
-    for control in ('FloatingActionButton(', 'SmallFloatingActionButton('):
-        assert control in body, f'{control} is no longer a sibling of the other button'
-    assert button_row.count('navigationBarsPadding') == 1, (
-        'the button row carries its own navigationBarsPadding on top of the bar, so the two '
-        'buttons no longer share a baseline')
-    assert not re.search(r'offset\s*\(\s*y\s*=', bar), (
-        'a negative y offset is back; the buttons are positioned by offset instead of by layout')
-    assert bar.count('SmallFloatingActionButton(') == 1, (
-        'the refresh control is duplicated or missing; a tap could land on the wrong one')
-
-def check_bottom_bar_text_stays_inside_the_bar():
-    """The status line wrapped to three lines and spilled out over the list.
-
-    A fixed 64dp row height forced the text to wrap, and nothing bounded it, so a long
-    translation overflowed the bar on a narrow screen. The text has to be capped at one line with
-    an ellipsis, and the row has to be allowed to grow instead of clipping.
-    """
-    bar = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt').read_text('utf-8')
-    assert re.search(r'\.height\(64\.dp\)', bar) is None, (
-        'the fixed 64dp row height is back; the status text overflows the bar again')
-    assert 'heightIn(min = 64.dp)' in bar, (
-        'the bar no longer grows with its content, so a wrapped line is clipped')
-    status = re.search(r'text = displayText,(.*?)\n\s*\)', bar, re.S)
-    assert status, 'the status text is gone from the bottom bar'
-    assert 'maxLines = 1' in status.group(1), (
-        'the status text is unbounded again and can wrap out of the bar')
-    assert 'TextOverflow.Ellipsis' in status.group(1), (
-        'the status text is truncated without an ellipsis, so it ends mid-word')
-    assert 'import androidx.compose.ui.text.style.TextOverflow' in bar, (
-        'TextOverflow is used but not imported, so the bar will not compile')
-
-def check_refresh_button_actually_refreshes():
-    """A tap used to be swallowed, so the button looked dead even though the click arrived.
-
-    The batch was restarted on every tap while each lookup is rate limited, so a full page never
-    finished and no badge ever changed. The pass must now be able to run to completion, a tap that
-    arrives mid-pass must be honoured afterwards, and the button must show that it is busy.
-    """
-    batch = (APP / 'src/main/java/com/v2ray/ang/ui/main/FlagBatch.kt')
-    assert batch.exists(), 'the flag batch runner is gone; a tap can cancel a pass again'
-    view_model = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt').read_text('utf-8')
-    assert 'runFlagBatch(' in view_model, 'the flag batch no longer runs through the completion helper'
-    assert 'isNewerRequested' in view_model, 'a mid-pass tap is dropped instead of queued'
-    bar = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt').read_text('utf-8')
-    assert 'if (!isRefreshingFlags) onAction(MainAction.RefreshFlags)' in bar, (
-        'a tap during a pass is no longer guarded, so it queues a duplicate pass')
-    assert 'if (isRefreshingFlags) {' in bar, (
-        'the refresh button gives no feedback while a pass is running')
-    test = (ROOT / 'V2rayNG/app/src/test/java/com/v2ray/ang/ui/main/FlagRefreshBatchTest.kt')
-    assert test.exists(), 'the regression test for a swallowed tap is gone'
-    # The in-flight flag guards the button, so a cancelled pass that never clears it leaves the
-    # button permanently dead. It has to be released on every exit path, including cancellation.
-    assert re.search(r'try\s*\{(.*?)\}\s*finally\s*\{\s*flagRefreshRunning\.value = false', view_model, re.S), (
-        'the in-flight flag is not cleared in a finally block; a cancelled pass leaves the '
-        'refresh button permanently unresponsive')
+    assert 'ServerFlagSlot(row.serverCountryCode' in pager, 'the row no longer uses the flag slot'
+    assert pager.count('CountryBadge(') == 0, 'the row renders a second, separate flag again'
+    assert pager.count('FlaggedBadge(') == 0, 'the row renders the verdict outside the slot again'
 
 def check_the_flag_path_is_covered_by_a_real_test():
     """Four releases shipped a green build with no flag on screen, so the tests have to be real.

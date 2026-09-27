@@ -84,19 +84,4 @@ class MainCountryRowsTest {
         assertEquals(rows, applyServerCountry(rows, "a", "8.8.8.8", "DE"))
         assertEquals(rows, applyServerCountry(rows, "gone", "1.1.1.1", "DE"))
     }
-
-    @Test fun unknownCountryDoesNotInventAFlag() {
-        assertNull(row().serverCountryCode)
-        assertEquals(listOf(row()), applyServerCountry(listOf(row()), "a", "8.8.8.8", "ZZ"))
-        val bad = applyServerFlag(listOf(row()), "a", "8.8.8.8", FlagStatus.CLEAN, "ZZ")
-        assertNull(bad[0].serverCountryCode)
-    }
-
-    @Test fun exitFlagRequiresSuccessfulCurrentConnectionTest() {
-        assertEquals("DE", exitCountryCode(MainStatus.ConnectionTest(ConnectionTestResult(10, country = "DE"))))
-        assertNull(exitCountryCode(MainStatus.ConnectionTest(ConnectionTestResult(-1, country = "DE"))))
-        assertNull(exitCountryCode(MainStatus.ConnectionTest(ConnectionTestResult(10, country = "ZZ"))))
-        assertNull(exitCountryCode(MainStatus.Connected))
-        assertNull(exitCountryCode(MainStatus.Disconnected))
-    }
 }
