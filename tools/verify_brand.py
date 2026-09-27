@@ -41,6 +41,7 @@ def verify():
     check_no_concurrency_test_freezes_the_clock_it_depends_on()
     check_a_concurrency_test_can_reach_concurrency()
     check_a_concurrency_test_uses_only_fake_dependencies()
+    check_a_concurrency_test_uses_addresses_that_reach_the_provider()
     check_the_sources_have_no_defect_a_compiler_would_catch()
     check_the_row_has_one_flag_slot()
     check_the_flag_path_is_covered_by_a_real_test()
@@ -521,6 +522,51 @@ def check_the_sources_have_no_defect_a_compiler_would_catch():
             assert not re.fullmatch(r"[\w.]+\([^()]*\)", tail[-1]), (
                 str(rel) + ": " + name + "() ends with the discarded expression " + tail[-1]
                 + " and returns Unit, so the result never leaves the function")
+
+
+def check_a_concurrency_test_uses_addresses_that_reach_the_provider():
+    """A test can pass through every line of the code under test without calling it.
+
+    This one asked for 10.0.0.x, which is RFC1918. isPublicIp() rejects it, so resolvePublicIp()
+    returned null, fetchOnce() was never entered, and the batch finished in zero virtual
+    milliseconds having measured a short circuit rather than any locking. The assertion then read
+    that as proof of serialisation, which is what sent four builds looking in the wrong place.
+
+    The guard resolves the same private ranges the production code rejects, and requires a test that
+    asserts on provider behaviour to use addresses that survive the check.
+    """
+    def is_public(ip: str) -> bool:
+        try:
+            b = [int(x) for x in ip.split(".")]
+        except ValueError:
+            return True          # not a literal; nothing to judge
+        if len(b) != 4 or any(x > 255 for x in b):
+            return True
+        if b[0] in (0, 10, 127) or b[0] >= 224:
+            return False
+        if b[0] == 172 and 16 <= b[1] <= 31:
+            return False
+        if b[0] == 192 and b[1] == 168:
+            return False
+        if b[0] == 100 and 64 <= b[1] <= 127:
+            return False
+        if b[0] == 169 and b[1] == 254:
+            return False
+        if b[0] == 198 and b[1] in (18, 19):
+            return False
+        return True
+
+    for rel in ("src/test/java/com/v2ray/ang/handler/LookupConcurrencyTest.kt",):
+        src = (APP / rel).read_text("utf-8")
+        code = re.sub(r"/\*[\s\S]*?\*/", "", src)
+        code = re.sub(r"//[^\n]*", "", code)
+        # Resolve a template like "1.1.1.$i" by substituting a value in the host part.
+        for tmpl in set(re.findall(r'"(\d+\.\d+\.\d+\.\$\w+)"', code)):
+            concrete = tmpl[: tmpl.rindex(".")] + ".7"
+            assert is_public(concrete), (
+                "a concurrency test uses " + tmpl + " (-> " + concrete + "), which isPublicIp() "
+                "rejects, so resolve() short-circuits before the locking under test is ever reached "
+                "and the batch finishes in zero time. Use a public literal.")
 
 
 def check_a_concurrency_test_uses_only_fake_dependencies():

@@ -44,7 +44,7 @@ class LookupConcurrencyTest {
             nowMillis = { testScheduler.currentTime },
         )
         coroutineScope {
-            (1..8).map { i -> async { lookup.resolve("10.0.0.$i") } }.awaitAll()
+            (1..8).map { i -> async { lookup.resolve("1.1.1.$i") } }.awaitAll()
         }
         lookup.close()
         assertTrue(
@@ -98,8 +98,8 @@ class LookupConcurrencyTest {
         coroutineScope {
             (1..8).map { i ->
                 async {
-                    val at = lookup.resolve("10.0.0.$i")
-                    timeline += "10.0.0.$i -> $at at t=${testScheduler.currentTime}"
+                    val at = lookup.resolve("1.1.1.$i")
+                    timeline += "1.1.1.$i -> $at at t=${testScheduler.currentTime}"
                     at
                 }
             }.awaitAll()
