@@ -32,6 +32,9 @@ def verify():
     check_the_flag_walk_is_concurrent()
     check_a_lock_does_not_serialise_the_lookups()
     check_a_measured_delay_forces_a_fresh_lookup()
+    check_the_palette_is_the_whole_theme()
+    check_the_connect_button_is_blue_and_ping_is_untouched()
+    check_theme_pairs_stay_readable()
     check_the_row_has_one_flag_slot()
     check_the_flag_path_is_covered_by_a_real_test()
     check_release_workflow()
@@ -202,6 +205,129 @@ def check_a_measured_delay_forces_a_fresh_lookup():
         assert arg == "address, force", (
             "the per-delay path calls serverFlags.resolve(" + arg + ") instead of threading the "
             "force flag, so a measured row keeps the verdict cached before the measurement")
+
+
+PALETTE = ("272727", "FED766", "009FB7", "696773", "EFF1F3")
+# Status colours carry meaning, so they are not decoration and stay out of the palette: the ping
+# colours were explicitly kept by the user, and red means an error.
+ALLOWED_OUTSIDE = {"009966", "FF0099", "D32F2F", "9E2323", "F3D6D4", "350C0C", "D50000"}
+# Pure white is the top of the mist anchor, not an extra colour.
+SCALED_ACCEPTED = {"FFFFFF", "000000"}
+
+
+def _lum(h):
+    c = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    c = [(x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4) for x in c]
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+def _contrast(a, b):
+    la, lb = _lum(a), _lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def _is_scaled_member(rgb, anchor, lo=0.24, hi=4.2):
+    """True when rgb is a darkened or lightened member of the anchor rather than another hue.
+
+    Comparing channel order alone is not enough: every near-grey has a "consistent" channel order
+    against every other near-grey, so a violet sneaks past a charcoal test. Hue and saturation
+    have to move together with lightness for this to be the same colour.
+    """
+    import colorsys
+    def hsv(h):
+        r, g, b = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        return colorsys.rgb_to_hsv(r, g, b)
+    hh, sh, vh = hsv(rgb)
+    ha, sa, va = hsv(anchor)
+    if va == 0:
+        return vh <= 0.08
+    # A near-grey anchor can only produce a near-grey member.
+    if sa < 0.12 and sh > 0.18:
+        return False
+    dh = abs(hh - ha)
+    dh = min(dh, 1 - dh)
+    scale = vh / va
+    return (dh <= 0.06 and lo <= scale <= hi) or (sh <= 0.12 and vh <= 0.08)
+
+
+def check_the_palette_is_the_whole_theme():
+    """Every themed colour was remapped to the five-colour palette, ping excepted.
+
+    The connect control was asked to be blue, the latency colours were asked to stay, and
+    everything else was asked to become the nearest member of the palette. A stray literal is how
+    the old orange creeps back in one component at a time.
+    """
+    theme = (APP / "src/main/java/com/v2ray/ang/ui/compose/Theme.kt").read_text("utf-8")
+    for lit in re.findall(r"Color[(]0x[0-9A-Fa-f]{8}[)]", theme):
+        rgb = re.sub(r"[^0-9A-Fa-f]", "", lit)[-6:].upper()
+        if rgb in PALETTE or rgb in ALLOWED_OUTSIDE or rgb in SCALED_ACCEPTED:
+            continue
+        assert any(_is_scaled_member(rgb, a) for a in PALETTE), (
+            "the theme has a colour outside the palette again: 0x" + rgb)
+    assert "Color(0xFF009FB7)" in theme, "the teal anchor is gone from the theme"
+
+
+def check_the_connect_button_is_blue_and_ping_is_untouched():
+    """The two colours the user pinned by name: the button goes blue, the latency colours stay.
+
+    They are semantic, not decorative, so a palette sweep that moves them silently changes what a
+    row means rather than how it looks.
+    """
+    theme = (APP / "src/main/java/com/v2ray/ang/ui/compose/Theme.kt").read_text("utf-8")
+    def val_of(name):
+        m = re.search(r"val " + name + r" = Color[(]0x[0-9A-Fa-f]{2}([0-9A-Fa-f]{6})[)]", theme)
+        return m.group(1).upper() if m else None
+    assert val_of("colorFabActive") == "009FB7", (
+        "the connect button is not blue again: 0x" + str(val_of("colorFabActive")))
+    assert val_of("colorPing") == "009966", (
+        "the latency green was remapped and lost its meaning: 0x" + str(val_of("colorPing")))
+    assert val_of("colorPingRed") == "FF0099", (
+        "the latency red was remapped and lost its meaning: 0x" + str(val_of("colorPingRed")))
+    risk = (APP / "src/main/java/com/v2ray/ang/ui/main/RiskBadge.kt").read_text("utf-8")
+    assert "Color(0xFF009FB7)" in risk, "the safe flag is not on the palette"
+    assert "Color(0xFFFED766)" in risk, "the caution flag is not on the palette"
+    assert "Color(0xFF696773)" in risk, "the unknown flag is not on the palette"
+
+
+def check_theme_pairs_stay_readable():
+    """A remap that ignores contrast turns a colour into an unreadable one.
+
+    Five colours is few enough that pairing is a real constraint, so the sweep has to check the
+    result rather than assume the anchors work together. Red is exempt: it is a status colour with
+    no palette member, so its pair is the closest the palette allows.
+    """
+    theme = (APP / "src/main/java/com/v2ray/ang/ui/compose/Theme.kt").read_text("utf-8")
+    # Parsed line by line on purpose: a regex over the whole scheme block is brittle, because the
+    # body is full of nested parentheses and a colour pattern matches happily across a boundary.
+    schemes = {}
+    current = None
+    for line in theme.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("private val LightColor"):
+            current = "light"
+        elif stripped.startswith("private val DarkColor"):
+            current = "dark"
+        elif stripped.startswith(")") or stripped.startswith("//") or stripped == "":
+            if current is not None and stripped == ")":
+                current = None
+        if current:
+            m = re.match(r"^    ([a-zA-Z]+) = Color\(0xFF([0-9A-Fa-f]{6})\),", line)
+            if m:
+                schemes.setdefault(current, {})[m.group(1)] = m.group(2)
+    assert set(schemes) == {"light", "dark"}, "the light or dark scheme is missing"
+    pairs = [("primary", "onPrimary"), ("primaryContainer", "onPrimaryContainer"),
+             ("secondary", "onSecondary"), ("secondaryContainer", "onSecondaryContainer"),
+             ("tertiary", "onTertiary"), ("tertiaryContainer", "onTertiaryContainer"),
+             ("errorContainer", "onErrorContainer"), ("background", "onBackground"),
+             ("surface", "onSurface"), ("surfaceVariant", "onSurfaceVariant")]
+    for name in ("light", "dark"):
+        cols = schemes[name]
+        for bg, fg in pairs:
+            if bg in cols and fg in cols:
+                ratio = _contrast(cols[fg], cols[bg])
+                assert ratio >= 4.5, (
+                    name + ": " + fg + " on " + bg + " is " + ("%.1f" % ratio)
+                    + ":1, which is unreadable at text size")
 
 
 def check_the_row_has_one_flag_slot():

@@ -30,9 +30,9 @@ import com.v2ray.ang.handler.RiskReason
  */
 internal fun riskFlagColor(level: RiskLevel): Color = when (level) {
     RiskLevel.UNSAFE -> Color(0xFFD32F2F)
-    RiskLevel.CAUTION -> Color(0xFFEF6C00)
-    RiskLevel.SAFE -> Color(0xFF2E7D32)
-    RiskLevel.UNKNOWN -> Color(0xFF757575)
+    RiskLevel.CAUTION -> Color(0xFFFED766)
+    RiskLevel.SAFE -> Color(0xFF009FB7)
+    RiskLevel.UNKNOWN -> Color(0xFF696773)
 }
 
 @StringRes
