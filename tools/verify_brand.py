@@ -27,6 +27,7 @@ def verify():
     assert 'R.drawable.ic_ning_logo' in drawer
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
+    check_a_modifier_extension_is_imported_not_a_member()
     check_a_measured_delay_resolves_the_flags()
     check_the_bottom_bar_is_the_original_one()
     check_a_latency_test_also_resolves_the_flags()
@@ -100,6 +101,54 @@ def check_fork_feature_files():
         assert (APP / 'src/main/res/values' / name).exists(), f'fork string file lost: {name}'
 
 def check_a_measured_delay_resolves_the_flags():
+    """The badge stayed on "unchecked" because nothing resolved it when the user looked.
+
+    A measured delay is when the user is reading a row, so the lookup for those rows runs from
+    the test result. Before this the only trigger was a background pass that walked the page one
+    rate-limited address at a time, which is why the flag never appeared where it was expected.
+    """
+    vm = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt').read_text('utf-8')
+    flush = re.search(r'private suspend fun flushPendingTestResults(.*?)\n    \}', vm, re.S)
+    assert flush, 'the delay-result flush is gone'
+    assert 'resolveLookupsFor(' in flush.group(1), (
+        'a measured delay no longer triggers the lookup, so the row keeps "unchecked"')
+
+
+def check_a_modifier_extension_is_imported_not_a_member():
+    """A Modifier extension is an import, not a member: writing .height( without it does not compile.
+
+    Four builds on this branch failed on imports alone -- a DTO the test did not name, a duplicate,
+    an unused one, and now .height() on a button. None of them is logic and each one costs a full
+    native build, and the compiler is the only thing that catches the last kind: the code reads
+    correctly, the call simply has no symbol behind it.
+
+    So the extensions the files under change actually use are checked against the imports they
+    have. The list is the set that has bitten here rather than every extension Compose ships, so a
+    new one is added when it bites rather than guessed at in advance.
+    """
+    watched = ("height", "width", "fillMaxHeight", "fillMaxWidth", "fillMaxSize", "wrapContentSize",
+               "offset", "alpha", "zIndex", "aspectRatio", "drawBehind", "graphicsLayer", "border")
+    files = [APP / "src/main/java/com/v2ray/ang/ui/main/CountryBadge.kt",
+             APP / "src/main/java/com/v2ray/ang/ui/main/MainServerPager.kt",
+             APP / "src/main/java/com/v2ray/ang/handler/ExitCountryProbe.kt"]
+    for src in files:
+        if not src.exists():
+            continue
+        text = src.read_text("utf-8")
+        imports = {l.split(".")[-1] for l in text.splitlines() if l.startswith("import ")}
+        body_text = "\n".join(l for l in text.splitlines() if not l.startswith("import "))
+        # only calls on a modifier chain, not any method with the same name
+        for name in watched:
+            used = ("." + name + "(") in body_text
+            if used and name not in imports:
+                assert False, (
+                    str(src.relative_to(APP)) + " calls ." + name + "() without importing it. A "
+                    "Modifier extension is an import rather than a member, so the call has no "
+                    "symbol behind it and the file does not compile -- while reading as ordinary "
+                    "correct Compose.")
+
+
+def check_every_modifier_extension_used_is_imported():
     """The badge stayed on "unchecked" because nothing resolved it when the user looked.
 
     A measured delay is when the user is reading a row, so the lookup for those rows runs from
