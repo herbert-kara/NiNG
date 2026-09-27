@@ -6,13 +6,19 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 RES = ROOT / 'V2rayNG/app/src/main/res'
 BG = '#202836'
+# The wordmark wears the same teal as the connect button, so the launcher and the app agree.
+INK = '#009FB7'
+# 20% smaller than the 0.29/0.24 these were.
+LEGEND_SIZE = 0.232
+FOREGROUND_SIZE = 0.192
 FONT = Path('C:/Windows/Fonts/arialbd.ttf')
 
 def artwork(size, foreground=False):
     canvas = Image.new('RGBA', (size, size), (0, 0, 0, 0) if foreground else BG)
     draw = ImageDraw.Draw(canvas)
-    font = ImageFont.truetype(str(FONT), round(size * (0.24 if foreground else 0.29)))
-    draw.text((size/2, size/2), 'NiNG', font=font, anchor='mm', fill='white')
+    ratio = FOREGROUND_SIZE if foreground else LEGEND_SIZE
+    font = ImageFont.truetype(str(FONT), round(size * ratio))
+    draw.text((size/2, size/2), 'NiNG', font=font, anchor='mm', fill=INK)
     return canvas
 
 for density, scale in [('mdpi',1),('hdpi',1.5),('xhdpi',2),('xxhdpi',3),('xxxhdpi',4)]:
@@ -28,6 +34,7 @@ artwork(512).save(RES/'drawable/ic_ning_logo.png')
 artwork(512).save(RES/'drawable-nodpi/ic_pattng_logo.png')
 for name in ['ic_banner.png','ic_banner_foreground.png']:
     image = Image.new('RGB',(640,360),BG)
-    ImageDraw.Draw(image).text((320,180),'NiNG',font=ImageFont.truetype(str(FONT),150),anchor='mm',fill='white')
+    # 20% smaller than the 150 it was, and in the palette teal rather than white.
+    ImageDraw.Draw(image).text((320,180),'NiNG',font=ImageFont.truetype(str(FONT),120),anchor='mm',fill=INK)
     image.save(RES/'mipmap-xhdpi'/name)
 print('NiNG launcher, round, adaptive foreground/background, drawer and TV banner PNGs generated')

@@ -36,6 +36,8 @@ def verify():
     check_the_connect_button_is_blue_and_ping_is_untouched()
     check_theme_pairs_stay_readable()
     check_a_rewritten_function_keeps_its_helpers_and_returns()
+    check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
+    check_concurrent_lookups_of_one_address_share_a_round_trip()
     check_the_row_has_one_flag_slot()
     check_the_flag_path_is_covered_by_a_real_test()
     check_release_workflow()
@@ -327,6 +329,74 @@ _IDIOMS = {
     "async", "awaitAll", "await", "delay", "runInterruptible", "coroutineScope", "supervisorScope",
     "CancellationException", "Logger", "LoggerFactory", "HttpURLConnection", "URL", "URI",
 }
+
+
+def check_concurrent_lookups_of_one_address_share_a_round_trip():
+    """Splitting the single lock dropped deduplication as a side effect.
+
+    The old resolve() held one mutex, so two callers wanting the same address necessarily shared
+    one request. Splitting it into a cache lock and a pacing lock let those two requests race, and
+    four of the tests caught it. The pacing gap is what the provider needs; deduplication is a
+    separate property and needs its own guard, or the next lock change takes it away again.
+    """
+    for name, result in (("ServerFlaggedLookup", "FlagVerdict?"), ("ServerCountryLookup", "String?")):
+        src = (APP / ("src/main/java/com/v2ray/ang/handler/" + name + ".kt")).read_text("utf-8")
+        assert "inFlight" in src, name + " has no in-flight map, so equal addresses race each other"
+        # Checking that the name appears is not enough: the call has to be on the path that
+        # resolve() actually takes, or a leftover "fetchOnce(" in a comment keeps the guard green.
+        body = re.search(r"    suspend fun resolve[(].*?\n    \}", src, re.S)
+        assert body, name + " has no resolve() to follow"
+        assert "fetchOnce(" in body.group(0), (
+            name + ": resolve() no longer goes through the shared round trip, so equal addresses "
+            "race each other again")
+        m = re.search(r"private val inFlight = mutableMapOf<String, Deferred<([^>]*)>>", src)
+        assert m, name + " does not type its in-flight map; a plain map would leak a half-built entry"
+        assert m.group(1) == result, (
+            name + " holds Deferred<" + m.group(1) + "> but resolve() returns " + result)
+        # The entry has to be dropped in a finally, or a failed lookup poisons the key for its TTL.
+        fn = re.search(r"private suspend fun fetchOnce[(].*?\n    \}", src, re.S)
+        assert fn, name + " has no fetchOnce()"
+        assert "finally" in fn.group(0), (
+            name + ": a cancelled or failed fetchOnce() would leave its key in the in-flight map")
+        assert "inFlight.remove" in fn.group(0), name + ": fetchOnce() never removes its in-flight entry"
+
+
+def check_the_launcher_wordmark_is_teal_and_20_percent_smaller():
+    """The wordmark was asked to shrink by a fifth and take the palette teal.
+
+    Both are invisible in a diff of the rendered PNG and easy to undo by hand, so the generator
+    is pinned instead of the artwork: the ink must be the teal anchor, and the legend must stay at
+    0.8 of the size it was. The committed PNGs are checked too, so a regenerated-then-reverted
+    asset cannot pass.
+    """
+    src = (ROOT / "tools/make_icons.py").read_text("utf-8")
+    m = re.search(r"INK\s*=\s*'#([0-9A-Fa-f]{6})'", src)
+    assert m, "make_icons.py no longer names the wordmark ink"
+    ink = m.group(1).upper()
+    assert ink == "009FB7", "the launcher wordmark left the palette: #" + ink
+    for name, old in (("LEGEND_SIZE", 0.29), ("FOREGROUND_SIZE", 0.24)):
+        mm = re.search(name + r"\s*=\s*([0-9.]+)", src)
+        assert mm, name + " is gone from make_icons.py"
+        got = float(mm.group(1))
+        want = round(old * 0.8, 4)
+        assert abs(got - want) < 1e-6, (
+            name + " is " + str(got) + ", which is not 20% smaller than the " + str(old) + " it was")
+    assert "fill='white'" not in src and 'fill="white"' not in src, (
+        "a wordmark is still painted white, which is not the palette teal")
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    from collections import Counter
+    for rel in ("mipmap-xxxhdpi/ic_launcher.png", "drawable/ic_ning_logo.png",
+                "mipmap-xhdpi/ic_banner.png"):
+        im = Image.open(APP / ("src/main/res/" + rel)).convert("RGB")
+        c = Counter(im.getdata())
+        teal = sum(n for (r, g, b), n in c.items()
+                   if abs(r - 0x00) + abs(g - 0x9F) + abs(b - 0xB7) < 40)
+        bright = sum(n for (r, g, b), n in c.items() if r > 200 and g > 200 and b > 200)
+        assert teal > 200, rel + " has almost no teal in it: " + str(teal) + " px"
+        assert bright < teal, rel + " is still mostly white text: " + str(bright) + " vs " + str(teal)
 
 
 def check_a_rewritten_function_keeps_its_helpers_and_returns():

@@ -2,6 +2,11 @@ package com.v2ray.ang.handler
 
 import com.v2ray.ang.dto.ProxyCheckInfo
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -50,6 +55,8 @@ internal class ServerFlaggedLookup(
     // lookup serialized the network calls and defeated any concurrent walk.
     private val cacheLock = Mutex()
     private val pacing = Mutex()
+    // Simultaneous requests for one address must cost one round trip, not one each.
+    private val inFlight = mutableMapOf<String, Deferred<FlagVerdict?>>()
     private var lastStart: Long? = null
 
     private val clientHolder = lazy {
@@ -81,10 +88,10 @@ internal class ServerFlaggedLookup(
                 // every request wait for the previous one's full timeout, so a concurrent walk
                 // queued up behind the rate limiter it was meant to overlap and a page still
                 // took minutes. The gap between request starts is what the provider needs.
-                rateLimit()
-                withTimeoutOrNull(8000) {
-                    fetch?.invoke(ip) ?: if (fetch == null) defaultFetch(ip) else null
-                }?.let { parseVerdict(it, ip) }
+                fetchOnce(ip, 8000) { host ->
+                    rateLimit()
+                    parseVerdict(fetch?.invoke(host) ?: if (fetch == null) defaultFetch(host) else null, host)
+                }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -100,6 +107,28 @@ internal class ServerFlaggedLookup(
     }
 
     /** Serialises request *starts* only, so concurrent lookups still overlap their round trips. */
+
+    /**
+     * One provider round trip per address at a time, however many callers want the answer.
+     *
+     * A [Deferred] is held rather than its value, so the second caller awaits the first request
+     * instead of starting a competing one. Nothing here holds a lock across the network call, which
+     * is what let a page of different addresses overlap in the first place.
+     */
+    private suspend fun fetchOnce(ip: String, timeoutMs: Long, request: suspend (String) -> String?): FlagVerdict? {
+        val waiter = cacheLock.withLock { inFlight[ip] }
+        if (waiter != null) return waiter.await()
+        val deferred = CoroutineScope(currentCoroutineContext())
+            .async(start = CoroutineStart.LAZY) { withTimeoutOrNull(timeoutMs) { request(ip) } }
+        val mine = cacheLock.withLock { inFlight.putIfAbsent(ip, deferred) ?: deferred }
+        try {
+            if (mine === deferred) deferred.start()
+            return deferred.await()
+        } finally {
+            cacheLock.withLock { if (inFlight[ip] === deferred) inFlight.remove(ip) }
+        }
+    }
+
     private suspend fun rateLimit() = pacing.withLock {
         val elapsed = lastStart?.let { nowMillis() - it }
         if (elapsed != null && elapsed < REQUEST_GAP_MS) delay(REQUEST_GAP_MS - elapsed)

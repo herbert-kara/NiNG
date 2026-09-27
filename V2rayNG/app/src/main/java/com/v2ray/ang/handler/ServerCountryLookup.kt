@@ -2,8 +2,18 @@ package com.v2ray.ang.handler
 
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -41,6 +51,8 @@ internal class ServerCountryLookup(
     // network calls and defeated any concurrent walk.
     private val cacheLock = Mutex()
     private val pacing = Mutex()
+    // Simultaneous requests for one address must cost one round trip, not one each.
+    private val inFlight = mutableMapOf<String, Deferred<String?>>()
     private var lastStart: Long? = null
     // Android's platform DNS can ignore interruption. Bound its workers and queue, never spawn
     // a replacement thread per timeout. close() cancels pending work when the ViewModel ends.
@@ -90,9 +102,9 @@ internal class ServerCountryLookup(
             if (ip == null) {
                 null
             } else {
-                rateLimit()
-                withTimeoutOrNull(5500) {
-                    ProfileCountry.normalize(fetch?.invoke(ip) ?: if (fetch == null) defaultFetch(ip) else null)
+                fetchOnce(ip, 5500) { host ->
+                    rateLimit()
+                    ProfileCountry.normalize(fetch?.invoke(host) ?: if (fetch == null) defaultFetch(host) else null)
                 }
             }
         } catch (cancelled: CancellationException) {
@@ -114,6 +126,28 @@ internal class ServerCountryLookup(
         val elapsed = lastStart?.let { nowMillis() - it }
         if (elapsed != null && elapsed < 1100) delay(1100 - elapsed)
         lastStart = nowMillis()
+    }
+
+
+    /**
+     * One provider round trip per address at a time, however many callers want the answer.
+     *
+     * A [Deferred] is held rather than its value, so the second caller awaits the first request
+     * instead of starting a competing one. Nothing here holds a lock across the network call, which
+     * is what let a page of different addresses overlap in the first place.
+     */
+    private suspend fun fetchOnce(ip: String, timeoutMs: Long, request: suspend (String) -> String?): String? {
+        val waiter = cacheLock.withLock { inFlight[ip] }
+        if (waiter != null) return waiter.await()
+        val deferred = CoroutineScope(currentCoroutineContext())
+            .async(start = CoroutineStart.LAZY) { withTimeoutOrNull(timeoutMs) { request(ip) } }
+        val mine = cacheLock.withLock { inFlight.putIfAbsent(ip, deferred) ?: deferred }
+        try {
+            if (mine === deferred) deferred.start()
+            return deferred.await()
+        } finally {
+            cacheLock.withLock { if (inFlight[ip] === deferred) inFlight.remove(ip) }
+        }
     }
 
     private suspend fun defaultDns(host: String): List<InetAddress> = runInterruptible(Dispatchers.IO) {
