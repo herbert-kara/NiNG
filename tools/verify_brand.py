@@ -41,6 +41,7 @@ def verify():
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
     check_the_flag_lookup_asks_through_the_tunnel()
+    check_a_failed_lookup_reports_why_it_failed()
     check_flag_diagnostics_use_a_level_that_survives_the_default()
     check_the_flag_path_says_where_it_stops()
     check_the_flag_path_records_without_depending_on_the_settings_store()
@@ -931,6 +932,44 @@ def check_the_country_lookup_client_is_a_valid_read_write_property():
             assert ".build()" in line, (
                 "the client is assigned " + line.strip() + " without building it, so the request "
                 "path holds an OkHttpClient.Builder where it needs a client")
+
+
+def check_a_failed_lookup_reports_why_it_failed():
+    """Every transport failure became the same null, so a device could only say "nothing came back".
+
+    Nine lookups, nine misses, one indistinguishable answer: a proxy that rejects the request, a
+    provider that is down, a DNS failure and a body that does not parse all produce the same null at
+    the call site. Diagnosing that from a phone means guessing, and the guessing is what made nine
+    releases of fixes land in a path that was working.
+
+    The reason is now carried alongside the miss. It is deliberately a transport fact -- an exception
+    type name or a status code -- and never a host, an address or a body, so it can be logged under
+    the root guide's rule against logging hosts and URLs.
+    """
+    lookup = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
+    for what, why in (
+        ("class Attempt",
+         "the attempt type that carries a failure reason is gone, so a failed request will collapse "
+         "back into a bare null and the device will only be able to report that nothing came back"),
+        ("val reasons: List<String> = emptyList()",
+         "the outcome does not carry the reasons, so whatever the providers said is discarded again"),
+    ):
+        assert what in lookup, why + " (" + what + ")"
+    # Each distinct transport outcome has to be labelled, or they merge back into one null.
+    for reason in ("http\" + it.code", "e.javaClass.simpleName", "unparsed"):
+        assert reason in lookup, (
+            "the label " + reason + " is gone, so this failure is once again indistinguishable from "
+            "the others and the reason list will under-report what went wrong")
+    # The reason has to reach the log, not stop at the seam.
+    vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
+    assert "why=" in vm, (
+        "the reasons are collected but never printed, so the device still cannot show why a lookup "
+        "failed and the next diagnosis will be another guess")
+    # And they must not be able to leak what was asked about.
+    i = vm.index("why=")
+    tail = vm[i:i + 200]
+    assert "outcome.reasons.joinToString" in tail, (
+        "the printed reason must be the collected reasons, not any part of the request")
 
 
 def check_flag_diagnostics_use_a_level_that_survives_the_default():

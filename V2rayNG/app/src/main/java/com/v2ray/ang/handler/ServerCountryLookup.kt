@@ -63,6 +63,8 @@ internal class ServerCountryLookup(
         val keyLength: Int,
         val literal: Boolean,
         val resolvedIp: String?,
+        /** Transport-level failure reasons in provider order, empty when one answered. */
+        val reasons: List<String> = emptyList(),
     )
     private data class Entry(val code: String?, val expires: Long)
     private val cache = linkedMapOf<String, Entry>()
@@ -182,7 +184,12 @@ internal class ServerCountryLookup(
             } else {
                 fetchOnce(key, ip) { host ->
                     rateLimit()
-                    ProfileCountry.normalize(fetch?.invoke(host) ?: if (fetch == null) defaultFetch(host) else null)
+                    // The reasons belong to this one lookup, not to the seam, so they are collected here and
+        // attached to the outcome rather than pushed through the seam the tests drive.
+        val reasons = mutableListOf<String>()
+        val body = fetch?.invoke(host) ?: if (fetch == null) defaultFetch(host, reasons) else null
+        lastReasons = reasons
+        ProfileCountry.normalize(body)
                 }
             }
         } catch (cancelled: CancellationException) {
@@ -209,6 +216,7 @@ internal class ServerCountryLookup(
                 keyLength = key.length,
                 literal = literal != null,
                 resolvedIp = ipForOutcome,
+                reasons = if (result != null) emptyList() else lastReasons,
             )
         )
         return result
@@ -257,37 +265,70 @@ internal class ServerCountryLookup(
         }
     }
 
-    private suspend fun defaultFetch(ip: String): String? {
+    /**
+     * Tries every provider in turn and keeps the reasons the ones that failed gave.
+     *
+     * The order is a preference, not a health check, so the reasons are collected in the order the
+     * endpoints were tried. That list is what distinguishes a proxy that rejects the request from
+     * a provider that is down from a provider that answers with something unparseable, which are
+     * three different bugs that all look like "no flag" on a device.
+     */
+    private suspend fun defaultFetch(ip: String, reasons: MutableList<String>): String? {
         // A single blocked or rate-limited endpoint must not leave the row without a flag, so
         // each provider is tried in turn and the first usable answer wins.
         for (endpoint in COUNTRY_ENDPOINTS) {
-            val body = fetchFrom(endpoint.replace("{ip}", ip)) ?: continue
-            val code = parseResponse(body) ?: continue
+            val attempt = fetchFrom(endpoint.replace("{ip}", ip))
+            if (attempt.reason != "ok") {
+                reasons.add(attempt.reason)
+                continue
+            }
+            val code = parseResponse(attempt.body)
+            if (code == null) {
+                reasons.add("unparsed")
+                continue
+            }
             return code
         }
         return null
     }
 
-    private suspend fun fetchFrom(url: String): String? = suspendCancellableCoroutine { continuation ->
+    /**
+     * A body, or null with the reason attached.
+     *
+     * Every failure used to become the same null: a rejected proxy, a refused connection, a
+     * timeout and an unparseable answer were indistinguishable at the call site, so the only thing
+     * a device could report was that nothing came back. The reason is a transport fact -- an
+     * exception type or a status code -- and never a host, an address or a body, so it can be
+     * logged without leaking what was asked about.
+     */
+    private data class Attempt(val body: String?, val reason: String)
+
+    private suspend fun fetchFrom(url: String): Attempt = suspendCancellableCoroutine { continuation ->
         val request = Request.Builder().url(url).get().build()
         val call = client.newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                continuation.resume(null)
+                // The class name says which failure: a rejected proxy and a refused port look
+                // identical from here otherwise.
+                continuation.resume(Attempt(null, e.javaClass.simpleName))
             }
 
             override fun onResponse(call: Call, response: Response) {
-                val code = try {
+                val attempt = try {
                     response.use {
-                        if (!it.isSuccessful) null else {
-                            // Bound memory even when Content-Length is absent or dishonest.
-                            val source = it.body?.source()
-                            if (source == null || !source.request(16_385)) null else source.readUtf8()
+                        val source = it.body?.source()
+                        when {
+                            !it.isSuccessful -> Attempt(null, "http" + it.code)
+                            source == null -> Attempt(null, "noBody")
+                            !source.request(16_385) -> Attempt(null, "tooLarge")
+                            else -> Attempt(source.readUtf8(), "ok")
                         }
                     }
-                } catch (_: Exception) { null }
-                continuation.resume(code)
+                } catch (e: Exception) {
+                    Attempt(null, e.javaClass.simpleName)
+                }
+                continuation.resume(attempt)
             }
         })
     }

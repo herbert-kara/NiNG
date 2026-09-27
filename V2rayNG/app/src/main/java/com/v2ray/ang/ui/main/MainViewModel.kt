@@ -142,7 +142,8 @@ class MainViewModel(
                 "country lookup ${if (outcome.hit) "hit" else "miss"} " +
                     "route=${if (outcome.viaTunnel) "tunnel" else "direct"} " +
                     "keyLen=${outcome.keyLength} ip=${outcome.resolvedIp != null} " +
-                    "literal=${outcome.literal}"
+                    "literal=${outcome.literal} " +
+                    "why=${outcome.reasons.joinToString(",").ifEmpty { "-" }}"
             )
         },
     )
