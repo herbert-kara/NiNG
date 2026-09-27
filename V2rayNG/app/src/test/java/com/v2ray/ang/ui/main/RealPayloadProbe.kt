@@ -58,7 +58,6 @@ class RealPayloadProbe {
     fun verdictSurvivesTheRowUpdateThatAttachesIt() {
         val profile = com.v2ray.ang.dto.entities.ProfileItem(
             configType = com.v2ray.ang.enums.EConfigType.VLESS,
-            address = "188.114.97.6",
             server = "188.114.97.6",
             remarks = "x",
         )

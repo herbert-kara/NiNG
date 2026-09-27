@@ -10,10 +10,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -34,6 +33,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.v2ray.ang.R
 import com.v2ray.ang.ui.compose.AppDivider
@@ -72,83 +72,91 @@ fun MainBottomBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(64.dp)
-                    .padding(horizontal = 16.dp),
+                    .heightIn(min = 64.dp)
+                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 // Exit-IP geography only: shown with the current connection-test result,
                 // separate from the per-profile location flag rendered in the server rows.
-                Column(Modifier.weight(1f).padding(end = 104.dp)) {
+                //
+                // The text is bounded to one ellipsized line and the trailing padding only clears
+                // the refresh button. A fixed row height plus unbounded text is what pushed the
+                // status line outside the bar: a long translation wrapped to three lines and
+                // overflowed the surface on any narrow screen.
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp)
+                ) {
                     CountryBadge(exitCountryCode, R.string.country_exit)
                     Text(
                         text = displayText,
                         style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.semantics {
                             contentDescription = displayText
                         }
                     )
                 }
-                // Re-queries the reputation provider, next to the ping test it parallels. The
-                // click does not start the service and does not activate the row behind it.
-                // The end padding clears the connect FAB: a FAB is 56dp wide with 24dp of inset
-                // and is drawn over this bar, so a refresh button placed at the end sat underneath
-                // it and every tap started or stopped the service instead.
-                SmallFloatingActionButton(
-                    // This button has no enabled parameter, so a pass in flight is guarded here
-                    // and shown with muted colours: a tap that lands mid-pass would otherwise
-                    // queue another one behind the same rows.
-                    onClick = { if (!isRefreshingFlags) onAction(MainAction.RefreshFlags) },
-                    modifier = Modifier.padding(end = 96.dp),
-                    containerColor = if (isRefreshingFlags) {
-                        MaterialTheme.colorScheme.surfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.secondaryContainer
-                    },
-                ) {
-                    RefreshFlagsGlyph(
-                        tint = if (isRefreshingFlags) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.onSecondaryContainer
-                        },
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
             }
         }
-        FloatingActionButton(
-            onClick = {
-                if (!isRunning) {
-                    scope.launch {
-                        rotationAnim.animateTo(
-                            targetValue = 720f,
-                            animationSpec = tween(durationMillis = 3000)
-                        )
-                    }
-                }
-                onAction(MainAction.ToggleService)
-            },
+        Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(end = 24.dp)
-                .offset(y = (-28).dp)
+                .padding(end = 24.dp, top = 8.dp)
                 .navigationBarsPadding(),
-            containerColor = if (isRunning) colorFabActive
-            else if (isDarkTheme) colorFabInactiveDark
-            else colorFabInactiveLight
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Icon(
-                painter = if (isRunning) painterResource(R.drawable.ic_stop_24dp)
-                else painterResource(R.drawable.ic_play_24dp),
-                contentDescription = stringResource(
-                    if (isRunning) R.string.acc_stop else R.string.acc_start
-                ),
-                tint = Color.White,
-                modifier = Modifier
-                    .size(24.dp)
-                    .graphicsLayer { rotationZ = rotationAnim.value }
-            )
+            FloatingActionButton(
+                onClick = {
+                    if (!isRunning) {
+                        scope.launch {
+                            rotationAnim.animateTo(
+                                targetValue = 720f,
+                                animationSpec = tween(durationMillis = 3000)
+                            )
+                        }
+                    }
+                    onAction(MainAction.ToggleService)
+                },
+                containerColor = if (isRunning) colorFabActive
+                else if (isDarkTheme) colorFabInactiveDark
+                else colorFabInactiveLight
+            ) {
+                Icon(
+                    painter = if (isRunning) painterResource(R.drawable.ic_stop_24dp)
+                    else painterResource(R.drawable.ic_play_24dp),
+                    contentDescription = stringResource(
+                        if (isRunning) R.string.acc_stop else R.string.acc_start
+                    ),
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .graphicsLayer { rotationZ = rotationAnim.value }
+                )
+            }
+            // Refresh sits to the left of connect in the same row, so the two can never overlap
+            // and a tap can never land on the other control.
+            SmallFloatingActionButton(
+                onClick = { if (!isRefreshingFlags) onAction(MainAction.RefreshFlags) },
+                containerColor = if (isRefreshingFlags) {
+                    MaterialTheme.colorScheme.surfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.secondaryContainer
+                },
+            ) {
+                RefreshFlagsGlyph(
+                    tint = if (isRefreshingFlags) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSecondaryContainer
+                    },
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }

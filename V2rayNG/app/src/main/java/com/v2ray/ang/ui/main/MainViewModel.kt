@@ -166,29 +166,39 @@ class MainViewModel(
                     .collectLatest { (targets, force) ->
                         withContext(ioDispatcher) {
                             var requested = force
-                            do {
-                                flagRefreshRunning.value = true
-                                requested = runFlagBatch(
-                                    targets = targets,
-                                    isNewerRequested = { flagRefreshTick.value > 0 },
-                                    lookup = { address, _ -> serverFlags.resolve(address, requested) },
-                                    publish = { guid, address, verdict ->
-                                        withContext(Dispatchers.Main.immediate) {
-                                            if (uiState.value.selectedGroupId == groupId) {
-                                                mutableServerGroupState(groupId).update { state ->
-                                                    state.copy(
-                                                        rows = applyServerFlag(
-                                                            state.rows, guid, address,
-                                                            verdict.status, verdict.countryCode,
+                            // The running flag has to be cleared on every exit path. This block is
+                            // inside collectLatest, so a group change or a new batch cancels it; a
+                            // plain assignment at the end was skipped on cancellation and left the
+                            // flag true forever, which is what made the button look permanently
+                            // dead: every later tap was blocked by its own in-flight guard.
+                            try {
+                                do {
+                                    flagRefreshRunning.value = true
+                                    requested = runFlagBatch(
+                                        targets = targets,
+                                        isNewerRequested = { flagRefreshTick.value > 0 },
+                                        lookup = { address, forceLookup ->
+                                            serverFlags.resolve(address, forceLookup || requested)
+                                        },
+                                        publish = { guid, address, verdict ->
+                                            withContext(Dispatchers.Main.immediate) {
+                                                if (uiState.value.selectedGroupId == groupId) {
+                                                    mutableServerGroupState(groupId).update { state ->
+                                                        state.copy(
+                                                            rows = applyServerFlag(
+                                                                state.rows, guid, address,
+                                                                verdict.status, verdict.countryCode,
+                                                            )
                                                         )
-                                                    )
+                                                    }
                                                 }
                                             }
-                                        }
-                                    },
-                                )
-                            } while (requested)
-                            flagRefreshRunning.value = false
+                                        },
+                                    )
+                                } while (requested)
+                            } finally {
+                                flagRefreshRunning.value = false
+                            }
                         }
                     }
             }

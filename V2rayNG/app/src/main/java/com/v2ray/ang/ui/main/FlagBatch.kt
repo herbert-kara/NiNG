@@ -20,7 +20,10 @@ internal suspend fun <K, V> runFlagBatch(
 ): Boolean {
     for ((key, address) in targets) {
         currentCoroutineContext().ensureActive()
-        val verdict = lookup(address, true) ?: continue
+        // The caller's decision is passed through. Hard-coding true here discarded it and made
+        // every pass re-query the provider, so an automatic pass cost a full network round trip
+        // per row for no reason.
+        val verdict = lookup(address, isNewerRequested()) ?: continue
         publish(key, address, verdict)
     }
     return isNewerRequested()
