@@ -30,7 +30,38 @@ class ServerCountryLookupTest {
             ServerCountryLookup.COUNTRY_ENDPOINTS.size > 1,
         )
         assertTrue(
-            ServerCountryLookup.COUNTRY_ENDPOINTS.all { it.startsWith("https://") && it.contains("{ip}") }
+            "every provider has to ask about an address, or it returns the tunnel's own exit and " +
+                "every row shows the selected server's country",
+            ServerCountryLookup.COUNTRY_ENDPOINTS.all { it.contains("{ip}") },
+        )
+    }
+
+    @Test fun theTlsProvidersAreTriedBeforeAnyPlainHttpOne() {
+        // ip-api.com is plain HTTP: the request and the answer both travel in clear, so whoever is
+        // on the path can rewrite the country. It answers faster than the others and from networks
+        // that refuse them, which is why it is configured at all -- but it is configured last, so
+        // it is only reached when every TLS provider has already failed.
+        val endpoints = ServerCountryLookup.COUNTRY_ENDPOINTS
+        val schemes = endpoints.map { it.substringBefore("://") }
+        val firstPlain = schemes.indexOf("http")
+        if (firstPlain >= 0) {
+            assertEquals(
+                "a plain-HTTP provider is configured at $firstPlain of $endpoints, so it is " +
+                    "reached before the TLS providers that would answer it",
+                List(firstPlain) { "https" },
+                schemes.take(firstPlain),
+            )
+            assertEquals(
+                "the plain-HTTP provider should be the last resort, not one of several",
+                "http",
+                schemes.last(),
+            )
+        }
+        // And the fastest measured TLS provider leads, since it is the one that answers from a
+        // restricted network.
+        assertTrue(
+            "the fastest measured provider should lead the list, was $endpoints",
+            endpoints.first().contains("ipwho.is"),
         )
     }
 

@@ -761,6 +761,20 @@ def check_the_country_walk_has_a_reachable_provider():
     # A count cannot catch a removal from a list of five, so the two measured to answer fastest
     # are pinned by name: ipwho.is in 0.3s and ip-api.com in 0.6s, both returning DE for the
     # reported rows while proxycheck.io blackholed the same network for 21s.
+    # Ordering: TLS first, plain HTTP only as the last resort. ip-api.com answers in clear and is
+    # reachable from networks that refuse the TLS providers, so it is configured -- but a forged
+    # country is a wrong flag, so it must never be reached while a TLS provider is still untried.
+    eps_block = country[country.index("COUNTRY_ENDPOINTS = listOf("):]
+    eps_block = eps_block[:eps_block.index("\n        )")]
+    order = re.findall(r'"(https?)://', eps_block)
+    if "http" in order:
+        first_plain = order.index("http")
+        assert order[:first_plain] == ["https"] * first_plain, (
+            "a plain-HTTP provider is configured before a TLS one (" + str(order) + "), so the "
+            "unencrypted request is made while a TLS provider is still untried")
+        assert order[-1] == "http", (
+            "the plain-HTTP provider is not last (" + str(order) + "); it answers faster and reaches "
+            "networks that refuse TLS, so it is wanted -- but only after every TLS one has failed")
     for required in ("ipwho.is", "ip-api.com"):
         assert required in hosts, (
             required + " is gone from the country providers " + str(hosts) + "; it was the one "

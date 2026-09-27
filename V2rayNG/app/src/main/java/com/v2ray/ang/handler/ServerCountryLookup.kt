@@ -282,13 +282,21 @@ internal class ServerCountryLookup(
          * stay behind it as fallbacks, so no single host decides whether a row gets a flag.
          */
         internal val COUNTRY_ENDPOINTS = listOf(
-            "http://ip-api.com/json/{ip}?fields=status,message,countryCode",
+            // HTTPS first. ipwho.is answers 5.180.82.45 in 0.3s and is the one that answers from
+            // networks where the others are blocked, so it leads.
             "https://ipwho.is/{ip}",
             "https://ipapi.co/{ip}/json/",
             "https://ipinfo.io/{ip}/json",
             "https://api.ip.sb/geoip/{ip}",
+            // Plain HTTP only as a last resort, after every TLS provider has been tried: measured
+            // at 0.6s, the second fastest, and it answers from networks where the TLS ones are
+            // refused. It is last because the request carries no address of the user's -- only the
+            // provider's own IP is in the path -- but the answer still travels unencrypted and can
+            // be altered in transit, so a row's country could be rewritten by whoever is on the
+            // path. Two letters is all that is asked, and a forged one is a wrong flag, not a
+            // secret: that is what the ordering buys, not a guarantee.
+            "http://ip-api.com/json/{ip}?fields=status,message,countryCode",
         )
-
         /**
          * Every provider is parsed through the same tolerant reader: they disagree on the field
          * name, and none of them agree on the success wrapper, so a shape difference must not be
