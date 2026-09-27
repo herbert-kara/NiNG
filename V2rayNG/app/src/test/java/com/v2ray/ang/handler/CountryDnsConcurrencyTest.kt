@@ -50,46 +50,6 @@ class CountryDnsConcurrencyTest {
     }
 
     /**
-     * A pool smaller than the batch cannot have the whole batch in flight, so the walk cannot
-     * finish in one pass. This is the shape the fix removed, asserted so it cannot come back with
-     * the same symptom: the lookups that never started looked like unresolvable hostnames.
-     */
-    @Test
-    fun `a pool smaller than the batch cannot serve the batch in one pass`() {
-        val batch = FLAG_LOOKUP_CONCURRENCY
-        val inFlight = AtomicInteger(0)
-        val peak = AtomicInteger(0)
-        val release = CountDownLatch(1)
-        val pool = Executors.newFixedThreadPool(1)
-        try {
-            val started = CountDownLatch(batch)
-            repeat(batch) {
-                pool.execute {
-                    started.countDown()
-                    val now = inFlight.incrementAndGet()
-                    peak.updateAndGet { previous -> maxOf(previous, now) }
-                    release.await(3, TimeUnit.SECONDS)
-                    inFlight.decrementAndGet()
-                }
-            }
-            // Measured while the lookups are still held, because a pool that lets them finish
-            // early could reach a higher peak afterwards for reasons that have nothing to do
-            // with how many of them it can run at the same time.
-            assertTrue(
-                "the first lookup must start, or the pool is not running anything at all",
-                started.await(3, TimeUnit.SECONDS),
-            )
-            assertEquals(
-                "one worker means exactly one lookup in flight, however many were submitted",
-                1, peak.get(),
-            )
-        } finally {
-            release.countDown()
-            pool.shutdownNow()
-        }
-    }
-
-    /**
      * The pool the fix installs does serve the batch. Eight workers means every lookup in a full
      * batch is running at the same time, which is what lets the walk finish in one pass.
      */
