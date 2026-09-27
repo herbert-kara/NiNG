@@ -2,7 +2,6 @@ package com.v2ray.ang.handler
 
 import com.google.gson.JsonParser
 import com.v2ray.ang.AppConfig
-import com.v2ray.ang.util.LogUtil
 import java.io.Closeable
 import java.io.IOException
 import java.net.InetAddress
@@ -46,7 +45,25 @@ internal class ServerCountryLookup(
     private val tunnelPort: () -> Int? = { null },
     private val tunnelUser: () -> String? = { null },
     private val tunnelPassword: () -> String? = { null },
+    // Who records the outcome, if anyone. Default: nobody. LogUtil reads the log level from the
+    // settings store, so a LogUtil call anywhere on this path makes every unit test that constructs
+    // the lookup fail on MMKV.initialize() -- which is how a diagnostic added to find this bug
+    // became the reason eleven tests could not run. A caller that wants the line supplies it; the
+    // default is silence, and a seam here is testable where a log line is not.
+    private val onOutcome: ((CountryOutcome) -> Unit)? = null,
 ) : Closeable {
+
+    /**
+     * What one lookup produced, and over which route. No hostname: the root guide forbids logging
+     * hosts and URLs, and the shape is the part that diagnoses the failure.
+     */
+    data class CountryOutcome(
+        val hit: Boolean,
+        val viaTunnel: Boolean,
+        val keyLength: Int,
+        val literal: Boolean,
+        val resolvedIp: String?,
+    )
     private data class Entry(val code: String?, val expires: Long)
     private val cache = linkedMapOf<String, Entry>()
     // Separate from the cache lock: one lock across the whole lookup serialised the
@@ -155,11 +172,11 @@ internal class ServerCountryLookup(
         cacheLock.withLock {
             cache[key]?.takeIf { nowMillis() < it.expires }?.let { return it.code }
         }
-        var resolvedIp: String? = null
+        var ipForOutcome: String? = null
         val result = try {
             // The literal is already known public here, or absent.
             val ip = literal?.hostAddress ?: resolvePublicIp(key)
-            resolvedIp = ip
+            ipForOutcome = ip
             if (ip == null) {
                 null
             } else {
@@ -180,16 +197,19 @@ internal class ServerCountryLookup(
             while (cache.size > cacheLimit.coerceAtLeast(1)) cache.remove(cache.keys.first())
         }
         // The row flag has been silently absent across several releases, and this path had no
-        // logging at all, so a lookup that never ran and one that ran and got nothing were the
-        // same thing from adb. No hostname is recorded: the root guide forbids logging hosts and
-        // URLs, and a config host can be sensitive. The outcome, the route and whether DNS and the
-        // provider each produced an address are enough to tell a blocked provider from a row that
-        // was never asked, which is the pair of facts that was missing.
-        LogUtil.i(
-            AppConfig.TAG,
-            "country lookup ${if (result != null) "hit" else "miss"} " +
-                "route=${if (routedThroughTunnel) "tunnel" else "direct"} " +
-                "keyLen=${key.length} ip=${resolvedIp != null} literal=${literal != null}"
+        // recording at all, so a lookup that never ran and one that ran and got nothing were the
+        // same thing from adb. The outcome goes to a seam rather than a log call, because LogUtil
+        // reads the log level from the settings store and would make every test that constructs
+        // this lookup fail before reaching its own assertion. No hostname: the root guide forbids
+        // logging hosts and URLs, and the shape is the part that diagnoses the failure.
+        onOutcome?.invoke(
+            CountryOutcome(
+                hit = result != null,
+                viaTunnel = routedThroughTunnel,
+                keyLength = key.length,
+                literal = literal != null,
+                resolvedIp = ipForOutcome,
+            )
         )
         return result
     }

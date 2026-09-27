@@ -1,7 +1,5 @@
 package com.v2ray.ang.ui.main
 
-import com.v2ray.ang.AppConfig
-import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -28,12 +26,19 @@ internal suspend fun <K, V> runFlagBatch(
     concurrency: Int = FLAG_LOOKUP_CONCURRENCY,
     lookup: suspend (address: String, force: Boolean) -> V?,
     publish: suspend (key: K, address: String, verdict: V) -> Unit,
-) {
     // A walk that was never started and a walk whose lookups all came back empty were both
-    // silent, which is why a missing flag could not be told apart from a missing run. The count
-    // is logged, never an address: the address is already being logged in shape by the lookup.
-    LogUtil.i(AppConfig.TAG, "flag walk start targets=${targets.size} force=$force")
-    if (targets.isEmpty()) return
+    // silent, which is why a missing flag could not be told apart from a missing run. The count is
+    // reported to a seam rather than logged here: LogUtil reads the log level from the settings
+    // store, so a log call in the walk makes every test that runs a walk fail on
+    // MMKV.initialize() instead of reaching its own assertion. A caller that wants the line
+    // supplies it; the default is silence.
+    onWalk: ((started: Boolean, targets: Int, force: Boolean) -> Unit)? = null,
+) {
+    onWalk?.invoke(true, targets.size, force)
+    if (targets.isEmpty()) {
+        onWalk?.invoke(false, 0, force)
+        return
+    }
     val gate = Semaphore(concurrency.coerceAtLeast(1))
     coroutineScope {
         targets.map { (key, address) ->
@@ -48,7 +53,7 @@ internal suspend fun <K, V> runFlagBatch(
             }
         }.awaitAll()
     }
-    LogUtil.i(AppConfig.TAG, "flag walk done targets=${targets.size} force=$force")
+    onWalk?.invoke(false, targets.size, force)
 }
 
 /** Enough lookups in flight to finish a page in seconds, few enough to stay polite. */

@@ -41,7 +41,7 @@ def verify():
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
     check_the_flag_lookup_asks_through_the_tunnel()
-    check_the_flag_path_leaves_a_log()
+    check_the_flag_path_records_without_depending_on_the_settings_store()
     check_the_country_lookup_client_is_a_valid_read_write_property()
     check_the_tunnel_route_is_injectable_and_testable()
     check_the_country_walk_has_a_reachable_provider()
@@ -905,46 +905,59 @@ def check_the_country_lookup_client_is_a_valid_read_write_property():
                 "path holds an OkHttpClient.Builder where it needs a client")
 
 
-def check_the_flag_path_leaves_a_log():
-    """A missing flag and a lookup that never ran looked identical from adb.
+def check_the_flag_path_records_without_depending_on_the_settings_store():
+    """The line added to find the missing flag became the reason eleven tests could not run.
 
-    With the device finally attached, adb logcat over the whole flag path returned nothing at all:
-    no walk, no lookup, no outcome. Every fix before this one was therefore reasoning about a
-    silent path, and the provider probing that redirected two releases happened to be right while
-    the actual cause stayed invisible.
+    LogUtil reads its level from the settings store, so a LogUtil call anywhere on a path a unit
+    test executes fails with IllegalStateException: You should Call MMKV.initialize() first -- and it
+    fails before the test reaches its own assertion, so the report is about MMKV and says nothing
+    about the flag. That is twice now on this class, the first time through the tunnel port and the
+    second time through the diagnostic.
 
-    The path now records the walk's size and the lookup's outcome, route, and whether DNS and the
-    provider each produced an address. No hostname, no address, no URL: the root guide forbids
-    logging those, and a config host can be sensitive, so what is recorded is the shape.
+    So the rule is the seam: the lookup and the walk report through a callback the caller owns, the
+    default is silence, and the ViewModel -- which runs on a device, where the settings store
+    exists -- is what turns it into a log line. Both the port and the diagnostic follow the same
+    shape, so neither can reintroduce the crash.
     """
+    country = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
     batch = (APP / "src/main/java/com/v2ray/ang/ui/main/FlagBatch.kt").read_text("utf-8")
-    lookup = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
-    assert "flag walk start" in batch and "flag walk done" in batch, (
-        "the walk logs neither its start nor its end, so an empty page and a page whose lookups all "
-        "returned null are the same silence in adb")
-    assert batch.count("targets=${targets.size}") >= 2, (
-        "the walk logs a target count on only one of its two lines, so an empty page and a full "
-        "page are told apart on one path and not the other")
-    assert "if (targets.isEmpty()) return" in batch, (
-        "the walk no longer short-circuits an empty target list, so whatever runs before the guard "
-        "now pays for a pass that does no work")
-    assert "country lookup" in lookup, (
-        "the country lookup logs nothing, so a provider that refuses every request is "
-        "indistinguishable from a row that was never asked")
-    assert "route=" in lookup, (
-        "the country lookup does not log which route it used, so a tunnel routing that never took "
-        "effect is indistinguishable from a provider that is simply blocked")
-    # The logged line must not carry the address: hosts and URLs are forbidden by the root guide.
-    line = lookup[lookup.index('"country lookup '):]
-    line = line[:line.index('"\n        )') if '"\n        )' in line else line.index(')"')]
-    # A boolean next to a name is fine (ip=${resolvedIp != null}); the address itself is not.
-    for leak in ("$key", "key=$key", "$resolvedIp", "$ip", "http://", "https://"):
-        assert leak not in line, (
-            "the country lookup logs " + leak + ", which is the address itself; the guide forbids "
-            "logging hosts and URLs, and the shape is enough to diagnose the failure")
-    assert "keyLen=" in line, (
-        "the log dropped the key length, so a canonicalisation failure and a blocked provider look "
-        "the same")
+    vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
+
+    for name, src in (("ServerCountryLookup", country), ("FlagBatch", batch)):
+        body = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+        body = re.sub(r"//[^\n]*", " ", body)
+        assert "LogUtil" not in body, (
+            name + " calls LogUtil, which reads the log level from the settings store; every unit "
+            "test that runs this code then dies on MMKV.initialize() before its own assertion. The "
+            "diagnostic has to go through a seam the caller owns.")
+        assert "MmkvManager" not in body and "SettingsManager" not in body, (
+            name + " reaches the settings store directly, so constructing or running it needs "
+            "Android and the unit tests for the flag path cannot run")
+
+    # Both seams exist, default to silence, and the ViewModel supplies them.
+    assert "onOutcome" in country and "onOutcome: ((CountryOutcome) -> Unit)? = null" in country, (
+        "the lookup no longer reports its outcome through a seam that defaults to silence, so a "
+        "diagnostic has to be written inline and takes the tests down with it")
+    assert "onWalk" in batch and "onWalk: ((started: Boolean, targets: Int, force: Boolean) -> Unit)? = null" in batch, (
+        "the walk no longer reports through a seam that defaults to silence")
+    wiring = vm[vm.index("private val serverCountries"):]
+    wiring = wiring[:wiring.index("private val serverFlags")]
+    assert "onOutcome" in wiring, (
+        "the ViewModel no longer turns the lookup's outcome into a log line, so the flag goes "
+        "missing again with nothing to see: no row asked, no provider tried, no reason")
+    assert 'onWalk = walkLog("verdict")' in vm and 'onWalk = walkLog("country")' in vm, (
+        "a walk is no longer recorded, so a walk that never starts and a walk whose lookups all "
+        "come back empty are the same silence")
+
+    # The outcome must carry what distinguishes those two, and no hostname.
+    outcome = country[country.index("data class CountryOutcome"):]
+    outcome = outcome[:outcome.index(")")] if ")" in outcome else outcome
+    for field in ("hit", "viaTunnel", "keyLength"):
+        assert field in outcome, (
+            "the outcome no longer carries " + field + ", so a blocked provider and a row that was "
+            "never asked report the same thing")
+    assert "key" not in outcome.replace("keyLength", ""), (
+        "the outcome carries the address itself, which the root guide forbids logging")
 
 
 def check_the_flag_lookup_asks_through_the_tunnel():

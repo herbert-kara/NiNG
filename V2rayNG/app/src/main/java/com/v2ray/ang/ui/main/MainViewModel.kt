@@ -133,8 +133,28 @@ class MainViewModel(
         tunnelPort = { SettingsManager.getHttpPort() },
         tunnelUser = { SettingsManager.getSocksUsername() },
         tunnelPassword = { SettingsManager.getSocksPassword() },
+        // The line that was missing while the flag was. It goes through the seam because LogUtil
+        // reads the log level from the settings store, and calling it from inside the lookup made
+        // every unit test fail on MMKV.initialize() instead of running.
+        onOutcome = { outcome ->
+            LogUtil.i(
+                AppConfig.TAG,
+                "country lookup ${if (outcome.hit) "hit" else "miss"} " +
+                    "route=${if (outcome.viaTunnel) "tunnel" else "direct"} " +
+                    "keyLen=${outcome.keyLength} ip=${outcome.resolvedIp != null} " +
+                    "literal=${outcome.literal}"
+            )
+        },
     )
     private val serverFlags = ServerFlaggedLookup(publicIpOf = { serverCountries.publicIpOf(it) })
+
+    /** The one-line record of a walk: how many rows were asked, and whether it finished. */
+    private fun walkLog(kind: String) = { started: Boolean, targets: Int, force: Boolean ->
+        LogUtil.i(
+            AppConfig.TAG,
+            "flag walk $kind ${if (started) "start" else "done"} targets=$targets force=$force"
+        )
+    }
 
     /** True while a pass is in flight, so the button can show that a tap was received. */
     private val flagRefreshRunning = MutableStateFlow(false)
@@ -192,6 +212,7 @@ class MainViewModel(
                                 publish = { guid, address, verdict ->
                                     publishVerdict(groupId, guid, address, verdict.status, verdict.countryCode)
                                 },
+                                onWalk = walkLog("verdict"),
                             )
                         } finally {
                             flagRefreshRunning.value = false
@@ -279,6 +300,7 @@ class MainViewModel(
                             publish = { guid, address, country ->
                                 publishCountry(groupId, guid, address, country.value)
                             },
+                            onWalk = walkLog("country"),
                         )
                     }
                     groupCountryJobs[groupId]?.cancel()
