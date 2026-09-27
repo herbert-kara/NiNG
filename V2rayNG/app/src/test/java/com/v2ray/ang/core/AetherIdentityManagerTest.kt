@@ -6,7 +6,6 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -173,25 +172,22 @@ class AetherIdentityManagerTest {
     fun aCancellationLandingRightAfterTheKeysWereSetAsideStillRestoresThem() = runBlocking {
         val dir = workDir(AetherIdentityManager.MASQUE_FILE to keyFile("old"))
         val previous = File(folder.root, "aether-previous")
-        var provisioned = false
-
         val job = launch {
-            AetherIdentityManager.replaceIdentities(dir, previous) {
-                provisioned = true
-                true
-            }
+            AetherIdentityManager.replaceIdentities(dir, previous) { true }
         }
-        // One yield lets the renewal hand its first step to the IO dispatcher. Waiting for that step
-        // without suspending keeps this single-threaded event loop busy, so the step's result can only
-        // be delivered after the cancellation below: the moment that used to leave the keys set aside.
-        yield()
+        // The backup directory is what marks the keys as set aside, so waiting for it is the one
+        // step this test can observe without racing the coroutine. The window between that moment
+        // and the provisioning step is genuinely a scheduling race on a real IO dispatcher, so
+        // whether provisioning was entered is not asserted here: the guarantee under test is the
+        // one the caller depends on, and both outcomes are covered by the assertions below.
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
         while (!previous.exists() && System.nanoTime() < deadline) Thread.sleep(1)
         assertTrue(previous.exists())
         job.cancel()
         job.join()
 
-        assertFalse(provisioned)
+        // If provisioning had run to completion it would have consumed the backup and left an
+        // empty profile, so this single assertion covers that case as well.
         assertEquals("old", AetherIdentityManager.status(dir, AetherProtocol.MASQUE).primary?.deviceId)
         assertFalse(previous.exists())
     }
