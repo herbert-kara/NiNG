@@ -98,6 +98,7 @@ fun GroupPagerPage(
         onShareServer,
         onMoreServer,
         onRemoveServer,
+        mainViewModel,
     ) {
         ServerRowActions(
             select = onSelectServer,
@@ -105,6 +106,8 @@ fun GroupPagerPage(
             share = onShareServer,
             more = onMoreServer,
             remove = onRemoveServer,
+            measureCountry = { guid -> mainViewModel.measureCountryOf(guid) },
+            isMeasuringCountry = { guid -> mainViewModel.isMeasuringCountry(guid) },
         )
     }
     ServerListPage(
@@ -131,6 +134,15 @@ private class ServerRowActions(
     val share: (String, ProfileItem) -> Unit,
     val more: (String, ProfileItem) -> Unit,
     val remove: (String, String) -> Unit,
+    /**
+     * Re-reads the country of one row by standing that profile up and asking from inside it.
+     *
+     * The list fills a flag from the address behind a hostname, which is cheap and wrong behind a
+     * CDN. This is the exact reading, one row at a time, because each one costs a whole core.
+     */
+    val measureCountry: (String) -> Unit,
+    /** True while that row is being measured, so the row can say so instead of looking idle. */
+    val isMeasuringCountry: (String) -> Boolean,
 )
 
 @Composable
@@ -428,7 +440,12 @@ private fun ServerListItem(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 RiskFlag(row.riskLevel, row.riskReason)
-                ServerFlagSlot(row.serverCountryCode, row.flagStatus)
+                ServerFlagSlot(
+                    code = row.serverCountryCode,
+                    status = row.flagStatus,
+                    onMeasure = { actions.measureCountry(row.guid) },
+                    measuring = actions.isMeasuringCountry(row.guid),
+                )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(row.typeDescription, style = MaterialTheme.typography.bodySmall, color = colorConfigType, maxLines = 1, overflow = TextOverflow.Ellipsis)

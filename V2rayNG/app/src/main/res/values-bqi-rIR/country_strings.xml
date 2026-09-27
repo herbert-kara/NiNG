@@ -2,4 +2,6 @@
 <resources>
     <string name="country_server">سرور: %1$s</string>
     <string name="country_exit">خروجی: %1$s</string>
+    <string name="country_measure_exact">اندازه‌گیری دقیق</string>
+    <string name="country_measuring">داره اندازه‌گیری...</string>
 </resources>

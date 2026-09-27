@@ -18,6 +18,7 @@ import com.v2ray.ang.extension.delay
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.matchesPattern
 import com.v2ray.ang.extension.moveItem
+import com.v2ray.ang.handler.ExitCountryProbe
 import com.v2ray.ang.ui.base.BaseViewModel
 import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.CancellationException
@@ -75,9 +76,17 @@ private fun applyTestDelayResultsToRows(
 }
 
 class MainViewModel(
-    application: Application,
+    private val application: Application,
     private val dataSource: MainDataSource
 ) : BaseViewModel(application) {
+
+    /**
+     * Rows being measured right now, so a second tap on the same row does not stand a second core up.
+     *
+     * A measurement is a whole core per profile; two of them for one row would race each other and
+     * the slower one would win, so the second tap is refused rather than queued.
+     */
+    private val measuringCountries = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
     private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default
@@ -108,7 +117,7 @@ class MainViewModel(
     // is derived from, and collectLatest would cancel the pass with most of the page unasked.
     private val groupPassJobs = mutableMapOf<String, Job>()
     // The country walk is a separate slot from the verdict walk: sharing one key meant whichever
-    // collector emitted last cancelled the other's batch, so a page could have a verdict with no
+    // collector emitted last cancelled the batch of the other, so a page could have a verdict with no
     // country or the other way round, depending on which flow settled first.
     private val groupCountryJobs = mutableMapOf<String, Job>()
     private val groupServerFlows = ConcurrentHashMap<String, StateFlow<List<ServersCache>>>()
@@ -126,15 +135,15 @@ class MainViewModel(
     private var bulkTestJob: Job? = null
 
     private val initialPageReady = CompletableDeferred<Unit>()
-    // The country lookup asks the provider through the app's own loopback HTTP port when the
-    // tunnel is up, the same route the connection panel's (DE) line uses and the one that works on
+    // The country lookup asks the provider through the loopback HTTP port of the app when the
+    // tunnel is up, the same route the (DE) line of the connection panel uses and the one that works on
     // a network where the providers refuse a direct request. The port and its credentials are read
     // here, at the one call site that runs on a device, because reading them inside the lookup
     // would put a settings-store read on its construction and every unit test would fail on it.
     private val serverCountries = ServerCountryLookup(
-        // No tunnel. The panel's (DE) asks through the loopback because it asks *without* an
+        // No tunnel. The (DE) of the panel asks through the loopback because it asks *without* an
         // address -- it describes the exit the user is currently standing behind. This lookup asks
-        // *with* the address: the {ip} of the row's own endpoint, so the answer is that
+        // *with* the address: the {ip} of the endpoint of the row, so the answer is that
         // endpoint's country whichever route carries the question. Routing it through the
         // loopback made every lookup fail with ConnectException whenever the service was not
         // listening, which is to say whenever the user had not connected yet -- the one moment a
@@ -379,7 +388,7 @@ class MainViewModel(
                 // The country on this result is the one the connection actually exited in: the
                 // core was started on this profile, and SpeedtestManager asked through it. A row
                 // filled from DNS answers for whatever a CDN or relay put in front of the server,
-                // which is the intermediary's country and not the server's. So the measured
+                // which is the country of the intermediary and not of the server. So the measured
                 // country is the one that goes on the row, and it is the same value the panel
                 // shows at the bottom.
                 applyMeasuredCountry(tested.serverGuid, event.result.country)
@@ -525,7 +534,7 @@ class MainViewModel(
      * This is the same reading the connection panel shows at the bottom, and it is deliberately
      * the only one that can put a country on a row. The other source resolves a name and asks a
      * geoip service about the address it got back, which behind a CDN, a relay or any other
-     * intermediary is the intermediary's address: the flag was real, and it belonged to the wrong
+     * intermediary is the address of the intermediary: the flag was real, and it belonged to the wrong
      * machine. A measured exit answers a different question -- the country the traffic came out in
      * -- so it is the one that describes the server the user would actually connect to.
      *
@@ -543,6 +552,39 @@ class MainViewModel(
             })
         }
     }
+
+    /**
+     * Measures the country this one profile exits from and puts it on its row.
+     *
+     * The list fills its flags by asking about the address behind a hostname, which is cheap and
+     * wrong behind a CDN: the answer names the edge, not the server. This stands the profile up,
+     * asks from inside it, and replaces the row with what it reads. It is one profile at a time on
+     * purpose -- each measurement brings a whole core up, so the whole list at once would take
+     * minutes and the user asked for one row.
+     *
+     * A measurement that comes back with nothing leaves the row as it was. A row that briefly has
+     * no flag is a row the user can see is unmeasured; a row that has quietly changed to a
+     * neighbouring country is a row the user cannot.
+     */
+    fun measureCountryOf(guid: String) {
+        if (measuringCountries.contains(guid)) return
+        measuringCountries.add(guid)
+        viewModelScope.launch {
+            try {
+                val code = ExitCountryProbe.countryOf(application, guid)
+                if (code != null) applyMeasuredCountry(guid, code)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // A profile that cannot be stood up keeps the flag it already had.
+            } finally {
+                measuringCountries.remove(guid)
+            }
+        }
+    }
+
+    /** True while this row is being measured, so the row can show that it is busy. */
+    fun isMeasuringCountry(guid: String): Boolean = measuringCountries.contains(guid)
 
     internal fun formatStatus(status: MainStatus): String = when (status) {
         MainStatus.Disconnected -> dataSource.getString(R.string.connection_not_connected)

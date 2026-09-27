@@ -2,10 +2,12 @@ package com.v2ray.ang.ui.main
 
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,7 +44,12 @@ internal fun CountryBadge(code: String?, @StringRes label: Int) {
  * state this slot already shows.
  */
 @Composable
-internal fun ServerFlagSlot(code: String?, status: FlagStatus) {
+internal fun ServerFlagSlot(
+    code: String?,
+    status: FlagStatus,
+    onMeasure: (() -> Unit)? = null,
+    measuring: Boolean = false,
+) {
     val asset = ProfileCountry.flagAsset(code)
     if (asset != null) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -52,11 +59,42 @@ internal fun ServerFlagSlot(code: String?, status: FlagStatus) {
                 text = stringResource(R.string.country_server, code.orEmpty()),
                 style = MaterialTheme.typography.labelSmall,
             )
+            if (onMeasure != null) {
+                MeasureCountryButton(onMeasure = onMeasure, measuring = measuring)
+            }
         }
         return
     }
     when (status) {
         FlagStatus.FLAGGED -> FlaggedBadge(FlagStatus.FLAGGED)
-        else -> Unit
+        else -> if (onMeasure != null) MeasureCountryButton(onMeasure = onMeasure, measuring = measuring)
+    }
+}
+
+/**
+ * Re-reads the country of this row by standing the profile up and asking from inside it.
+ *
+ * The list fills a flag by asking about the address behind a hostname, which is cheap and wrong
+ * behind a CDN: the answer names the edge, not the server. This asks the only way that can be
+ * answered correctly, and it costs a whole core, so it is one row at a time on purpose.
+ *
+ * The button is a separate node from the flag and the label, because reading a row and measuring a
+ * row are different actions, and merging them would leave a tap on the flag doing something no label
+ * says it does.
+ */
+@Composable
+private fun MeasureCountryButton(onMeasure: () -> Unit, measuring: Boolean) {
+    val label = if (measuring) {
+        stringResource(R.string.country_measuring)
+    } else {
+        stringResource(R.string.country_measure_exact)
+    }
+    TextButton(
+        onClick = onMeasure,
+        enabled = !measuring,
+        modifier = Modifier.height(24.dp),
+        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+    ) {
+        Text(text = label, style = MaterialTheme.typography.labelSmall)
     }
 }

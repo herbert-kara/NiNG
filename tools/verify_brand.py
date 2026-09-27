@@ -1584,7 +1584,11 @@ def check_the_row_has_one_flag_slot():
     slot = badge[badge.index('fun ServerFlagSlot('):]
     assert 'ProfileCountry.flagAsset(code)' in slot, 'the slot no longer fills from a country'
     pager = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainServerPager.kt').read_text('utf-8')
-    assert 'ServerFlagSlot(row.serverCountryCode' in pager, 'the row no longer uses the flag slot'
+    # The call now names its arguments, because the slot grew the two a measurement needs.
+    # Matching the positional form would fail a file that is correct, which is worse than not
+    # checking: a guard that cries wolf gets ignored, and then it catches nothing.
+    assert 'ServerFlagSlot(' in pager and 'row.serverCountryCode' in pager, (
+        'the row no longer uses the flag slot')
     assert pager.count('CountryBadge(') == 0, 'the row renders a second, separate flag again'
     assert pager.count('FlaggedBadge(') == 0, 'the row renders the verdict outside the slot again'
 

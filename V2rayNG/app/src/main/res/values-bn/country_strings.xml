@@ -2,4 +2,6 @@
 <resources>
     <string name="country_server">সার্ভার: %1$s</string>
     <string name="country_exit">বহির্গমন: %1$s</string>
+    <string name="country_measure_exact">সঠিক পরিমাপ</string>
+    <string name="country_measuring">পরিমাপ করা হচ্ছে...</string>
 </resources>

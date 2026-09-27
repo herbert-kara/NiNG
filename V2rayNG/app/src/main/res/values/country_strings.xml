@@ -2,4 +2,6 @@
 <resources>
     <string name="country_server">Server: %1$s</string>
     <string name="country_exit">Exit: %1$s</string>
+    <string name="country_measure_exact">Measure exact</string>
+    <string name="country_measuring">Measuring...</string>
 </resources>

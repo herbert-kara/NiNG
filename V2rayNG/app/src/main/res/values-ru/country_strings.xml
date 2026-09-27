@@ -2,4 +2,6 @@
 <resources>
     <string name="country_server">Сервер: %1$s</string>
     <string name="country_exit">Выход: %1$s</string>
+    <string name="country_measure_exact">Точно</string>
+    <string name="country_measuring">Измерение...</string>
 </resources>

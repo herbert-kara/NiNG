@@ -2,4 +2,6 @@
 <resources>
     <string name="country_server">الخادم: %1$s</string>
     <string name="country_exit">الخروج: %1$s</string>
+    <string name="country_measure_exact">قياس دقيق</string>
+    <string name="country_measuring">جارٍ القياس...</string>
 </resources>
