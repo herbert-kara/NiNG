@@ -29,7 +29,7 @@ class CountryTunnelRouteTest {
         port: Int?,
         user: String? = null,
         pass: String? = null,
-        fetch: suspend (String) -> String? = { """{"country_code":"DE"}""" },
+        fetch: suspend (String) -> String? = { "DE" },
     ) = ServerCountryLookup(
         resolveDns = { emptyList() },
         fetch = fetch,
@@ -56,7 +56,7 @@ class CountryTunnelRouteTest {
             // tunnel is the route, not the question. An answer that reports the tunnel's exit
             // would put the selected server's country on every row.
             assertEquals("5.180.82.45", it)
-            """{"country_code":"DE"}"""
+            "DE"
         })
         assertEquals("DE", lookup.resolve("5.180.82.45"))
         assertEquals("the provider was asked exactly once", 1, asked)
@@ -74,7 +74,7 @@ class CountryTunnelRouteTest {
                 // Never the hostname: that is a private-range leak and it is also what the
                 // providers cannot answer.
                 assertTrue("the provider was asked about a hostname: $ip", ip.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+")))
-                """{"country_code":"DE"}"""
+                "DE"
             },
             tunnelPort = { 10809 },
         )
@@ -89,8 +89,8 @@ class CountryTunnelRouteTest {
         // is the same with a tunnel as without, so the country cannot drift onto the exit.
         val withTunnel = mutableListOf<String>()
         val withoutTunnel = mutableListOf<String>()
-        val a = lookupOn(port = 10809, fetch = { withTunnel += it; """{"country_code":"DE"}""" })
-        val b = lookupOn(port = 0, fetch = { withoutTunnel += it; """{"country_code":"DE"}""" })
+        val a = lookupOn(port = 10809, fetch = { withTunnel += it; "DE" })
+        val b = lookupOn(port = 0, fetch = { withoutTunnel += it; "DE" })
         a.resolve("5.180.82.45")
         b.resolve("5.180.82.45")
         a.close(); b.close()
@@ -105,7 +105,7 @@ class CountryTunnelRouteTest {
         // is made here: whatever the route, the country attached to a row is the one the provider
         // gave for that row's address.
         val lookup = lookupOn(port = 10809, fetch = { ip ->
-            if (ip == "5.180.82.45") """{"country_code":"DE"}""" else """{"country_code":"US"}"""
+            if (ip == "5.180.82.45") "DE" else "US"
         })
         assertEquals("DE", lookup.resolve("5.180.82.45"))
         assertEquals("US", lookup.resolve("188.114.98.0"))

@@ -44,6 +44,7 @@ def verify():
     check_the_flag_path_records_without_depending_on_the_settings_store()
     check_the_country_lookup_client_is_a_valid_read_write_property()
     check_the_tunnel_route_is_injectable_and_testable()
+    check_the_route_test_stubs_speak_the_seams_language()
     check_the_country_walk_has_a_reachable_provider()
     check_concurrent_lookups_of_one_address_share_a_round_trip()
     check_no_concurrency_test_freezes_the_clock_it_depends_on()
@@ -805,6 +806,31 @@ def check_the_country_walk_has_a_reachable_provider():
                 "cleartext, so it is rejected before the request is sent")
     flagged = (APP / "src/main/java/com/v2ray/ang/handler/ServerFlaggedLookup.kt").read_text("utf-8")
     assert "proxycheck.io" in flagged, "the verdict provider is gone, so the guard is stale"
+
+
+def check_the_route_test_stubs_speak_the_seams_language():
+    """Four route tests failed on expected DE but was null, and the tests were the thing at fault.
+
+    The fetch seam is (String) -> String? and its result goes straight into
+    ProfileCountry.normalize, which wants a bare country code. These four returned a provider body
+    -- {"country_code":"DE"} -- so normalize saw a 19-character string, found no country in it, and
+    returned null. The five tests written alongside them already returned "DE" and "US", because
+    whoever wrote them read the seam instead of the provider.
+
+    The symptom points the other way: a null from the lookup looks exactly like a blocked provider,
+    a dead route, or a request that was never made, which is where the previous two days went. A
+    test that returns the wrong type fails the same way as the bug it is looking for.
+    """
+    tests = TEST / "com/v2ray/ang/handler/CountryTunnelRouteTest.kt"
+    body = tests.read_text("utf-8")
+    stubs = re.findall(r'fetch\s*=\s*\{[^}]*?"([^"]*)"', body) + \
+        re.findall(r'fetch: suspend \(String\) -> String\? = \{ "([^"]*)"', body)
+    assert stubs, "no fetch stub found to check; the test file was rewritten"
+    for value in stubs:
+        assert not value.strip().startswith("{"), (
+            "a fetch stub returns " + value + ", which is a provider body. The seam's result goes "
+            "into ProfileCountry.normalize, which wants a bare country code, so the stub yields "
+            "null and the test fails exactly like the blocked-provider bug it is looking for.")
 
 
 def check_the_tunnel_route_is_injectable_and_testable():
