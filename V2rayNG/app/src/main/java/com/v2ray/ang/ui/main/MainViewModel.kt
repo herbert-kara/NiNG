@@ -100,6 +100,14 @@ class MainViewModel(
     private val cacheMutex = Mutex()
     private val groupDataCache = mutableMapOf<String, List<ServersCache>>()
     private val groupUiFlows = ConcurrentHashMap<String, MutableStateFlow<ServerGroupUiState>>()
+    // The in-flight walk per group, so switching groups cancels the old one. The walk cannot live
+    // inside the collector that starts it: publishing a verdict edits the row list that collector
+    // is derived from, and collectLatest would cancel the pass with most of the page unasked.
+    private val groupPassJobs = mutableMapOf<String, Job>()
+    // The country walk is a separate slot from the verdict walk: sharing one key meant whichever
+    // collector emitted last cancelled the other's batch, so a page could have a verdict with no
+    // country or the other way round, depending on which flow settled first.
+    private val groupCountryJobs = mutableMapOf<String, Job>()
     private val groupServerFlows = ConcurrentHashMap<String, StateFlow<List<ServersCache>>>()
     private val groupLoadMutexes = ConcurrentHashMap<String, Mutex>()
     private val serverOrderPersistenceJobs = mutableMapOf<String, Job>()
@@ -157,10 +165,16 @@ class MainViewModel(
                             ?.let { row.guid to it }
                     }.take(128)
                 }.distinctUntilChanged().collectLatest { targets ->
-                    withContext(ioDispatcher) {
+                    // The pass has to survive its own publishes. collectLatest tears down the block
+                    // on the next emission, and publishing a verdict edits the row list, which is
+                    // what this flow is built from: the first row answered, its own answer changed
+                    // `targets`, and the pass was cancelled with three rows still unasked. So the
+                    // walk runs in a child job that this collector does not own, and the
+                    // cancellation that matters -- a different group -- still lands on it.
+                    val pass = viewModelScope.launch(ioDispatcher) {
                         try {
                             runFlagBatch(
-                                targets = targets,
+                                targets = targets.toList(),
                                 force = false,
                                 lookup = { address, force ->
                                     serverFlags.resolve(address, force)
@@ -173,6 +187,8 @@ class MainViewModel(
                             flagRefreshRunning.value = false
                         }
                     }
+                    groupPassJobs[groupId]?.cancel()
+                    groupPassJobs[groupId] = pass
                 }
             }
         }
@@ -238,22 +254,25 @@ class MainViewModel(
                             ?.let { row.guid to it }
                     }.take(128)
                 }.distinctUntilChanged().collectLatest { targets ->
-                    // A single bounded selected-page batch, not background subscription scanning.
-                    // Group/target changes cancel the old batch; HTTP is cancelled with its owner.
-                    withContext(ioDispatcher) {
-                        for ((guid, address) in targets) {
-                            ensureActive()
-                            val country = serverCountries.resolve(address) ?: continue
-                            withContext(Dispatchers.Main.immediate) {
-                                ensureActive()
-                                if (uiState.value.selectedGroupId == groupId) {
-                                    mutableServerGroupState(groupId).update { state ->
-                                        state.copy(rows = applyServerCountry(state.rows, guid, address, country))
-                                    }
-                                }
-                            }
-                        }
+                    // Same cancellation trap as the verdict walk, and the same answer: the batch
+                    // runs in a job this collector does not own. It was a plain `for` as well, so a
+                    // full page of eight addresses paid the pacing gap eight times over and the last
+                    // row was seconds behind the first; the shared walk bounds the concurrency
+                    // instead and publishes each answer as it arrives.
+                    val pass = viewModelScope.launch(ioDispatcher) {
+                        runFlagBatch(
+                            targets = targets.toList(),
+                            force = false,
+                            lookup = { address, _ ->
+                                serverCountries.resolve(address)?.let { CountryOnly(it) }
+                            },
+                            publish = { guid, address, country ->
+                                publishCountry(groupId, guid, address, country.value)
+                            },
+                        )
                     }
+                    groupCountryJobs[groupId]?.cancel()
+                    groupCountryJobs[groupId] = pass
                 }
             }
         }

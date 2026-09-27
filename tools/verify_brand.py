@@ -38,6 +38,7 @@ def verify():
     check_a_rewritten_function_keeps_its_helpers_and_returns()
     check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
     check_the_documented_colour_exceptions_hold()
+    check_a_flag_walk_survives_its_own_publish()
     check_concurrent_lookups_of_one_address_share_a_round_trip()
     check_no_concurrency_test_freezes_the_clock_it_depends_on()
     check_a_concurrency_test_can_reach_concurrency()
@@ -733,6 +734,51 @@ def check_concurrent_lookups_of_one_address_share_a_round_trip():
             name + ": fetchOnce() starts a detached coroutine again, which runTest cancels")
         assert "Deferred" not in code, (
             name + ": a shared Deferred is back; it needs a detached scope to start")
+
+def check_a_flag_walk_survives_its_own_publish():
+    """A walk that publishes into the state it derives its work from cancels itself.
+
+    Both walks were `collectLatest` blocks over a flow mapped from the row list, and publishing a
+    verdict edits that row list. The first row answered, its own answer produced a new emission,
+    and collectLatest tore the pass down with the rest of the page unasked: the page showed a
+    verdict on one row and nothing on the others, and the country flag never appeared at all. The
+    walk has to run in a job the collector does not own.
+
+    The failure is invisible in a diff because the code reads correctly, and the visible symptom
+    (a blank flag) points at the provider, the parser and the row model, none of which were wrong.
+    """
+    vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
+    slots = set()
+    for name in ("collectServerFlags", "collectServerCountries"):
+        i = vm.index("private fun " + name)
+        j = vm.index("\n    private fun", i + 10)
+        body = vm[i:j]
+        assert "collectLatest" in body or "map" in body, name + " no longer watches the row list"
+        assert "viewModelScope.launch" in body, (
+            name + " runs its walk inside the collector, so collectLatest cancels it the moment "
+            "its first publish changes the row list it was derived from")
+        assert ".join()" not in body, (
+            name + " joins the walk, which puts it back under collectLatest and restores the "
+            "cancellation; the job only has to be registered so a group switch can cancel it")
+        assert "toList()" in body, (
+            name + " passes the derived list straight through; a snapshot stops a later emission "
+            "from mutating the walk's own target list underneath it")
+        m = re.search(r"(groupPassJobs|groupCountryJobs)\[groupId\] = pass", body)
+        assert m, name + " registers no job, so a group switch cannot cancel its walk"
+        slot = m.group(1)
+        # Cancel through the same map it registers into; two maps for one walk cancels nothing.
+        cancels = re.findall(r"(groupPassJobs|groupCountryJobs)\[groupId\]\?\.cancel\(\)", body)
+        assert cancels and set(cancels) == {slot}, (
+            name + " cancels through " + str(sorted(set(cancels))) + " but registers into " + slot
+            + ", so the previous walk of that kind is never cancelled")
+        slots.add(slot)
+        assert not re.search(r"\bfor \(", body), (
+            name + " walks its targets in a plain for loop, so a page of eight pays the pacing gap "
+            "eight times and the last row is seconds behind the first")
+    assert len(slots) == 2, (
+        "both walks share one job slot (" + str(sorted(slots)) + "), so whichever collector emits "
+        "last cancels the other and the page shows a verdict with no country, or the reverse")
+
 
 def check_the_documented_colour_exceptions_hold():
     """Four colours were deliberately taken back out of the palette sweep, and each has a reason.
