@@ -38,6 +38,8 @@ def verify():
     check_a_rewritten_function_keeps_its_helpers_and_returns()
     check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
     check_concurrent_lookups_of_one_address_share_a_round_trip()
+    check_no_concurrency_test_freezes_the_clock_it_depends_on()
+    check_a_concurrency_test_can_reach_concurrency()
     check_the_sources_have_no_defect_a_compiler_would_catch()
     check_the_row_has_one_flag_slot()
     check_the_flag_path_is_covered_by_a_real_test()
@@ -520,6 +522,75 @@ def check_the_sources_have_no_defect_a_compiler_would_catch():
                 + " and returns Unit, so the result never leaves the function")
 
 
+def check_a_concurrency_test_can_reach_concurrency():
+    """A test can be unfalsifiable by arithmetic: a 100ms fetch and a 250ms pacing gap mean the
+    first request is always over before the second one may start, so "these overlap" is false
+    whatever the code does. That test sat failing for two days while it was the thing at fault.
+
+    The guard reads the pacing gap out of the production code and the fetch delay out of the test,
+    and requires the fetch to be able to outlast the gap. It also requires the two providers to
+    share one gap, since a literal in one file and a constant in the other is how they drift.
+    """
+    gaps = {}
+    for name in ("ServerFlaggedLookup", "ServerCountryLookup"):
+        src = (APP / ("src/main/java/com/v2ray/ang/handler/" + name + ".kt")).read_text("utf-8")
+        m = re.search(r"REQUEST_GAP_MS = (\d+)L", src)
+        assert m, name + " has no named REQUEST_GAP_MS, so its pacing is a literal nobody can find"
+        assert "delay(1100" not in src, name + " still paces on a literal 1100ms"
+        gaps[name] = int(m.group(1))
+        assert len(set(gaps.values())) == 1, (
+            "the two providers pace differently: " + str(gaps) + ", so one page of flags is "
+            "throttled by whichever is slower")
+    gap = gaps["ServerFlaggedLookup"]
+    test = (APP / "src/test/java/com/v2ray/ang/handler/LookupConcurrencyTest.kt").read_text("utf-8")
+    fn = re.search(r"fun concurrentResolvesOverlapTheirRoundTrips[(].*?\n    \}", test, re.S)
+    assert fn, "the overlap test is gone, so nothing checks that a flag page still fills in"
+    for d in re.findall(r"delay\((\d+)\)", fn.group(0)):
+        assert int(d) > gap, (
+            "the overlap test fetches for " + d + "ms against a " + str(gap) + "ms pacing gap, so "
+            "the first request always finishes before the second may start and the assertion can "
+            "never hold for any implementation")
+    fn2 = re.search(r"fun theCountryLookupAlsoOverlapsItsRoundTrips[(].*?\n    \}", test, re.S)
+    assert fn2, "the country overlap test is gone"
+    for d in re.findall(r"delay\((\d+)\)", fn2.group(0)):
+        assert int(d) > gap, (
+            "the country overlap test fetches for " + d + "ms against a " + str(gap) + "ms gap")
+
+
+def check_no_concurrency_test_freezes_the_clock_it_depends_on():
+    """Three tests failed for two days because their own clock stub was the bug.
+
+    The lookups take a `nowMillis` so they can be tested without sleeping. Three of them passed a
+    constant zero, and that zero is not neutral: rateLimit() reads it to decide how long to wait, so
+    elapsed was always 0 and every lookup paid the full 1100ms gap, which looks exactly like the
+    serialisation the tests were written to catch. The same constant made a cache entry's expiry
+    (now + TTL) unreachable, so a forced refresh read a stale verdict and the test saw FR where it
+    expected DE. The production code was right in both cases and the tests were measuring the stub.
+
+    A frozen clock is only safe for a test that never reads it back through elapsed-time logic, so
+    the guard rejects the constant wherever the file also asserts on ordering, overlap or expiry.
+    """
+    test_root = APP / "src/test/java"
+    for src in test_root.rglob("*.kt"):
+        text = src.read_text("utf-8")
+        if "nowMillis" not in text:
+            continue
+        code = re.sub(r"/\*[\s\S]*?\*/", "", text)
+        code = re.sub(r"//[^\n]*", "", code)
+        frozen = re.findall(r"nowMillis\s*=\s*\{\s*0L\s*\}", code)
+        if not frozen:
+            continue
+        # A constant clock is fine when a test drives the clock by hand; it is the *uncontrollable*
+        # one that breaks, because the code under test still reads it.
+        manual = re.search(r"var clock = 0L", code)
+        assert manual, (
+            str(src.relative_to(test_root)) + " passes a frozen nowMillis to a lookup; rateLimit() "
+            "and the cache TTL both read it, so pacing and expiry stop meaning anything. Use "
+            "{ testScheduler.currentTime } so the virtual clock advances with the test.")
+        if "testScheduler.currentTime" in code:
+            continue
+
+
 def check_concurrent_lookups_of_one_address_share_a_round_trip():
     """Splitting the single lock dropped deduplication as a side effect.
 
@@ -553,6 +624,12 @@ def check_concurrent_lookups_of_one_address_share_a_round_trip():
         assert "computeIfAbsent" in f or "perAddress[" in f, (
             name + ": fetchOnce() does not look its lock up by address, so it serialises everything")
         assert "withLock" in f, name + ": fetchOnce() does not hold a lock across the request"
+        # The lock only deduplicates if the queued caller re-reads the cache once it gets in. A
+        # cache check that happens before the lock is a check both callers pass, and both fetch.
+        inner = f[f.index("withLock {"):] if "withLock {" in f else ""
+        assert re.search(r"cache\[key\].*takeIf", inner, re.S), (
+            name + ": fetchOnce() does not re-read the cache once it holds the lock, so a caller "
+            "that queued behind the first one repeats the request instead of reading its result")
         fcode = re.sub(r"/\*[\s\S]*?\*/", "", f)
         fcode = re.sub(r"//[^\n]*", "", fcode)
         assert "finally" in fcode, (

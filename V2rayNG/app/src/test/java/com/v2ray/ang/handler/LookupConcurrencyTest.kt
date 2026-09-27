@@ -17,6 +17,12 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * These assert the property the fix is about: a *lock* may serialise the pacing, but it must not
  * serialise the round trips.
+ *
+ * Two things about the numbers here are load-bearing and were both wrong before. The clock is the
+ * scheduler's virtual one, not a constant zero: rateLimit() reads it to decide how long to wait, so
+ * a frozen clock makes every lookup pay the full gap and the test measures its own stub instead of
+ * the code. And the fetch has to outlast the pacing gap, or the first request is always finished
+ * before the second may start and "concurrent" is unreachable by arithmetic rather than by bug.
  */
 class LookupConcurrencyTest {
 
@@ -28,11 +34,13 @@ class LookupConcurrencyTest {
             publicIpOf = { it },
             fetch = {
                 peak.updateAndGet { p -> maxOf(p, inFlight.incrementAndGet()) }
-                delay(100)
+                // Must outlast the 250ms pacing gap, or the first request is always finished before
+                // the second one is allowed to start and nothing can ever overlap.
+                delay(400)
                 inFlight.decrementAndGet()
                 """{"status":"ok","$it":{"isocode":"DE","proxy":"no","risk":0}}"""
             },
-            nowMillis = { 0L },
+            nowMillis = { testScheduler.currentTime },
         )
         coroutineScope {
             (1..8).map { i -> async { lookup.resolve("10.0.0.$i") } }.awaitAll()
@@ -50,7 +58,7 @@ class LookupConcurrencyTest {
         val lookup = ServerFlaggedLookup(
             publicIpOf = { it },
             fetch = { asked++; """{"status":"ok","$it":{"isocode":"FR","proxy":"no","risk":0}}""" },
-            nowMillis = { 0L },
+            nowMillis = { testScheduler.currentTime },
         )
         assertEquals("DE", lookup.resolve("1.1.1.1")?.countryCode ?: "DE")
         val first = lookup.resolve("1.1.1.1")
@@ -73,11 +81,13 @@ class LookupConcurrencyTest {
         val lookup = ServerCountryLookup(
             fetch = {
                 peak.updateAndGet { p -> maxOf(p, inFlight.incrementAndGet()) }
-                delay(100)
+                // Must outlast the 250ms pacing gap, or the first request is always finished before
+                // the second one is allowed to start and nothing can ever overlap.
+                delay(400)
                 inFlight.decrementAndGet()
                 """{"country_code":"NL"}"""
             },
-            nowMillis = { 0L },
+            nowMillis = { testScheduler.currentTime },
         )
         coroutineScope {
             (1..8).map { i -> async { lookup.resolve("10.0.0.$i") } }.awaitAll()
@@ -95,7 +105,7 @@ class LookupConcurrencyTest {
         val lookup = ServerFlaggedLookup(
             publicIpOf = { it },
             fetch = { asked++; delay(50); """{"status":"ok","$it":{"isocode":"DE","proxy":"no","risk":0}}""" },
-            nowMillis = { 0L },
+            nowMillis = { testScheduler.currentTime },
         )
         val answers = coroutineScope {
             (1..6).map { async { lookup.resolve("9.9.9.9")?.countryCode } }.awaitAll()

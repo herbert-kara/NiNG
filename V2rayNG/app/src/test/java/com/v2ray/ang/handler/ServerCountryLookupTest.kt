@@ -72,7 +72,7 @@ class ServerCountryLookupTest {
         }.awaitAll()
         assertTrue(results.all { it == "DE" })
         assertEquals(3, starts.size)
-        assertTrue(starts.zipWithNext().all { (a, b) -> b - a >= 1100 })
+        assertTrue(starts.zipWithNext().all { (a, b) -> b - a >= 250 })
     }
 
     @Test fun failuresAndExceptionsAreNegativelyCachedThenExpire() = runTest {

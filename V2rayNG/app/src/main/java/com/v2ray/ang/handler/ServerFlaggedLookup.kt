@@ -83,7 +83,7 @@ internal class ServerFlaggedLookup(
                 // every request wait for the previous one's full timeout, so a concurrent walk
                 // queued up behind the rate limiter it was meant to overlap and a page still
                 // took minutes. The gap between request starts is what the provider needs.
-                fetchOnce(ip) { host ->
+                fetchOnce(key, ip) { host ->
                     rateLimit()
                     parseVerdict(fetch?.invoke(host) ?: if (fetch == null) defaultFetch(host) else null, host)
                 }
@@ -112,13 +112,20 @@ internal class ServerFlaggedLookup(
      * alternative and the wrong one, because it has to be started in a scope that is not the
      * caller's, and a detached coroutine is cancelled out from under runTest.
      */
-    private suspend fun fetchOnce(ip: String, request: suspend (String) -> FlagVerdict?): FlagVerdict? {
-        val keyLock = perAddress.computeIfAbsent(ip) { Mutex() }
+    private suspend fun fetchOnce(key: String, ip: String, request: suspend (String) -> FlagVerdict?): FlagVerdict? {
+        val keyLock = perAddress.computeIfAbsent(key) { Mutex() }
         try {
-            return keyLock.withLock { request(ip) }
+            return keyLock.withLock {
+                // Re-read under the lock: a caller that queued behind this one arrives before the
+                // result was cached, and would otherwise repeat the request this lock just made.
+                cacheLock.withLock {
+                    cache[key]?.takeIf { nowMillis() < it.expires }?.let { return it.verdict }
+                }
+                request(ip)
+            }
         } finally {
             // Drop the lock once the request settles, so the map does not grow with every address.
-            perAddress.remove(ip, keyLock)
+            perAddress.remove(key, keyLock)
         }
     }
 
@@ -173,7 +180,7 @@ internal class ServerFlaggedLookup(
         private const val QUERY = "?vpn=1&asn=1&risk=1"
         private const val SUCCESS_TTL_MS = 86_400_000L
         private const val FAILURE_TTL_MS = 300_000L
-        private const val REQUEST_GAP_MS = 1100L
+        private const val REQUEST_GAP_MS = 250L
 
         /** proxycheck.io scores 0-100; above this the IP is reported flagged on its own. */
         internal const val RISK_FLAG_THRESHOLD = 60

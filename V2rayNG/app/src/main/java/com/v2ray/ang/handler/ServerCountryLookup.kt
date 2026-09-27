@@ -92,7 +92,7 @@ internal class ServerCountryLookup(
             if (ip == null) {
                 null
             } else {
-                fetchOnce(ip) { host ->
+                fetchOnce(key, ip) { host ->
                     rateLimit()
                     ProfileCountry.normalize(fetch?.invoke(host) ?: if (fetch == null) defaultFetch(host) else null)
                 }
@@ -114,7 +114,7 @@ internal class ServerCountryLookup(
     /** Serialises request *starts* only, so concurrent lookups still overlap their round trips. */
     private suspend fun rateLimit() = pacing.withLock {
         val elapsed = lastStart?.let { nowMillis() - it }
-        if (elapsed != null && elapsed < 1100) delay(1100 - elapsed)
+        if (elapsed != null && elapsed < REQUEST_GAP_MS) delay(REQUEST_GAP_MS - elapsed)
         lastStart = nowMillis()
     }
 
@@ -128,13 +128,20 @@ internal class ServerCountryLookup(
      * alternative and the wrong one, because it has to be started in a scope that is not the
      * caller's, and a detached coroutine is cancelled out from under runTest.
      */
-    private suspend fun fetchOnce(ip: String, request: suspend (String) -> String?): String? {
-        val keyLock = perAddress.computeIfAbsent(ip) { Mutex() }
+    private suspend fun fetchOnce(key: String, ip: String, request: suspend (String) -> String?): String? {
+        val keyLock = perAddress.computeIfAbsent(key) { Mutex() }
         try {
-            return keyLock.withLock { request(ip) }
+            return keyLock.withLock {
+                // Re-read under the lock: a caller that queued behind this one arrives before the
+                // result was cached, and would otherwise repeat the request this lock just made.
+                cacheLock.withLock {
+                    cache[key]?.takeIf { nowMillis() < it.expires }?.let { return it.code }
+                }
+                request(ip)
+            }
         } finally {
             // Drop the lock once the request settles, so the map does not grow with every address.
-            perAddress.remove(ip, keyLock)
+            perAddress.remove(key, keyLock)
         }
     }
 
@@ -192,6 +199,13 @@ internal class ServerCountryLookup(
     }
 
     companion object {
+        /**
+         * Gap between request *starts*. The provider's free tier is 1000 queries a day, so this is
+         * politeness rather than a quota: 250ms still allows eight requests in two seconds instead
+         * of eight and a half, and it is what lets a page of flags finish while the user watches.
+         */
+        private const val REQUEST_GAP_MS = 250L
+
         /**
          * Tried in order. Each returns the same shape that [parseResponse] reads, so a provider
          * being blocked or rate-limited costs one round trip instead of the whole flag.
