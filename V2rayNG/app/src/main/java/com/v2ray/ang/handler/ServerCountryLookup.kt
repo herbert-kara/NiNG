@@ -37,7 +37,10 @@ internal class ServerCountryLookup(
 ) : Closeable {
     private data class Entry(val code: String?, val expires: Long)
     private val cache = linkedMapOf<String, Entry>()
-    private val gate = Mutex()
+    // Separate from the cache lock: one lock across the whole lookup serialised the
+    // network calls and defeated any concurrent walk.
+    private val cacheLock = Mutex()
+    private val pacing = Mutex()
     private var lastStart: Long? = null
     // Android's platform DNS can ignore interruption. Bound its workers and queue, never spawn
     // a replacement thread per timeout. close() cancels pending work when the ViewModel ends.
@@ -76,41 +79,41 @@ internal class ServerCountryLookup(
         val key = canonicalTarget(address) ?: return null
         val literal = literalIp(key)
         if (literal != null && !isPublicIp(literal)) return null
-        // Cache check lives inside the same gate as requests: simultaneous identical requests
-        // share the first result without unbounded in-flight maps or detached coroutine scopes.
-        return gate.withLock {
-            cache[key]?.takeIf { nowMillis() < it.expires }?.let { return@withLock it.code }
-            val result = try {
-                // The literal is already known public here, or absent.
-                val ip = literal?.hostAddress ?: resolvePublicIp(key)
-                if (ip == null) null else {
-                    val elapsed = lastStart?.let { nowMillis() - it }
-                    if (elapsed != null && elapsed < 1100) delay(1100 - elapsed)
-                    lastStart = nowMillis()
-                    withTimeoutOrNull(5500) {
-                        ProfileCountry.normalize(fetch?.invoke(ip) ?: if (fetch == null) defaultFetch(ip) else null)
-                    }
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                // Optional enrichment fails closed. Do not log hostnames or network exception URLs.
+        // Cache check lives in its own lock, separate from the request pacing, so concurrent
+        // lookups for different addresses are not serialised behind one another's network call.
+        cacheLock.withLock {
+            cache[key]?.takeIf { nowMillis() < it.expires }?.let { return it.code }
+        }
+        val result = try {
+            // The literal is already known public here, or absent.
+            val ip = literal?.hostAddress ?: resolvePublicIp(key)
+            if (ip == null) {
                 null
+            } else {
+                rateLimit()
+                withTimeoutOrNull(5500) {
+                    ProfileCountry.normalize(fetch?.invoke(ip) ?: if (fetch == null) defaultFetch(ip) else null)
+                }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Optional enrichment fails closed. Do not log hostnames or network exception URLs.
+            null
+        }
+        cacheLock.withLock {
             cache.remove(key)
             cache[key] = Entry(result, nowMillis() + if (result == null) 300_000 else 86_400_000)
             while (cache.size > cacheLimit.coerceAtLeast(1)) cache.remove(cache.keys.first())
-            result
         }
+        return result
     }
 
-    private suspend fun defaultDns(host: String): List<InetAddress> = runInterruptible(Dispatchers.IO) {
-        val future = dnsExecutor.submit<List<InetAddress>> { InetAddress.getAllByName(host).toList() }
-        try {
-            future.get(3, TimeUnit.SECONDS)
-        } finally {
-            future.cancel(true)
-        }
+    /** Serialises request *starts* only, so concurrent lookups still overlap their round trips. */
+    private suspend fun rateLimit() = pacing.withLock {
+        val elapsed = lastStart?.let { nowMillis() - it }
+        if (elapsed != null && elapsed < 1100) delay(1100 - elapsed)
+        lastStart = nowMillis()
     }
 
     private suspend fun defaultFetch(ip: String): String? {

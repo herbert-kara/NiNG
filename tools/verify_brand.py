@@ -30,6 +30,8 @@ def verify():
     check_the_bottom_bar_is_the_original_one()
     check_a_latency_test_also_resolves_the_flags()
     check_the_flag_walk_is_concurrent()
+    check_a_lock_does_not_serialise_the_lookups()
+    check_a_measured_delay_forces_a_fresh_lookup()
     check_the_row_has_one_flag_slot()
     check_the_flag_path_is_covered_by_a_real_test()
     check_release_workflow()
@@ -136,6 +138,71 @@ def check_the_flag_walk_is_concurrent():
         'the targets are walked in a plain loop again, so the walk is serial')
     test = ROOT / 'V2rayNG/app/src/test/java/com/v2ray/ang/ui/main/FlagBatchConcurrencyTest.kt'
     assert test.exists(), 'the regression test for a serial walk is gone'
+
+def check_a_lock_does_not_serialise_the_lookups():
+    """One mutex around the whole lookup made a concurrent walk queue up behind the network.
+
+    A lock held across the request is what defeated the concurrent walk: every lookup waited for
+    the previous one's full round trip, so eight at a time still went out one at a time and a page
+    still took minutes. Only the pacing between request starts needs a lock.
+    """
+    for name in ("ServerFlaggedLookup", "ServerCountryLookup"):
+        src = (APP / ("src/main/java/com/v2ray/ang/handler/" + name + ".kt")).read_text("utf-8")
+        body = src[src.index("suspend fun resolve("):]
+        body = body[:body.index("private suspend fun defaultFetch")]
+        assert "rateLimit()" in body, name + " no longer paces its requests"
+        # Any use of a lock that spans the request itself is the defect: it makes the next
+        # lookup wait for this one's full round trip. Reject a lock wrapping the whole function
+        # body, and reject a pacing lock that is held around the request rather than released
+        # before it.
+        assert not re.search(r"suspend fun resolve[(][^)]*[)][^\n{]*[=]\s*[a-zA-Z]+[.]withLock", body), (
+            name + " wraps the whole lookup in a lock, so a concurrent walk is serialised again "
+            "and a page of flags never fills in")
+        pacing = re.search(r"private suspend fun rateLimit[(][)] = ([a-zA-Z]+)[.]withLock", body + src)
+        assert pacing, name + " does not pace its request starts under its own lock"
+        start_line = src[:body.index("rateLimit()")].count("\n")
+        # rateLimit() must be called, then the request issued after the lock is released: the
+        # guard above rejects the wrapper form, and this rejects an inline withLock around it.
+        assert not re.search(r"withLock \{\s*\n(?:[^\n]*\n){0,6}?\s*withTimeoutOrNull", body), (
+            name + " issues the request inside a lock, so lookups cannot overlap")
+        assert "private val pacing = Mutex()" in src, name + " has no separate request pacing"
+    test = ROOT / "V2rayNG/app/src/test/java/com/v2ray/ang/handler/LookupConcurrencyTest.kt"
+    assert test.exists(), "the regression test for a serialising lock is gone"
+
+
+def check_a_measured_delay_forces_a_fresh_lookup():
+    """The measured-delay path kept the old serial loop and replayed the cache.
+
+    Two separate defects hid behind one symptom: the per-delay path was still a plain loop, and
+    it called resolve without forcing, so it replayed a verdict cached before the measurement.
+    Both left the row showing whatever it already had.
+    """
+    vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
+    # Slice to the next top-level declaration: a lazy regex stops at the first closing brace,
+    # which lands inside a lambda and silently reads a truncated body as a missing walk.
+    start = vm.index("private fun resolveLookupsFor(")
+    rest = vm[start:]
+    nxt = re.search(r"\n    (?:private |internal |override )?(?:suspend )?fun ", rest[10:])
+    src = rest[:nxt.start() + 10] if nxt else rest
+    assert src, "the per-delay lookup is gone"
+    assert "runFlagBatch(" in src, (
+        "the per-delay path is not the concurrent walk, so measured rows resolve one at a time")
+    assert src.count("force = true") >= 2, (
+        "the per-delay path does not force a fresh query, so it replays a pre-test verdict")
+    assert re.search(r"for [(]", src) is None, (
+        "the per-delay path still walks its targets in a plain loop")
+    # The flag has to be threaded all the way into the lookup call, not just present in the
+    # batch arguments: a lambda that ignores it and calls resolve(address) replays the cache
+    # while the surrounding force = true still makes the guard look satisfied. Every call in
+    # this function is checked, because a second, healthy-looking one elsewhere in the file
+    # would otherwise satisfy a substring search for the wrong one.
+    calls = re.findall(r"serverFlags[.]resolve[(]([^)]*)[)]", src)
+    assert calls, "the per-delay path never calls the reputation lookup"
+    for arg in calls:
+        assert arg == "address, force", (
+            "the per-delay path calls serverFlags.resolve(" + arg + ") instead of threading the "
+            "force flag, so a measured row keeps the verdict cached before the measurement")
+
 
 def check_the_row_has_one_flag_slot():
     """The grey placeholder and the real flag were two badges for one fact.

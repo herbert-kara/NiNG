@@ -377,11 +377,13 @@ class MainViewModel(
         // happened to reach the same address, which is what made the flag look broken.
         resolveLookupsFor(request.groupId, updates.keys)
     }
-
     /**
-     * Resolve the location flag and the reputation verdict for the given rows, off the main
-     * thread, and publish each answer as it arrives. Failures stay silent: the row keeps its
-     * current badge and a later pass can fill it in.
+     * Resolve the flags for exactly the rows whose delay was just measured.
+     *
+     * This runs the same concurrent walk as a full refresh, over the rows that were measured
+     * rather than the whole page, and it re-queries the provider instead of replaying the cache:
+     * a verdict cached before the test can describe an address that has since changed, which is
+     * exactly what the user is looking at.
      */
     private fun resolveLookupsFor(groupId: String, guids: Set<String>) {
         if (guids.isEmpty()) return
@@ -389,20 +391,26 @@ class MainViewModel(
             val targets = mutableServerGroupState(groupId).value.rows
                 .filter { it.guid in guids && !it.profile.configType.isComplexType() }
                 .mapNotNull { row -> row.profile.server?.let { row.guid to it } }
-            for ((guid, address) in targets) {
-                currentCoroutineContext().ensureActive()
-                if (uiState.value.selectedGroupId != groupId) return@launch
-                // The verdict response carries the country for the same address, so one request
-                // answers both the location flag and the reputation badge.
-                val verdict = serverFlags.resolve(address)
-                if (verdict != null) {
+            if (uiState.value.selectedGroupId != groupId) return@launch
+            // One walk, not two. The verdict response already carries the country for the same
+            // address, so the fallback providers only run for the rows the verdict did not
+            // resolve, instead of re-asking every address twice under two rate limiters.
+            runFlagBatch(
+                targets = targets,
+                force = true,
+                lookup = { address, force -> serverFlags.resolve(address, force) },
+                publish = { guid, address, verdict ->
                     publishVerdict(groupId, guid, address, verdict.status, verdict.countryCode)
-                }
-                val country = serverCountries.resolve(address)
-                if (country != null) {
-                    publishCountry(groupId, guid, address, country)
-                }
-            }
+                },
+            )
+            runFlagBatch(
+                targets = targets,
+                force = true,
+                lookup = { address, _ -> serverCountries.resolve(address)?.let { CountryOnly(it) } },
+                publish = { guid, address, country ->
+                    publishCountry(groupId, guid, address, country.value)
+                },
+            )
         }
     }
 

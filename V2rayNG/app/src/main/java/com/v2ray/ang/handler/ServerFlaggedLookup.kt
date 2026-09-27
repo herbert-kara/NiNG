@@ -45,7 +45,11 @@ internal class ServerFlaggedLookup(
 ) : Closeable {
     private data class Entry(val verdict: FlagVerdict?, val expires: Long)
     private val cache = linkedMapOf<String, Entry>()
-    private val gate = Mutex()
+    // Two locks, deliberately separate: the cache is held only for map access, and the
+    // rate limiter only for the gap between request starts. One lock around the whole
+    // lookup serialized the network calls and defeated any concurrent walk.
+    private val cacheLock = Mutex()
+    private val pacing = Mutex()
     private var lastStart: Long? = null
 
     private val clientHolder = lazy {
@@ -66,30 +70,40 @@ internal class ServerFlaggedLookup(
      */
     suspend fun resolve(address: String?, forceRefresh: Boolean = false): FlagVerdict? {
         val key = ServerCountryLookup.canonicalTarget(address) ?: return null
-        return gate.withLock {
-            if (forceRefresh) cache.remove(key)
-            cache[key]?.takeIf { nowMillis() < it.expires }?.let { return@withLock it.verdict }
-            val verdict = try {
-                val ip = publicIpOf(key)
-                if (ip == null) null else {
-                    val elapsed = lastStart?.let { nowMillis() - it }
-                    if (elapsed != null && elapsed < REQUEST_GAP_MS) delay(REQUEST_GAP_MS - elapsed)
-                    lastStart = nowMillis()
-                    withTimeoutOrNull(8000) {
-                        fetch?.invoke(ip) ?: if (fetch == null) defaultFetch(ip) else null
-                    }?.let { parseVerdict(it, ip) }
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                // Reputation is optional enrichment and fails closed. Never log the address.
-                null
+        if (forceRefresh) cacheLock.withLock { cache.remove(key) }
+        cacheLock.withLock {
+            cache[key]?.takeIf { nowMillis() < it.expires }?.let { return it.verdict }
+        }
+        val verdict = try {
+            val ip = publicIpOf(key)
+            if (ip == null) null else {
+                // Only the pacing is serialized. Holding one lock across the whole lookup made
+                // every request wait for the previous one's full timeout, so a concurrent walk
+                // queued up behind the rate limiter it was meant to overlap and a page still
+                // took minutes. The gap between request starts is what the provider needs.
+                rateLimit()
+                withTimeoutOrNull(8000) {
+                    fetch?.invoke(ip) ?: if (fetch == null) defaultFetch(ip) else null
+                }?.let { parseVerdict(it, ip) }
             }
-            cache.remove(key)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Reputation is optional enrichment and fails closed. Never log the address.
+            null
+        }
+        cacheLock.withLock {
             cache[key] = Entry(verdict, nowMillis() + if (verdict == null) FAILURE_TTL_MS else SUCCESS_TTL_MS)
             while (cache.size > cacheLimit.coerceAtLeast(1)) cache.remove(cache.keys.first())
-            verdict
         }
+        verdict
+    }
+
+    /** Serialises request *starts* only, so concurrent lookups still overlap their round trips. */
+    private suspend fun rateLimit() = pacing.withLock {
+        val elapsed = lastStart?.let { nowMillis() - it }
+        if (elapsed != null && elapsed < REQUEST_GAP_MS) delay(REQUEST_GAP_MS - elapsed)
+        lastStart = nowMillis()
     }
 
     private suspend fun defaultFetch(ip: String): String? = suspendCancellableCoroutine { continuation ->
@@ -121,7 +135,7 @@ internal class ServerFlaggedLookup(
      * actually reach the service, not replay a verdict that is up to a day old.
      */
     suspend fun invalidate() {
-        gate.withLock { cache.clear() }
+        cacheLock.withLock { cache.clear() }
     }
 
     override fun close() {
