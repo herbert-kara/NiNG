@@ -96,7 +96,7 @@ internal class ServerFlaggedLookup(
             cache[key] = Entry(verdict, nowMillis() + if (verdict == null) FAILURE_TTL_MS else SUCCESS_TTL_MS)
             while (cache.size > cacheLimit.coerceAtLeast(1)) cache.remove(cache.keys.first())
         }
-        verdict
+        return verdict
     }
 
     /** Serialises request *starts* only, so concurrent lookups still overlap their round trips. */

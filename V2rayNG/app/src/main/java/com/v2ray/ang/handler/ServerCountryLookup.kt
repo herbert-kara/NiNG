@@ -116,6 +116,15 @@ internal class ServerCountryLookup(
         lastStart = nowMillis()
     }
 
+    private suspend fun defaultDns(host: String): List<InetAddress> = runInterruptible(Dispatchers.IO) {
+        val future = dnsExecutor.submit<List<InetAddress>> { InetAddress.getAllByName(host).toList() }
+        try {
+            future.get(3, TimeUnit.SECONDS)
+        } finally {
+            future.cancel(true)
+        }
+    }
+
     private suspend fun defaultFetch(ip: String): String? {
         // A single blocked or rate-limited endpoint must not leave the row without a flag, so
         // each provider is tried in turn and the first usable answer wins.

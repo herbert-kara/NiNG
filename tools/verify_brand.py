@@ -35,6 +35,7 @@ def verify():
     check_the_palette_is_the_whole_theme()
     check_the_connect_button_is_blue_and_ping_is_untouched()
     check_theme_pairs_stay_readable()
+    check_a_rewritten_function_keeps_its_helpers_and_returns()
     check_the_row_has_one_flag_slot()
     check_the_flag_path_is_covered_by_a_real_test()
     check_release_workflow()
@@ -287,6 +288,89 @@ def check_the_connect_button_is_blue_and_ping_is_untouched():
     assert "Color(0xFF009FB7)" in risk, "the safe flag is not on the palette"
     assert "Color(0xFFFED766)" in risk, "the caution flag is not on the palette"
     assert "Color(0xFF696773)" in risk, "the unknown flag is not on the palette"
+
+
+_KEYWORDS = {
+    "if", "for", "while", "when", "return", "suspend", "inline", "constructor", "super", "this",
+    "object", "class", "fun", "val", "var", "else", "try", "catch", "do", "throw", "is", "in",
+    "as", "!in", "!is", "step", "until", "downTo", "reversed",
+}
+
+
+_KEYWORDS = {
+    "if", "for", "while", "when", "return", "suspend", "inline", "constructor", "super", "this",
+    "object", "class", "fun", "val", "var", "else", "try", "catch", "do", "throw", "is", "in",
+    "as", "!in", "!is", "step", "until", "downTo", "reversed", "by",
+}
+# Standard-library and Compose idioms that are extension calls or scope functions, not local helpers.
+_IDIOMS = {
+    "run", "let", "also", "apply", "with", "takeIf", "takeUnless", "getOrNull", "getOrElse",
+    "getOrDefault", "use", "forEach", "map", "filter", "first", "firstOrNull", "toList", "sorted",
+    "sortedBy", "isNullOrEmpty", "isNotEmpty", "orEmpty", "joinToString", "plus", "minus", "format",
+    "startsWith", "endsWith", "removePrefix", "removeSuffix", "toInt", "toLong", "toFloat",
+    "substringBefore", "substringAfter", "trim", "lowercase", "uppercase", "contains", "isBlank",
+    # JDK constructors and statics that are legitimately unqualified.
+    "Thread", "Executors", "TimeUnit", "InetAddress", "InetSocketAddress", "System", "String",
+    "Integer", "Long", "Float", "Double", "Boolean", "Byte", "Short", "Char", "IllegalStateException",
+    "IllegalArgumentException", "RuntimeException", "Exception", "ArrayList", "HashMap", "HashSet",
+    "LinkedHashMap", "LinkedHashSet", "Collections", "Objects", "Optional", "Timer", "UUID",
+    # Kotlin stdlib factory functions.
+    "listOf", "mutableListOf", "setOf", "mutableSetOf", "mapOf", "mutableMapOf", "arrayOf",
+    "emptyList", "emptyMap", "emptySet", "sequenceOf", "buildString", "buildList", "buildMap",
+    "require", "requireNotNull", "check", "checkNotNull", "error", "TODO", "lazy", "arrayListOf",
+    "Pair", "Triple", "lazyOf", "Result", "runCatching", "let", "also", "apply", "with",
+    "Regex", "MatchResult", "StringBuilder", "CharArray", "IntArray", "LongArray", "ByteArray",
+    "BooleanArray", "FloatArray", "DoubleArray", "List", "MutableList", "Set", "MutableSet",
+    "Map", "MutableMap", "Iterator", "Sequence", "Comparable", "Number", "Unit", "Nothing",
+    "Deferred", "CompletableDeferred", "CoroutineScope", "CoroutineDispatcher", "Job", "Mutex",
+    "MutexWithLock", "Semaphore", "withTimeoutOrNull", "withContext", "Dispatchers", "launch",
+    "async", "awaitAll", "await", "delay", "runInterruptible", "coroutineScope", "supervisorScope",
+    "CancellationException", "Logger", "LoggerFactory", "HttpURLConnection", "URL", "URI",
+}
+
+
+def check_a_rewritten_function_keeps_its_helpers_and_returns():
+    """Rewriting resolve() by hand dropped a helper and a return, and only the compiler noticed.
+
+    The two-lock split is a small, local change; rewriting the whole function body around it is
+    not, and it cost a release. Both failures are invisible to a text guard and cheap to catch:
+    every identifier the file still calls must still be defined, and a block-bodied resolve() must
+    return on every path.
+    """
+    for name in ("ServerFlaggedLookup", "ServerCountryLookup"):
+        src = (APP / ("src/main/java/com/v2ray/ang/handler/" + name + ".kt")).read_text("utf-8")
+        defined = set()
+        for pat in (r"private (?:suspend )?fun ([a-zA-Z_]\w*)",
+                    r"private (?:suspend )?val ([a-zA-Z_]\w*)",
+                    r"(?:data |sealed |enum )*class ([a-zA-Z_]\w*)",
+                    r"object ([a-zA-Z_]\w*)",
+                    r"interface ([a-zA-Z_]\w*)",
+                    r"typealias ([a-zA-Z_]\w*)"):
+            defined |= set(re.findall(pat, src))
+        for imp in re.findall(r"import ([a-zA-Z_][\w.]*)", src):
+            defined.add(imp.rsplit(".", 1)[-1])
+        # Locals are declared in their own scope; a name bound by val/var/fun/param is fine.
+        for pat in (r"\bval ([a-zA-Z_]\w*)", r"\bvar ([a-zA-Z_]\w*)", r"\bfun ([a-zA-Z_]\w*)",
+                    r"([a-zA-Z_]\w*):\s", r"\bfor \(([a-zA-Z_]\w*)"):
+            defined |= set(re.findall(pat, src))
+        # Only unqualified calls can be a missing local helper; a call after a dot is a method,
+        # and "val x: Int get() = ..." is a property accessor rather than a call.
+        body_wo_accessors = re.sub(r"\bget\(\)", "get_", src)
+        for called in re.findall(r"(?<![.\w])([a-zA-Z_]\w*)\(", body_wo_accessors):
+            if called in _KEYWORDS or called in _IDIOMS:
+                continue
+            assert called in defined, (
+                name + " calls " + called + "() but never defines it; a hand rewrite dropped it")
+        fn = re.search(r"    suspend fun resolve[(].*?\n    \}", src, re.S)
+        assert fn, name + " has no resolve() to check"
+        body = fn.group(0)
+        if not body.rstrip().endswith("}"):
+            continue  # an expression body returns by construction
+        lines = [l.strip() for l in body.rstrip().splitlines() if l.strip()]
+        assert "return" in body, (
+            name + ": resolve() is a block body that never returns, so it does not compile")
+        assert lines[-2].startswith("return"), (
+            name + ": the last statement of resolve() is " + lines[-2] + ", whose value is discarded")
 
 
 def check_theme_pairs_stay_readable():
