@@ -28,6 +28,7 @@ def verify():
     check_fork_feature_files()
     check_one_location_flag()
     check_refresh_button_clears_the_connect_fab()
+    check_bottom_bar_text_stays_inside_the_bar()
     check_refresh_button_actually_refreshes()
     check_release_workflow()
     print('NiNG app ID, internal namespace, updater, locale names, drawer and adaptive icons: OK')
@@ -90,20 +91,50 @@ def check_one_location_flag():
         'the verdict country is discarded again, leaving the location flag empty')
 
 def check_refresh_button_clears_the_connect_fab():
-    """The refresh button sat under the connect FAB, so its taps started the service instead.
+    """The refresh button was drawn under the connect FAB, and ended up below it on screen.
 
-    A FAB is 56dp wide with 24dp of end inset, drawn on top of this bar, so the button needs a
-    larger end padding than the bar's own inset or the two overlap and the button is dead.
+    Both controls now have to be siblings in one Row. Offsets and a second navigation-bar inset
+    are what put them in different places: the bar was already inset for the navigation bar and
+    the FAB carried its own inset, so the two drifted apart vertically and the refresh button
+    rendered below and left of connect instead of beside it.
     """
     bar = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt').read_text('utf-8')
-    # The button may carry a comment or an extra argument between onClick and modifier, so this
-    # reads the padding from the button block rather than assuming an exact argument order.
-    block = re.search(r'SmallFloatingActionButton\((.*?)\n\s*\) \{', bar, re.S)
-    assert block, 'the refresh button is gone'
-    padding = re.search(r'Modifier\.padding\(end\s*=\s*([\d.]+)dp\)', block.group(1))
-    assert padding, 'the refresh button lost its end padding; it is drawn under the connect FAB again'
-    assert float(padding.group(1)) >= 96, (
-        f'refresh button end padding is {padding.group(1)}dp, under the 56dp FAB plus its 24dp inset')
+    # The Row that holds the two controls: the one carrying a spacedBy arrangement and TopEnd.
+    rows = re.findall(r'Row\(\s*modifier = Modifier(.*?)\n\s*\) \{', bar, re.S)
+    button_row = next((r for r in rows if 'TopEnd' in r and 'spacedBy' in r), None)
+    assert button_row is not None, 'the button row is gone, so connect and refresh can drift apart again'
+    body = bar[bar.index(button_row):]
+    body = body[:body.index('\n        }\n    }')] if '\n        }\n    }' in body else body
+    for control in ('FloatingActionButton(', 'SmallFloatingActionButton('):
+        assert control in body, f'{control} is no longer a sibling of the other button'
+    assert button_row.count('navigationBarsPadding') == 1, (
+        'the button row carries its own navigationBarsPadding on top of the bar, so the two '
+        'buttons no longer share a baseline')
+    assert not re.search(r'offset\s*\(\s*y\s*=', bar), (
+        'a negative y offset is back; the buttons are positioned by offset instead of by layout')
+    assert bar.count('SmallFloatingActionButton(') == 1, (
+        'the refresh control is duplicated or missing; a tap could land on the wrong one')
+
+def check_bottom_bar_text_stays_inside_the_bar():
+    """The status line wrapped to three lines and spilled out over the list.
+
+    A fixed 64dp row height forced the text to wrap, and nothing bounded it, so a long
+    translation overflowed the bar on a narrow screen. The text has to be capped at one line with
+    an ellipsis, and the row has to be allowed to grow instead of clipping.
+    """
+    bar = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt').read_text('utf-8')
+    assert re.search(r'\.height\(64\.dp\)', bar) is None, (
+        'the fixed 64dp row height is back; the status text overflows the bar again')
+    assert 'heightIn(min = 64.dp)' in bar, (
+        'the bar no longer grows with its content, so a wrapped line is clipped')
+    status = re.search(r'text = displayText,(.*?)\n\s*\)', bar, re.S)
+    assert status, 'the status text is gone from the bottom bar'
+    assert 'maxLines = 1' in status.group(1), (
+        'the status text is unbounded again and can wrap out of the bar')
+    assert 'TextOverflow.Ellipsis' in status.group(1), (
+        'the status text is truncated without an ellipsis, so it ends mid-word')
+    assert 'import androidx.compose.ui.text.style.TextOverflow' in bar, (
+        'TextOverflow is used but not imported, so the bar will not compile')
 
 def check_refresh_button_actually_refreshes():
     """A tap used to be swallowed, so the button looked dead even though the click arrived.
