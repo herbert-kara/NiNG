@@ -37,6 +37,7 @@ def verify():
     check_theme_pairs_stay_readable()
     check_a_rewritten_function_keeps_its_helpers_and_returns()
     check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
+    check_the_documented_colour_exceptions_hold()
     check_concurrent_lookups_of_one_address_share_a_round_trip()
     check_no_concurrency_test_freezes_the_clock_it_depends_on()
     check_a_concurrency_test_can_reach_concurrency()
@@ -218,7 +219,17 @@ def check_a_measured_delay_forces_a_fresh_lookup():
 PALETTE = ("272727", "FED766", "009FB7", "696773", "EFF1F3")
 # Status colours carry meaning, so they are not decoration and stay out of the palette: the ping
 # colours were explicitly kept by the user, and red means an error.
-ALLOWED_OUTSIDE = {"009966", "FF0099", "D32F2F", "9E2323", "F3D6D4", "350C0C", "D50000"}
+# Outside the palette on purpose, each with a reason recorded in
+# check_the_documented_colour_exceptions_hold():
+#   009966  the latency/verdict green, semantic
+#   FF0099   the second latency colour, semantic
+#   D32F2F  error red, no palette member means "stop"
+#   9E2323 350C0C F3D6D4 D50000  the error red's tones for containers
+#   E0E0E0 424242  the row separators, restored to their pre-sweep greys
+ALLOWED_OUTSIDE = {
+    "009966", "FF0099", "D32F2F", "9E2323", "F3D6D4", "350C0C", "D50000",
+    "E0E0E0", "424242",
+}
 # Pure white is the top of the mist anchor, not an extra colour.
 SCALED_ACCEPTED = {"FFFFFF", "000000"}
 
@@ -291,8 +302,10 @@ def check_the_connect_button_is_blue_and_ping_is_untouched():
         "the latency green was remapped and lost its meaning: 0x" + str(val_of("colorPing")))
     assert val_of("colorPingRed") == "FF0099", (
         "the latency red was remapped and lost its meaning: 0x" + str(val_of("colorPingRed")))
+    # The flag tints are pinned in check_the_documented_colour_exceptions_hold(). Only two of the
+    # four are palette members: safe is the latency green by the user's instruction, and only
+    # caution and unknown are anchors.
     risk = (APP / "src/main/java/com/v2ray/ang/ui/main/RiskBadge.kt").read_text("utf-8")
-    assert "Color(0xFF009FB7)" in risk, "the safe flag is not on the palette"
     assert "Color(0xFFFED766)" in risk, "the caution flag is not on the palette"
     assert "Color(0xFF696773)" in risk, "the unknown flag is not on the palette"
 
@@ -304,11 +317,6 @@ _KEYWORDS = {
 }
 
 
-_KEYWORDS = {
-    "if", "for", "while", "when", "return", "suspend", "inline", "constructor", "super", "this",
-    "object", "class", "fun", "val", "var", "else", "try", "catch", "do", "throw", "is", "in",
-    "as", "!in", "!is", "step", "until", "downTo", "reversed", "by",
-}
 # Standard-library and Compose idioms that are extension calls or scope functions, not local helpers.
 _IDIOMS = {
     "run", "let", "also", "apply", "with", "takeIf", "takeUnless", "getOrNull", "getOrElse",
@@ -725,6 +733,53 @@ def check_concurrent_lookups_of_one_address_share_a_round_trip():
             name + ": fetchOnce() starts a detached coroutine again, which runTest cancels")
         assert "Deferred" not in code, (
             name + ": a shared Deferred is back; it needs a detached scope to start")
+
+def check_the_documented_colour_exceptions_hold():
+    """Four colours were deliberately taken back out of the palette sweep, and each has a reason.
+
+    A sweep that maps everything to five anchors will happily take the one thing that must not move.
+    These are the four the user sent a screenshot for: the "not flagged" verdict reads as a
+    verdict only in its own green, the row separators were carrying the original greys, and the
+    selected row and the group tab are gold. The gold is the palette hue darkened to 3:1, because
+    FED766 on white is 1.4:1 and a 4dp bar or a 2dp underline would simply not be visible.
+    """
+    theme = (APP / "src/main/java/com/v2ray/ang/ui/compose/Theme.kt").read_text("utf-8")
+    m = re.search(r"dividerColorLight = Color\(0x[0-9A-Fa-f]{2}([0-9A-Fa-f]{6})\)", theme)
+    assert m, "the light row separator lost its constant"
+    assert m.group(1).upper() == "E0E0E0", (
+        "the light row separator is #" + m.group(1) + " again; it was E0E0E0 before the palette "
+        "sweep and a hairline has to stay a hairline")
+    m = re.search(r"dividerColorDark = Color\(0x[0-9A-Fa-f]{2}([0-9A-Fa-f]{6})\)", theme)
+    assert m and m.group(1).upper() == "424242", "the dark row separator left 424242"
+
+    risk = (APP / "src/main/java/com/v2ray/ang/ui/main/RiskBadge.kt").read_text("utf-8")
+    m = re.search(r"RiskLevel\.SAFE -> Color\(0x[0-9A-Fa-f]{2}([0-9A-Fa-f]{6})\)", risk)
+    assert m, "the safe verdict lost its colour"
+    assert m.group(1).upper() == "009966", (
+        "the \"not flagged\" verdict is #" + m.group(1) + " again. It is the latency green, not the "
+        "palette teal: teal is the accent and the connect button, so a clean verdict in it read as "
+        "another accent rather than as an answer.")
+
+    # Both gold markers come from one constant, and it has to be the darkened gold, not FED766.
+    pager = (APP / "src/main/java/com/v2ray/ang/ui/main/MainServerPager.kt").read_text("utf-8")
+    tab = (APP / "src/main/java/com/v2ray/ang/ui/main/MainGroupTab.kt").read_text("utf-8")
+    gold = "AD9245"
+    assert re.search(r"SelectedRowGold = Color\(0x[0-9A-Fa-f]{2}" + gold + r"\)", pager), (
+        "the selected row marker is not the palette gold; it must be #" + gold)
+    assert ".background(SelectedRowGold)" in pager, (
+        "the selected row marker is not using the gold; a 4dp bar needs 3:1 on white to be seen")
+    assert re.search(r"GroupIndicatorGold = Color\(0x[0-9A-Fa-f]{2}" + gold + r"\)", tab), (
+        "the group tab underline is not the palette gold; it must be #" + gold)
+    # The lambda holds a Modifier.tabIndicatorOffset(...) with its own parentheses, so [^)]* stops
+    # short. Bound the search to the SecondaryIndicator call itself.
+    ind = re.search(r"SecondaryIndicator\(.*?\n\s*\)\n", tab, re.S)
+    m = re.search(r"color = (\w+)", ind.group(0)) if ind else None
+    assert m and m.group(1) == "GroupIndicatorGold", (
+        "the group tab underline is drawn with " + (m.group(1) if m else "nothing")
+        + " rather than the gold; colorScheme.secondary put slate there, which read as disabled")
+    # The palette gold itself is what these are darkened from, so keep them in step.
+    assert "FED766" in theme, "the gold anchor is gone from the theme, so the darkened gold is orphaned"
+
 
 def check_the_launcher_wordmark_is_teal_and_20_percent_smaller():
     """The wordmark was asked to shrink by a fifth and take the palette teal.

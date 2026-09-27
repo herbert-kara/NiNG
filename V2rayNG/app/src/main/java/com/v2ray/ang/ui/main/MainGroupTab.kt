@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
@@ -20,6 +21,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.v2ray.ang.dto.GroupMapItem
 import com.v2ray.ang.dto.entities.ServersCache
 import kotlinx.coroutines.flow.StateFlow
+
+/**
+ * The palette gold darkened to 3:1 on white, for the selected group's underline.
+ *
+ * The palette's own FED766 is 1.4:1 on white, so an underline in it would be invisible in light
+ * mode. Darkening keeps the hue and gives a graphic the contrast it needs. The previous
+ * colorScheme.secondary put slate under the tab, which read as a disabled control.
+ */
+private val GroupIndicatorGold = Color(0xFFAD9245)
 
 @Composable
 fun GroupTabBar(
@@ -39,7 +49,10 @@ fun GroupTabBar(
         indicator = { tabPositions ->
             TabRowDefaults.SecondaryIndicator(
                 modifier = Modifier.tabIndicatorOffset(tabPositions[selectedIndex]),
-                color = MaterialTheme.colorScheme.secondary
+                // The palette's gold is 1.4:1 on white and would be invisible here, so the
+                // underline uses the same hue darkened to the 3:1 that a graphic needs. Using
+                // colorScheme.secondary put slate under the tab, which read as a disabled control.
+                color = GroupIndicatorGold
             )
         }
     ) {

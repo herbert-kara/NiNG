@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -60,6 +61,14 @@ import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyGridState
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import kotlin.math.abs
+
+/**
+ * The selected row's marker, in the palette's gold darkened to 3:1 on white.
+ *
+ * FED766 itself is 1.4:1 on white and a 4dp bar needs 3:1 to be seen, so the hue is kept and the
+ * value dropped. One constant for both gold markers, so the row and the group tab cannot drift.
+ */
+internal val SelectedRowGold = Color(0xFFAD9245)
 
 @Composable
 fun GroupPagerPage(
@@ -338,7 +347,10 @@ private fun ServerListItem(
                             .width(4.dp)
                             .fillMaxHeight()
                             .padding(vertical = 10.dp)
-                            .background(MaterialTheme.colorScheme.primary)
+                            // Gold marks which row is selected. It was colorScheme.primary, which is
+                            // the same teal as the connect button, so the selection and the app's
+                            // main action read as one thing.
+                            .background(SelectedRowGold)
                     )
                 }
             }

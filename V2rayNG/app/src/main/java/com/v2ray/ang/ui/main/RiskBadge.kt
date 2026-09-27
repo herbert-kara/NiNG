@@ -27,11 +27,16 @@ import com.v2ray.ang.handler.RiskReason
 /**
  * Flag colors are fixed rather than theme-derived: each one has to keep its own meaning, and a
  * palette that shifts with dynamic color would let a "safe" row render in the error color.
+ *
+ * SAFE is the latency green rather than the palette teal, deliberately. Teal is the app's accent
+ * and the connect button's colour, so a clean verdict in it read as another accent rather than as
+ * an answer, and the teal on white sits at 3.6:1 while the green reads at 4.6:1. A verdict has to
+ * look like a verdict.
  */
 internal fun riskFlagColor(level: RiskLevel): Color = when (level) {
     RiskLevel.UNSAFE -> Color(0xFFD32F2F)
     RiskLevel.CAUTION -> Color(0xFFFED766)
-    RiskLevel.SAFE -> Color(0xFF009FB7)
+    RiskLevel.SAFE -> Color(0xFF009966)
     RiskLevel.UNKNOWN -> Color(0xFF696773)
 }
 

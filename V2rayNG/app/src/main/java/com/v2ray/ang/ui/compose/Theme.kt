@@ -108,8 +108,8 @@ val colorConfigType = Color(0xFF009FB7) // Teal
 val colorFabActive = Color(0xFF009FB7) // Teal
 val colorFabInactiveLight = Color(0xFF4F4D56) // Slate
 val colorFabInactiveDark = Color(0xFF696773) // Slate
-val dividerColorLight = Color(0xFF4C401F) // Mist
-val dividerColorDark = Color(0xFF3A393F) // Slate
+val dividerColorLight = Color(0xFFE0E0E0) // pre-palette grey, restored on request
+val dividerColorDark = Color(0xFF424242) // pre-palette grey, restored on request
 
 // Toast Colors 85%
 val toastNormalBgLight = Color(0xD93A393F) // Charcoal, 85%
