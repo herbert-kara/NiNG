@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.ProfileCountry
 import com.v2ray.ang.handler.ServerCountryLookup
 import com.v2ray.ang.handler.SettingsManager
@@ -1221,9 +1222,10 @@ class MainViewModel(
 
     fun testCurrentServerRealPing() {
         if (!uiState.value.isRunning) return
-        val requestId = testRequests.beginCurrent(
-            currentServers().firstOrNull { it.isSelected }?.guid
-        )
+        // The single test runs on the selected server, so that is the row the result belongs to.
+        // This is the same store the connection itself is resolved from, so a measurement can
+        // never be attributed to a row other than the one that was actually connected.
+        val requestId = testRequests.beginCurrent(MmkvManager.getSelectServer())
         _uiState.update { it.copy(isTesting = true, status = MainStatus.Testing) }
         dataSource.testCurrentServerRealPing(requestId)
     }
