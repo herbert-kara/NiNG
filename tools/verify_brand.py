@@ -41,6 +41,7 @@ def verify():
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
     check_the_flag_lookup_asks_through_the_tunnel()
+    check_the_flag_path_says_where_it_stops()
     check_the_flag_path_records_without_depending_on_the_settings_store()
     check_the_country_lookup_client_is_a_valid_read_write_property()
     check_the_tunnel_route_is_injectable_and_testable()
@@ -929,6 +930,50 @@ def check_the_country_lookup_client_is_a_valid_read_write_property():
             assert ".build()" in line, (
                 "the client is assigned " + line.strip() + " without building it, so the request "
                 "path holds an OkHttpClient.Builder where it needs a client")
+
+
+def check_the_flag_path_says_where_it_stops():
+    """Seven releases of fixes were reasoned about a path that never ran.
+
+    The strings were in the APK and the app was alive and logcat returned nothing at all, which
+    means the walk was never entered. Every previous diagnosis -- a blocked provider, a dead route,
+    a wrong parser, a private address -- sits downstream of the first line of the walk, so all of
+    them were unobservable.
+
+    The chain is now logged in the order it happens, and the first line missing names the culprit:
+    the ViewModel was built, each collector started, the row list and the filtered target count,
+    the walk started, the lookup's answer. The two collector-entry lines matter most: without
+    them a reader has to guess whether the pipeline never began or began and produced nothing.
+
+    refreshFlags had no recorder at all, so a manual ping -- the one action a user takes when they
+    expect a row to change -- was silent even after the walk was instrumented.
+    """
+    vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
+    for line, why in (
+        ("flag init: collectors starting",
+         "nothing records whether the ViewModel built the flag collectors at all, which is the "
+         "first question when the whole path is silent"),
+        ("flag init: verdict walk",
+         "nothing records that the verdict collector started, so a group that never emits and a "
+         "collector that never ran look the same"),
+        ("flag init: country walk",
+         "nothing records that the country collector started, which is the one that has to fire "
+         "for a row to get a flag"),
+        ("country targets=",
+         "nothing records how many targets the country walk was handed, so an empty row list and a "
+         "row list the filter emptied are indistinguishable"),
+        ("verdict targets=",
+         "nothing records how many targets the verdict walk was handed"),
+    ):
+        assert line in vm, why + " (" + line + ")"
+    for walk in ("refresh-verdict", "refresh-country", "verdict", "country"):
+        assert 'onWalk = walkLog("%s")' % walk in vm, (
+            "the walk labelled " + walk + " is not recorded, so a ping that changed nothing is "
+            "silent -- and a ping is exactly when a user expects a row to change")
+    # The row count has to be logged next to the target count, or "0 targets" has no explanation.
+    assert vm.count("rows=") >= 2, (
+        "the target counts are logged without the row counts, so a zero target count cannot be "
+        "attributed to an empty list or to the filter")
 
 
 def check_the_flag_path_records_without_depending_on_the_settings_store():

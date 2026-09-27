@@ -165,6 +165,11 @@ class MainViewModel(
 
     // ---------- Service events ----------
     init {
+        // Seven releases of fixes were reasoned about a path that never ran, and every one of them
+        // changed something downstream of here. These two lines are the only evidence that would
+        // have shown it: if the start line is missing, the ViewModel never built the collectors and
+        // nothing below them is worth reading.
+        LogUtil.i(AppConfig.TAG, "flag init: collectors starting")
         collectServerCountries()
         collectServerFlags()
         collectServiceEvents()
@@ -183,6 +188,7 @@ class MainViewModel(
     private fun collectServerFlags() {
         viewModelScope.launch {
             uiState.map { it.selectedGroupId }.distinctUntilChanged().collectLatest { groupId ->
+                LogUtil.i(AppConfig.TAG, "flag init: verdict walk on group len=${groupId.length}")
                 // Only the row list drives this collector. The refresh counter used to be a second
                 // combine input, which meant every tap published a new value and collectLatest
                 // cancelled the pass that was already running: each click restarted the walk from
@@ -195,6 +201,8 @@ class MainViewModel(
                             ?.let { row.guid to it }
                     }.take(128)
                 }.distinctUntilChanged().collectLatest { targets ->
+                    LogUtil.i(AppConfig.TAG, "flag init: verdict targets=" + targets.size +
+                        " rows=" + mutableServerGroupState(groupId).value.rows.size)
                     // The pass has to survive its own publishes. collectLatest tears down the block
                     // on the next emission, and publishing a verdict edits the row list, which is
                     // what this flow is built from: the first row answered, its own answer changed
@@ -256,6 +264,7 @@ class MainViewModel(
                     publish = { guid, address, verdict ->
                         publishVerdict(groupId, guid, address, verdict.status, verdict.countryCode)
                     },
+                    onWalk = walkLog("refresh-verdict"),
                 )
                 // The fallback providers only run where the verdict did not name a country, and
                 // they never overwrite a country the verdict already reported.
@@ -266,6 +275,7 @@ class MainViewModel(
                     publish = { guid, address, country ->
                         publishCountry(groupId, guid, address, country.value)
                     },
+                    onWalk = walkLog("refresh-country"),
                 )
             } finally {
                 flagRefreshRunning.value = false
@@ -279,12 +289,15 @@ class MainViewModel(
     private fun collectServerCountries() {
         viewModelScope.launch {
             uiState.map { it.selectedGroupId }.distinctUntilChanged().collectLatest { groupId ->
+                LogUtil.i(AppConfig.TAG, "flag init: country walk on group len=${groupId.length}")
                 serverGroupState(groupId).map { state ->
                     state.rows.mapNotNull { row ->
                         row.profile.server?.takeIf { !row.profile.configType.isComplexType() }
                             ?.let { row.guid to it }
                     }.take(128)
                 }.distinctUntilChanged().collectLatest { targets ->
+                    LogUtil.i(AppConfig.TAG, "flag init: country targets=" + targets.size +
+                        " rows=" + mutableServerGroupState(groupId).value.rows.size)
                     // Same cancellation trap as the verdict walk, and the same answer: the batch
                     // runs in a job this collector does not own. It was a plain `for` as well, so a
                     // full page of eight addresses paid the pacing gap eight times over and the last
