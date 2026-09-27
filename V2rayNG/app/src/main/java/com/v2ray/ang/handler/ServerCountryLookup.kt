@@ -1,5 +1,7 @@
 package com.v2ray.ang.handler
 
+import com.v2ray.ang.ui.main.FLAG_LOOKUP_CONCURRENCY
+
 import com.google.gson.JsonParser
 import com.v2ray.ang.AppConfig
 import java.io.Closeable
@@ -68,7 +70,14 @@ internal class ServerCountryLookup(
     // Android's platform DNS can ignore interruption. Bound its workers and queue, never spawn
     // a replacement thread per timeout. close() cancels pending work when the ViewModel ends.
     private val dnsExecutorHolder = lazy {
-        ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, ArrayBlockingQueue(1)) { task ->
+        // Sized to the batch the walk is allowed to run, not to one. A single worker with a
+        // queue of one meant the walk submitted eight lookups at once and the executor rejected
+        // the six it had no room for: they came back as a resolved address of null, which is
+        // indistinguishable from a host that does not resolve, and both read as "no flag".
+        // Bounded so a burst still cannot spawn a thread per lookup, and so a stalled resolver
+        // cannot grow this without limit -- the walk is capped, so this is that cap plus slack.
+        val workers = FLAG_LOOKUP_CONCURRENCY
+        ThreadPoolExecutor(workers, workers, 0L, TimeUnit.SECONDS, ArrayBlockingQueue(workers)) { task ->
             Thread(task, "NiNG-country-dns").apply { isDaemon = true }
         }
     }

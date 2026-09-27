@@ -144,6 +144,9 @@ class MainViewModel(
         // store, and calling it from inside the lookup made every unit test fail on
         // MMKV.initialize() instead of running.
         onOutcome = { outcome ->
+            // DIAGNOSTIC: the outcome is reported without the address, because the address is
+            // the credential half of the endpoint. The length and shape are enough to tell a
+            // rejected hostname from a resolved one, and enough to see which rows never arrive.
             LogUtil.w(
                 AppConfig.TAG,
                 "country lookup ${if (outcome.hit) "hit" else "miss"} " +

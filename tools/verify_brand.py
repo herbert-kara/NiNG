@@ -401,9 +401,20 @@ def check_the_sources_have_no_defect_a_compiler_would_catch():
                 i += 1
                 continue
             if c == "'":
-                i += 1
-                while i < n and text[i] != "'":
-                    i += 2 if text[i] == "\\" else 1
+                # A Kotlin char literal is exactly one character, optionally escaped. A second
+                # character before the closing quote means this is prose -- an apostrophe in a
+                # comment or a name -- and skipping to the next apostrophe would swallow every
+                # bracket in between, reporting a balanced file as unclosed. Apostrophes in
+                # comments have cost this pass three false failures, each one a file that was
+                # correct and had to be re-read from scratch.
+                j = i + 1
+                if j < n and text[j] == "\\":
+                    j += 2
+                else:
+                    j += 1
+                if j < n and text[j] == "'":
+                    i = j + 1
+                    continue
                 i += 1
                 continue
             if c in depth:
