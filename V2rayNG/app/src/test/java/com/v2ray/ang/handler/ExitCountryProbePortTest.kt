@@ -87,7 +87,7 @@ class ExitCountryProbePortTest {
     @Test
     fun `the probe logs no address, port, name or answer`() {
         val text = probe.readText()
-        for secretPart in listOf("profile.server", "profile.serverPort", "profile.remark", "guid") {
+        for (secretPart in listOf("profile.server", "profile.serverPort", "profile.remark", "guid")) {
             // guid is the handle the profile is stored under and is not a credential, but it is
             // not needed for a diagnosis either, so it stays out of the log.
             val inLog = text.lines().any { line ->

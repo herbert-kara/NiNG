@@ -29,6 +29,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_every_for_loop_written_the_way_this_compiler_accepts()
     check_no_test_file_left_out_of_a_commit()
     check_a_measured_delay_resolves_the_flags()
     check_the_bottom_bar_is_the_original_one()
@@ -141,6 +142,32 @@ def check_no_test_file_left_out_of_a_commit():
         "Kotlin files are changed but not committed: " + "; ".join(dirty[:6])
         + ". The runner builds what is pushed, not what is on this disk, so a fix left here "
         "compiles as if it did not exist. Commit the file or revert it before building.")
+
+
+def check_every_for_loop_written_the_way_this_compiler_accepts():
+    """A for loop without parentheses does not compile under the K2 front end on this branch.
+
+    All sixty other loops in the project write for (x in y). The one that did not failed three
+    consecutive native builds with an error that names neither the loop nor the variable --
+    "Method 'iterator()' is ambiguous" and "Expecting '(' to open a loop range" -- because the
+    parser gave up before it ever reached either name. Renaming the variable changed nothing,
+    which is what finally showed the name was never the subject.
+
+    So the shape is checked, not the meaning: a loop written the one way this tree does not
+    compile is a build spent, and the message it produces does not point at what to change.
+    """
+    import re as _re
+    bad = []
+    for src in (APP / "src").rglob("*.kt"):
+        for n, line in enumerate(src.read_text("utf-8", errors="replace").splitlines(), 1):
+            if _re.match(r"^\s*for\s+[A-Za-z_]\w*\s+in\b", line):
+                bad.append(src.name + ":" + str(n))
+    assert not bad, (
+        "for loops written without parentheses: " + "; ".join(bad[:5])
+        + ". The K2 front end used by this build reads for (x in y) only, and the error it "
+        "reports for the other form points at iterator() rather than at the loop, so the "
+        "message does not name the thing to change. Every other loop in this tree has "
+        "parentheses; write it the same way.")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():
