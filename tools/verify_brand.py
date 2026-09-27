@@ -920,7 +920,7 @@ def check_a_bounded_read_bounds_instead_of_judging_the_size():
         "hundred, so a cap below 8 KB is inside the range of a legitimate answer and would cut "
         "real data to protect memory that a few hundred bytes do not threaten")
     test = Path("C:/Users/nima/PattNG/V2rayNG/app/src/test/java/com/v2ray/ang/handler/CountryBodyReadTest.kt")
-    assert test.exists() and "requestSatisfied" in test.read_text("utf-8"), (
+    assert test.exists() and "request(16_385)" in test.read_text("utf-8"), (
         "nothing pins the difference between the two calls, so read() can be swapped back for "
         "request() by a change that looks like a simplification")
 
