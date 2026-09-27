@@ -137,7 +137,7 @@ class MainViewModel(
         // reads the log level from the settings store, and calling it from inside the lookup made
         // every unit test fail on MMKV.initialize() instead of running.
         onOutcome = { outcome ->
-            LogUtil.i(
+            LogUtil.w(
                 AppConfig.TAG,
                 "country lookup ${if (outcome.hit) "hit" else "miss"} " +
                     "route=${if (outcome.viaTunnel) "tunnel" else "direct"} " +

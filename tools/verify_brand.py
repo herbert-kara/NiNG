@@ -953,15 +953,32 @@ def check_flag_diagnostics_use_a_level_that_survives_the_default():
     # Log.VERBOSE 2, DEBUG 3, INFO 4, WARN 5, ERROR 6, ASSERT 7
     floor = {"VERBOSE": 2, "DEBUG": 3, "INFO": 4, "WARN": 5, "ERROR": 6, "ASSERT": 7}[default]
     vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
-    for line in ("flag init: collectors starting", "flag init: country walk", "flag walk"):
-        at = vm.index(line)
+    # Every diagnostic on the flag path, found by message rather than by a sampled list, so a new
+    # one cannot bypass the check by being unnamed here.
+    # Count the call sites by their message, not by scanning forward from the call: the messages
+    # are built with string interpolation, so the text after LogUtil.w( is not the text in the log.
+    found = 0
+    for message in ("flag init: collectors starting", "flag init: verdict walk",
+                    "flag init: country walk", "verdict targets=", "country targets=",
+                    "flag walk $kind", "country lookup ${"):
+        at = vm.index(message)
         call = vm[:at].rsplit("LogUtil.", 1)[1][0]
         level = {"v": 2, "d": 3, "i": 4, "w": 5, "e": 6}[call]
         assert level >= floor, (
-            "the diagnostic \"" + line + "\" is logged at " + call + " but the default level is \""
-            + default + "\", so a stock install discards it and the line can never be observed. A "
-            "diagnostic nobody can see is the failure mode this guard exists to prevent: an empty "
-            "logcat read as untested code.")
+            "the diagnostic \"" + message + "\" is logged at " + call + " but the default level "
+            "is \"" + default + "\", so a stock install discards it and the line can never be "
+            "observed. A diagnostic nobody can see is the failure mode this guard exists to "
+            "prevent: an empty logcat read as untested code.")
+        found += 1
+    assert found == 7, (
+        "found " + str(found) + " flag diagnostics, expected 7. Each one is checked against the "
+        "level a stock install keeps, so a name added to this list is checked without being "
+        "written down twice, and a line added to the code without being added here is not "
+        "checked at all -- which is how onOutcome was logged at INFO for eight releases.")
+    assert found >= 7, (
+        "only " + str(found) + " flag diagnostics were found, and there are seven: the collector "
+        "start, the two walk entries, the two target counts, the two walk records. A guard that "
+        "counts its own samples instead of the real set will be satisfied by a partial file.")
 
 
 def check_the_flag_path_says_where_it_stops():
