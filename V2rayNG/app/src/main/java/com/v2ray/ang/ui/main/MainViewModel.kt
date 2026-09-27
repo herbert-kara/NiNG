@@ -150,7 +150,7 @@ class MainViewModel(
 
     /** The one-line record of a walk: how many rows were asked, and whether it finished. */
     private fun walkLog(kind: String) = { started: Boolean, targets: Int, force: Boolean ->
-        LogUtil.i(
+        LogUtil.w(
             AppConfig.TAG,
             "flag walk $kind ${if (started) "start" else "done"} targets=$targets force=$force"
         )
@@ -169,7 +169,7 @@ class MainViewModel(
         // changed something downstream of here. These two lines are the only evidence that would
         // have shown it: if the start line is missing, the ViewModel never built the collectors and
         // nothing below them is worth reading.
-        LogUtil.i(AppConfig.TAG, "flag init: collectors starting")
+        LogUtil.w(AppConfig.TAG, "flag init: collectors starting")
         collectServerCountries()
         collectServerFlags()
         collectServiceEvents()
@@ -188,7 +188,7 @@ class MainViewModel(
     private fun collectServerFlags() {
         viewModelScope.launch {
             uiState.map { it.selectedGroupId }.distinctUntilChanged().collectLatest { groupId ->
-                LogUtil.i(AppConfig.TAG, "flag init: verdict walk on group len=${groupId.length}")
+                LogUtil.w(AppConfig.TAG, "flag init: verdict walk on group len=${groupId.length}")
                 // Only the row list drives this collector. The refresh counter used to be a second
                 // combine input, which meant every tap published a new value and collectLatest
                 // cancelled the pass that was already running: each click restarted the walk from
@@ -201,7 +201,7 @@ class MainViewModel(
                             ?.let { row.guid to it }
                     }.take(128)
                 }.distinctUntilChanged().collectLatest { targets ->
-                    LogUtil.i(AppConfig.TAG, "flag init: verdict targets=" + targets.size +
+                    LogUtil.w(AppConfig.TAG, "flag init: verdict targets=" + targets.size +
                         " rows=" + mutableServerGroupState(groupId).value.rows.size)
                     // The pass has to survive its own publishes. collectLatest tears down the block
                     // on the next emission, and publishing a verdict edits the row list, which is
@@ -289,14 +289,14 @@ class MainViewModel(
     private fun collectServerCountries() {
         viewModelScope.launch {
             uiState.map { it.selectedGroupId }.distinctUntilChanged().collectLatest { groupId ->
-                LogUtil.i(AppConfig.TAG, "flag init: country walk on group len=${groupId.length}")
+                LogUtil.w(AppConfig.TAG, "flag init: country walk on group len=${groupId.length}")
                 serverGroupState(groupId).map { state ->
                     state.rows.mapNotNull { row ->
                         row.profile.server?.takeIf { !row.profile.configType.isComplexType() }
                             ?.let { row.guid to it }
                     }.take(128)
                 }.distinctUntilChanged().collectLatest { targets ->
-                    LogUtil.i(AppConfig.TAG, "flag init: country targets=" + targets.size +
+                    LogUtil.w(AppConfig.TAG, "flag init: country targets=" + targets.size +
                         " rows=" + mutableServerGroupState(groupId).value.rows.size)
                     // Same cancellation trap as the verdict walk, and the same answer: the batch
                     // runs in a job this collector does not own. It was a plain `for` as well, so a

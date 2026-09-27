@@ -41,6 +41,7 @@ def verify():
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
     check_the_flag_lookup_asks_through_the_tunnel()
+    check_flag_diagnostics_use_a_level_that_survives_the_default()
     check_the_flag_path_says_where_it_stops()
     check_the_flag_path_records_without_depending_on_the_settings_store()
     check_the_country_lookup_client_is_a_valid_read_write_property()
@@ -930,6 +931,37 @@ def check_the_country_lookup_client_is_a_valid_read_write_property():
             assert ".build()" in line, (
                 "the client is assigned " + line.strip() + " without building it, so the request "
                 "path holds an OkHttpClient.Builder where it needs a client")
+
+
+def check_flag_diagnostics_use_a_level_that_survives_the_default():
+    """LogUtil's default level is "warning", so LogUtil.i is dropped before it reaches logcat.
+
+    Eight releases carried diagnostics written with LogUtil.i. The strings were in the APK, the app
+    was alive, and logcat returned nothing at all -- and that empty log was read as "the code never
+    ran" every single time, which sent each fix further down a pipeline that had not been disproven.
+    The one fact that would have settled it, that the default level discards INFO, is a property of
+    the logging utility rather than of the flag code, so nothing about the flag path revealed it.
+
+    The rule is now checked against the level LogUtil actually defaults to, so a diagnostic cannot
+    be added back at a level that a default install will throw away.
+    """
+    log = (APP / "src/main/java/com/v2ray/ang/util/LogUtil.kt").read_text("utf-8")
+    m = re.search(r'DEFAULT_LEVEL\s*=\s*"(\w+)"', log)
+    assert m, "the default log level could not be read, so this guard cannot do its job"
+
+    default = m.group(1).upper().replace("WARNING", "WARN")
+    # Log.VERBOSE 2, DEBUG 3, INFO 4, WARN 5, ERROR 6, ASSERT 7
+    floor = {"VERBOSE": 2, "DEBUG": 3, "INFO": 4, "WARN": 5, "ERROR": 6, "ASSERT": 7}[default]
+    vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
+    for line in ("flag init: collectors starting", "flag init: country walk", "flag walk"):
+        at = vm.index(line)
+        call = vm[:at].rsplit("LogUtil.", 1)[1][0]
+        level = {"v": 2, "d": 3, "i": 4, "w": 5, "e": 6}[call]
+        assert level >= floor, (
+            "the diagnostic \"" + line + "\" is logged at " + call + " but the default level is \""
+            + default + "\", so a stock install discards it and the line can never be observed. A "
+            "diagnostic nobody can see is the failure mode this guard exists to prevent: an empty "
+            "logcat read as untested code.")
 
 
 def check_the_flag_path_says_where_it_stops():
