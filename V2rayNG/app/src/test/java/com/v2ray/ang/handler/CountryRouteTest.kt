@@ -77,13 +77,16 @@ class CountryRouteTest {
     fun `the lookup carries no tunnel seam to reintroduce the dependency`() {
         val constructor = ServerCountryLookup::class.java.constructors
             .maxByOrNull { it.parameterCount }!!
-        val parameters = constructor.parameters.map { it.name }
-        for forbidden in listOf("tunnelPort", "tunnelUser", "tunnelPassword", "proxy", "tunnel") {
+        val parameters: List<String> = constructor.parameters.map { it.name }
+        val forbidden: List<String> =
+            listOf("tunnelPort", "tunnelUser", "tunnelPassword", "proxy", "tunnel")
+        for (name in forbidden) {
+            val taken = parameters.filter { it.contains(name, ignoreCase = true) }
             assertTrue(
-                "the lookup must not take a " + forbidden + ": it made every lookup fail while the "
+                "the lookup must not take a " + name + ": it made every lookup fail while the "
                     + "service was not listening, which is exactly when a flag is wanted. "
                     + "Current parameters: " + parameters,
-                parameters.none { it.contains(forbidden, ignoreCase = true) },
+                taken.isEmpty(),
             )
         }
     }
