@@ -40,6 +40,7 @@ def verify():
     check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
+    check_a_test_address_would_survive_the_public_ip_filter()
     check_a_prose_apostrophe_does_not_swallow_kotlin_in_the_bracket_scan()
     check_a_row_flag_does_not_depend_on_a_running_service()
     check_a_compiler_diagnostic_bait_would_be_caught_without_a_build()
@@ -886,6 +887,60 @@ def check_the_country_lookup_client_is_a_valid_read_write_property():
             assert ".build()" in line, (
                 "the client is assigned " + line.strip() + " without building it, so the request "
                 "path holds an OkHttpClient.Builder where it needs a client")
+
+
+def check_a_test_address_would_survive_the_public_ip_filter():
+    """A test address the production filter rejects makes the test fail for the wrong reason.
+
+    Two of the new route tests used 203.0.113.0, which is TEST-NET-3. isPublicIp rejects
+    documentation ranges on purpose -- that is the filter that keeps a fake address off a
+    provider -- so the lookup returned null before the fetch seam was ever called. The test then
+    reported a routing failure, and the failure was in the fixture.
+
+    This has now cost the same mistake twice, so it is checked rather than remembered: every
+    literal address used as a resolved-IP fixture in the flag tests has to pass the same filter
+    the lookup applies, computed here from the ranges the filter actually bans.
+    """
+    lookup = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
+    banned_ranges = [
+        ("0.0.0.0/8", lambda b: b[0] == 0),
+        ("10/8", lambda b: b[0] == 10),
+        ("127/8", lambda b: b[0] == 127),
+        ("224/4", lambda b: b[0] >= 224),
+        ("100.64/10", lambda b: b[0] == 100 and 64 <= b[1] <= 127),
+        ("169.254/16", lambda b: b[0] == 169 and b[1] == 254),
+        ("172.16/12", lambda b: b[0] == 172 and 16 <= b[1] <= 31),
+        ("192.168/16", lambda b: b[0] == 192 and b[1] == 168),
+        ("192.0.0/24", lambda b: b[0] == 192 and b[1] == 0 and b[2] == 0),
+        ("192.0.2/24", lambda b: b[0] == 192 and b[1] == 0 and b[2] == 2),
+        ("192.88.99/24", lambda b: b[0] == 192 and b[1] == 88 and b[2] == 99),
+        ("198.18/15", lambda b: b[0] == 198 and 18 <= b[1] <= 19),
+        ("198.51.100/24", lambda b: b[0] == 198 and b[1] == 51 and b[2] == 100),
+        ("203.0.113/24", lambda b: b[0] == 203 and b[1] == 0 and b[2] == 113),
+    ]
+    # The filter has to actually still ban these, or this guard is checking nothing.
+    for name, banned in banned_ranges:
+        assert name.split("/")[0].split(".")[0] in lookup, (
+            "the public-IP filter no longer mentions " + name + ", so this guard is no longer "
+            "derived from what the code does")
+    # A private address in a test is not a mistake: two of the existing tests use one on purpose,
+    # to prove isPublicIp rejects it. Only a private address in a test that expects a lookup to
+    # succeed is a bad fixture, so the check is scoped to the route tests, whose whole subject is
+    # that a row resolves.
+    for name in ("LookupConcurrencyTest.kt", "CountryRouteTest.kt"):
+        path = Path("C:/Users/nima/PattNG/V2rayNG/app/src/test/java/com/v2ray/ang/handler") / name
+        if not path.exists():
+            continue
+        text = path.read_text("utf-8")
+        for octets in re.findall(r'getByName\("(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"\)'
+, text):
+            b = [int(x) for x in octets.split(".")]
+            hit = [n for n, f in banned_ranges if f(b)]
+            assert not hit, (
+                name + " resolves a fixture to " + octets + ", which is " + hit[0] + " and is "
+                "rejected by isPublicIp before the fetch seam runs. The test then fails for a "
+                "reason that has nothing to do with what it is testing -- which is how a routing "
+                "regression gets blamed on the route.")
 
 
 def check_a_prose_apostrophe_does_not_swallow_kotlin_in_the_bracket_scan():

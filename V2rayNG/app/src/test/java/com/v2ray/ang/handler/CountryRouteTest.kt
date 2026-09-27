@@ -33,7 +33,7 @@ class CountryRouteTest {
     fun `a row resolves with no tunnel and no connection`() = runTest {
         val seen = mutableListOf<String>()
         val subject = lookup(
-            resolveDns = { listOf(InetAddress.getByName("203.0.113.0")) },
+            resolveDns = { listOf(InetAddress.getByName("5.180.82.45")) },
             fetch = { url -> seen.add(url); "DE" },
         )
         subject.use {
@@ -54,14 +54,14 @@ class CountryRouteTest {
     fun `the provider is asked about the address of the row`() = runTest {
         val asked = mutableListOf<String>()
         val subject = lookup(
-            resolveDns = { listOf(InetAddress.getByName("203.0.113.0")) },
+            resolveDns = { listOf(InetAddress.getByName("5.180.82.45")) },
             fetch = { url -> asked.add(url); "DE" },
         )
         subject.use { it.resolve("server.example") }
         assertEquals(1, asked.size)
         assertTrue(
             "the provider must be asked about the resolved address, not left to guess: " + asked[0],
-            asked[0].contains("203.0.113.0"),
+            asked[0].contains("5.180.82.45"),
         )
     }
 
