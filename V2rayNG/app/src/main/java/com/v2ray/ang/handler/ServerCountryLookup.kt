@@ -38,6 +38,9 @@ internal class ServerCountryLookup(
     private val fetch: (suspend (String) -> String?)? = null,
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
     private val cacheLimit: Int = 256,
+    private val tunnelPort: () -> Int? = { SettingsManager.getHttpPort() },
+    private val tunnelUser: () -> String? = { SettingsManager.getSocksUsername() },
+    private val tunnelPassword: () -> String? = { SettingsManager.getSocksPassword() },
 ) : Closeable {
     private data class Entry(val code: String?, val expires: Long)
     private val cache = linkedMapOf<String, Entry>()
@@ -68,8 +71,17 @@ internal class ServerCountryLookup(
      * flag, while the panel two inches above it showed DE. When no tunnel is running there is no
      * exit to describe, so it falls back to the direct path.
      */
+    /**
+     * Where the request goes when the tunnel is up.
+     *
+     * A seam like [resolveDns] and [fetch], and for the same reason: reading the app's HTTP port
+     * goes through MMKV, which throws before initialize() in a unit test, so the seven lookup tests
+     * could not construct the class at all once the route depended on it. Reading the port is the
+     * only Android-owned thing on this path, so it is the only thing injected -- the proxy it
+     * builds, the loopback address and the credentials all stay here.
+     */
     private fun tunnelProxy(): Proxy? {
-        val port = SettingsManager.getHttpPort()
+        val port = tunnelPort() ?: return null
         if (port == 0) return null
         return Proxy(Proxy.Type.HTTP, InetSocketAddress(AppConfig.LOOPBACK, port))
     }
@@ -100,8 +112,8 @@ internal class ServerCountryLookup(
         } else {
             newClientBuilder().proxy(proxy)
                 .proxyAuthenticator { _, response ->
-                    val user = SettingsManager.getSocksUsername()
-                    val pass = SettingsManager.getSocksPassword()
+                    val user = tunnelUser()
+                    val pass = tunnelPassword()
                     if (user.isNullOrBlank() || pass.isNullOrBlank()) null
                     else if (response.request.header("Proxy-Authorization") != null) null
                     else response.request.newBuilder()

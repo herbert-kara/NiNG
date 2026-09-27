@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / 'V2rayNG/app'
+TEST = ROOT / 'V2rayNG/app/src/test/java'
 
 def verify():
     gradle = (APP / 'build.gradle.kts').read_text(encoding='utf-8')
@@ -42,6 +43,7 @@ def verify():
     check_the_flag_lookup_asks_through_the_tunnel()
     check_the_flag_path_leaves_a_log()
     check_the_country_lookup_client_is_a_valid_read_write_property()
+    check_the_tunnel_route_is_injectable_and_testable()
     check_the_country_walk_has_a_reachable_provider()
     check_concurrent_lookups_of_one_address_share_a_round_trip()
     check_no_concurrency_test_freezes_the_clock_it_depends_on()
@@ -805,6 +807,47 @@ def check_the_country_walk_has_a_reachable_provider():
     assert "proxycheck.io" in flagged, "the verdict provider is gone, so the guard is stale"
 
 
+def check_the_tunnel_route_is_injectable_and_testable():
+    """The route that fixes the flag had no test, and the first version of it broke seven.
+
+    Reading the app's HTTP port goes through MMKV, which throws IllegalStateException before
+    initialize() in a unit test, so ServerCountryLookup could not be constructed at all: every
+    lookup test failed on the line before the one it was written to check. The fix is the same seam
+    resolveDns and fetch already use, and it covers the credentials too, which are also MMKV.
+
+    The assertions that matter are that the port is actually consulted, that the proxy is the
+    loopback port rather than a direct route, and that the provider is still asked about the row's
+    own address -- the tunnel is the route, not the question. Without that last one, a row's flag
+    would report the selected server's exit.
+    """
+    country = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
+    ctor = country[country.index("class ServerCountryLookup("):]
+    ctor = ctor[:ctor.index(") : Closeable")]
+    for seam in ("tunnelPort", "tunnelUser", "tunnelPassword"):
+        assert seam in ctor, (
+            seam + " is not a constructor seam, so reading it reaches MMKV and every lookup test "
+            "dies on MMKV.initialize() before it can assert anything")
+    # Nothing on the request path may read MMKV directly any more.
+    body = country[country.index("private fun tunnelProxy"):]
+    assert "SettingsManager.getHttpPort()" not in body, (
+        "the tunnel proxy reads the port from SettingsManager instead of the seam, so the route "
+        "reaches MMKV and the lookup tests cannot construct the class")
+    assert "SettingsManager.getSocksUsername()" not in body and "SettingsManager.getSocksPassword()" not in body, (
+        "the proxy authenticator reads the credentials from SettingsManager instead of the seams, "
+        "so the tunnel branch reaches MMKV even when the port does not")
+    tests = TEST / "com/v2ray/ang/handler/CountryTunnelRouteTest.kt"
+    assert tests.exists() and "class CountryTunnelRouteTest {" in tests.read_text("utf-8"), (
+        "no test class covers the tunnel route, so it can be renamed or deleted silently -- the "
+        "route is the whole fix and nothing else asserts it")
+    body = tests.read_text("utf-8")
+    for name, why in (
+        ("theTunnelPortIsConsulted", "nothing checks that the port is read at all"),
+        ("aTunnelOnALoopbackPortDoesNotChangeWhichAddressIsAskedAbout", "nothing checks that the route does not change the question"),
+        ("theRowFlagStillComesFromTheRowAndNotFromTheExit", "nothing checks that a row's flag is its own country"),
+    ):
+        assert name in body, why + " (" + name + ")"
+
+
 def check_the_country_lookup_client_is_a_valid_read_write_property():
     """A read-write property cannot delegate to a Lazy, and the failure is a compile error.
 
@@ -1103,7 +1146,12 @@ def check_a_rewritten_function_keeps_its_helpers_and_returns():
             defined |= set(re.findall(pat, src))
         # Only unqualified calls can be a missing local helper; a call after a dot is a method,
         # and "val x: Int get() = ..." is a property accessor rather than a call.
-        body_wo_accessors = re.sub(r"\bget\(\)", "get_", src)
+        # Comments come out first: a doc line that mentions initialize() or build() is prose about
+        # the Android or OkHttp call being described, and reading it as a call to a local that does
+        # not exist is a false positive that hides the real one.
+        body_wo_accessors = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+        body_wo_accessors = re.sub(r"//[^\n]*", " ", body_wo_accessors)
+        body_wo_accessors = re.sub(r"\bget\(\)", "get_", body_wo_accessors)
         for called in re.findall(r"(?<![.\w])([a-zA-Z_]\w*)\(", body_wo_accessors):
             if called in _KEYWORDS or called in _IDIOMS:
                 continue
