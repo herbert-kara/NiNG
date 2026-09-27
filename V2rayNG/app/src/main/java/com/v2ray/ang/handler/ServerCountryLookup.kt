@@ -2,6 +2,7 @@ package com.v2ray.ang.handler
 
 import com.google.gson.JsonParser
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.util.LogUtil
 import java.io.Closeable
 import java.io.IOException
 import java.net.InetAddress
@@ -128,9 +129,11 @@ internal class ServerCountryLookup(
         cacheLock.withLock {
             cache[key]?.takeIf { nowMillis() < it.expires }?.let { return it.code }
         }
+        var resolvedIp: String? = null
         val result = try {
             // The literal is already known public here, or absent.
             val ip = literal?.hostAddress ?: resolvePublicIp(key)
+            resolvedIp = ip
             if (ip == null) {
                 null
             } else {
@@ -150,6 +153,18 @@ internal class ServerCountryLookup(
             cache[key] = Entry(result, nowMillis() + if (result == null) 300_000 else 86_400_000)
             while (cache.size > cacheLimit.coerceAtLeast(1)) cache.remove(cache.keys.first())
         }
+        // The row flag has been silently absent across several releases, and this path had no
+        // logging at all, so a lookup that never ran and one that ran and got nothing were the
+        // same thing from adb. No hostname is recorded: the root guide forbids logging hosts and
+        // URLs, and a config host can be sensitive. The outcome, the route and whether DNS and the
+        // provider each produced an address are enough to tell a blocked provider from a row that
+        // was never asked, which is the pair of facts that was missing.
+        LogUtil.i(
+            AppConfig.TAG,
+            "country lookup ${if (result != null) "hit" else "miss"} " +
+                "route=${if (routedThroughTunnel) "tunnel" else "direct"} " +
+                "keyLen=${key.length} ip=${resolvedIp != null} literal=${literal != null}"
+        )
         return result
     }
 

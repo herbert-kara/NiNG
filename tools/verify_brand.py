@@ -40,6 +40,7 @@ def verify():
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
     check_the_flag_lookup_asks_through_the_tunnel()
+    check_the_flag_path_leaves_a_log()
     check_the_country_walk_has_a_reachable_provider()
     check_concurrent_lookups_of_one_address_share_a_round_trip()
     check_no_concurrency_test_freezes_the_clock_it_depends_on()
@@ -787,6 +788,48 @@ def check_the_country_walk_has_a_reachable_provider():
                 "cleartext, so it is rejected before the request is sent")
     flagged = (APP / "src/main/java/com/v2ray/ang/handler/ServerFlaggedLookup.kt").read_text("utf-8")
     assert "proxycheck.io" in flagged, "the verdict provider is gone, so the guard is stale"
+
+
+def check_the_flag_path_leaves_a_log():
+    """A missing flag and a lookup that never ran looked identical from adb.
+
+    With the device finally attached, adb logcat over the whole flag path returned nothing at all:
+    no walk, no lookup, no outcome. Every fix before this one was therefore reasoning about a
+    silent path, and the provider probing that redirected two releases happened to be right while
+    the actual cause stayed invisible.
+
+    The path now records the walk's size and the lookup's outcome, route, and whether DNS and the
+    provider each produced an address. No hostname, no address, no URL: the root guide forbids
+    logging those, and a config host can be sensitive, so what is recorded is the shape.
+    """
+    batch = (APP / "src/main/java/com/v2ray/ang/ui/main/FlagBatch.kt").read_text("utf-8")
+    lookup = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
+    assert "flag walk start" in batch and "flag walk done" in batch, (
+        "the walk logs neither its start nor its end, so an empty page and a page whose lookups all "
+        "returned null are the same silence in adb")
+    assert batch.count("targets=${targets.size}") >= 2, (
+        "the walk logs a target count on only one of its two lines, so an empty page and a full "
+        "page are told apart on one path and not the other")
+    assert "if (targets.isEmpty()) return" in batch, (
+        "the walk no longer short-circuits an empty target list, so whatever runs before the guard "
+        "now pays for a pass that does no work")
+    assert "country lookup" in lookup, (
+        "the country lookup logs nothing, so a provider that refuses every request is "
+        "indistinguishable from a row that was never asked")
+    assert "route=" in lookup, (
+        "the country lookup does not log which route it used, so a tunnel routing that never took "
+        "effect is indistinguishable from a provider that is simply blocked")
+    # The logged line must not carry the address: hosts and URLs are forbidden by the root guide.
+    line = lookup[lookup.index('"country lookup '):]
+    line = line[:line.index('"\n        )') if '"\n        )' in line else line.index(')"')]
+    # A boolean next to a name is fine (ip=${resolvedIp != null}); the address itself is not.
+    for leak in ("$key", "key=$key", "$resolvedIp", "$ip", "http://", "https://"):
+        assert leak not in line, (
+            "the country lookup logs " + leak + ", which is the address itself; the guide forbids "
+            "logging hosts and URLs, and the shape is enough to diagnose the failure")
+    assert "keyLen=" in line, (
+        "the log dropped the key length, so a canonicalisation failure and a blocked provider look "
+        "the same")
 
 
 def check_the_flag_lookup_asks_through_the_tunnel():

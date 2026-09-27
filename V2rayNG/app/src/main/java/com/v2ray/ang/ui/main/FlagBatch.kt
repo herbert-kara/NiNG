@@ -1,5 +1,7 @@
 package com.v2ray.ang.ui.main
 
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -27,6 +29,10 @@ internal suspend fun <K, V> runFlagBatch(
     lookup: suspend (address: String, force: Boolean) -> V?,
     publish: suspend (key: K, address: String, verdict: V) -> Unit,
 ) {
+    // A walk that was never started and a walk whose lookups all came back empty were both
+    // silent, which is why a missing flag could not be told apart from a missing run. The count
+    // is logged, never an address: the address is already being logged in shape by the lookup.
+    LogUtil.i(AppConfig.TAG, "flag walk start targets=${targets.size} force=$force")
     if (targets.isEmpty()) return
     val gate = Semaphore(concurrency.coerceAtLeast(1))
     coroutineScope {
@@ -42,6 +48,7 @@ internal suspend fun <K, V> runFlagBatch(
             }
         }.awaitAll()
     }
+    LogUtil.i(AppConfig.TAG, "flag walk done targets=${targets.size} force=$force")
 }
 
 /** Enough lookups in flight to finish a page in seconds, few enough to stay polite. */
