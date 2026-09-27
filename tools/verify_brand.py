@@ -1,4 +1,5 @@
 """Static NiNG identity checks; Android compilation remains in CI."""
+import subprocess
 from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
@@ -28,6 +29,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_no_test_file_left_out_of_a_commit()
     check_a_measured_delay_resolves_the_flags()
     check_the_bottom_bar_is_the_original_one()
     check_a_latency_test_also_resolves_the_flags()
@@ -112,6 +114,33 @@ def check_a_measured_delay_resolves_the_flags():
     assert flush, 'the delay-result flush is gone'
     assert 'resolveLookupsFor(' in flush.group(1), (
         'a measured delay no longer triggers the lookup, so the row keeps "unchecked"')
+
+
+def check_no_test_file_left_out_of_a_commit():
+    """A fix that is not committed builds nothing: the remote compiles the committed file.
+
+    This branch lost two native builds to it. The .height import fix and the probe test rename
+    were both written, both correct on disk, and both absent from the branch the runner checked --
+    because the commit named the files it meant to add, and the test was not in that list. The
+    local file was the one thing that looked right, and the build was the one thing that did not.
+
+    So this checks the worktree against HEAD for Kotlin files under change, and refuses to let a
+    build run on a tree where one is sitting uncommitted. Git status is the whole check; the
+    message says which file, because "it works here" and "it works there" are different claims
+    and only one of them is about the branch.
+    """
+    root = APP.parent.parent  # the repository root, not the app module
+    out = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--", "*.kt"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        assert False, ("could not read git status: " + out.stderr.strip()[:120]
+                       + ". Without it a local fix can silently stay local while the runner "
+                       "compiles the old file, which is how two builds were spent on this branch.")
+    dirty = [l[3:].strip().strip('"') for l in out.stdout.splitlines() if l.strip()]
+    assert not dirty, (
+        "Kotlin files are changed but not committed: " + "; ".join(dirty[:6])
+        + ". The runner builds what is pushed, not what is on this disk, so a fix left here "
+        "compiles as if it did not exist. Commit the file or revert it before building.")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():
