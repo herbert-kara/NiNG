@@ -932,6 +932,18 @@ def check_a_test_address_would_survive_the_public_ip_filter():
         if not path.exists():
             continue
         text = path.read_text("utf-8")
+        # The same trap one layer earlier: a reserved TLD is rejected by canonicalTarget
+        # before the DNS seam runs, so the fixture looked fine and the test still failed for
+        # a reason that had nothing to do with what it was testing.
+        blocked = set(re.findall(r'"([^"]+)"', re.search(
+            r"labels\.last\(\) in setOf\(([^)]*)\)", lookup).group(1)))
+        assert blocked, "the reserved-TLD list could not be read, so this check does nothing"
+        for host in re.findall(r'\.resolve\("([a-z0-9.-]+)"\)', text):
+            tld = host.rstrip(".").split(".")[-1]
+            assert tld not in blocked, (
+                name + " resolves " + host + ", whose TLD ." + tld + " is on the reserved "
+                "list, so canonicalTarget returns null before the DNS seam runs. The fixture "
+                "is not the problem; the test cannot reach what it is testing.")
         for octets in re.findall(r'getByName\("(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"\)'
 , text):
             b = [int(x) for x in octets.split(".")]

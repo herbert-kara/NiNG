@@ -37,7 +37,7 @@ class CountryRouteTest {
             fetch = { url -> seen.add(url); "DE" },
         )
         subject.use {
-            assertEquals("DE", it.resolve("server.example"))
+            assertEquals("DE", it.resolve("node.example.com"))
         }
         assertEquals(1, seen.size)
     }
@@ -57,7 +57,7 @@ class CountryRouteTest {
             resolveDns = { listOf(InetAddress.getByName("5.180.82.45")) },
             fetch = { url -> asked.add(url); "DE" },
         )
-        subject.use { it.resolve("server.example") }
+        subject.use { it.resolve("node.example.com") }
         assertEquals(1, asked.size)
         assertTrue(
             "the provider must be asked about the resolved address, not left to guess: " + asked[0],
