@@ -30,6 +30,7 @@ def verify():
     check_refresh_button_clears_the_connect_fab()
     check_bottom_bar_text_stays_inside_the_bar()
     check_refresh_button_actually_refreshes()
+    check_the_flag_path_is_covered_by_a_real_test()
     check_release_workflow()
     print('NiNG app ID, internal namespace, updater, locale names, drawer and adaptive icons: OK')
     print('No user-visible PattNG string and every fork feature file is present: OK')
@@ -155,6 +156,41 @@ def check_refresh_button_actually_refreshes():
         'the refresh button gives no feedback while a pass is running')
     test = (ROOT / 'V2rayNG/app/src/test/java/com/v2ray/ang/ui/main/FlagRefreshBatchTest.kt')
     assert test.exists(), 'the regression test for a swallowed tap is gone'
+    # The in-flight flag guards the button, so a cancelled pass that never clears it leaves the
+    # button permanently dead. It has to be released on every exit path, including cancellation.
+    assert re.search(r'try\s*\{(.*?)\}\s*finally\s*\{\s*flagRefreshRunning\.value = false', view_model, re.S), (
+        'the in-flight flag is not cleared in a finally block; a cancelled pass leaves the '
+        'refresh button permanently unresponsive')
+
+def check_the_flag_path_is_covered_by_a_real_test():
+    """Four releases shipped a green build with no flag on screen, so the tests have to be real.
+
+    The regressions that reached the device were all invisible to the suite: tests written
+    against a hand-made fake of the lookup instead of the parser, and a fixed row height that
+    only overflows when the text is actually laid out. A test that only exercises a fake, or that
+    never renders, cannot catch either.
+    """
+    tests = ROOT / 'V2rayNG/app/src/test/java/com/v2ray/ang'
+    parser_tests = [
+        tests / 'ui/main/RealPayloadProbe.kt',
+        tests / 'ui/main/RealConfigUriProbe.kt',
+        tests / 'handler/ServerFlaggedLookupTest.kt',
+        tests / 'ui/main/MainCountryRowsTest.kt',
+    ]
+    for t in parser_tests:
+        assert t.exists(), f'the flag regression test {t.name} is gone'
+    payload = (tests / 'ui/main/RealPayloadProbe.kt').read_text('utf-8')
+    assert 'ServerFlaggedLookup.parseVerdict' in payload, (
+        'the provider payload is no longer parsed by the real parser in a test')
+    assert 'countryCode' in payload, (
+        'no test asserts the country reaches the row, so an empty flag stays invisible')
+    # A fake proves the test's own expectations, not the app's behaviour. The real parser and the
+    # real row update have to be the thing under test.
+    for t in parser_tests:
+        body = t.read_text('utf-8')
+        assert 'FakeFlagService' not in body, (
+            f'{t.name} tests a hand-made fake instead of the real lookup, so it cannot fail when '
+            'the real one does')
 
 def check_release_workflow():
     """Catch the release-pipeline mistakes that compile fine and fail only at run time.
