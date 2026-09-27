@@ -1,11 +1,14 @@
 package com.v2ray.ang.core
 
 import com.v2ray.ang.enums.AetherProtocol
+import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -13,8 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import java.io.File
-import java.util.concurrent.TimeUnit
+
 
 class AetherIdentityManagerTest {
 
@@ -172,22 +174,27 @@ class AetherIdentityManagerTest {
     fun aCancellationLandingRightAfterTheKeysWereSetAsideStillRestoresThem() = runBlocking {
         val dir = workDir(AetherIdentityManager.MASQUE_FILE to keyFile("old"))
         val previous = File(folder.root, "aether-previous")
-        val job = launch {
-            AetherIdentityManager.replaceIdentities(dir, previous) { true }
-        }
-        // The backup directory is what marks the keys as set aside, so waiting for it is the one
-        // step this test can observe without racing the coroutine. The window between that moment
-        // and the provisioning step is genuinely a scheduling race on a real IO dispatcher, so
-        // whether provisioning was entered is not asserted here: the guarantee under test is the
-        // one the caller depends on, and both outcomes are covered by the assertions below.
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-        while (!previous.exists() && System.nanoTime() < deadline) Thread.sleep(1)
-        assertTrue(previous.exists())
-        job.cancel()
-        job.join()
+        val setAside = CompletableDeferred<Unit>()
 
-        // If provisioning had run to completion it would have consumed the backup and left an
-        // empty profile, so this single assertion covers that case as well.
+        val job = launch {
+            AetherIdentityManager.replaceIdentities(dir, previous) {
+                // Hold the renewal open from inside the provisioning step, so the backup is
+                // observed to exist and the cancellation is guaranteed to land while the keys
+                // are set aside. Returning immediately here would let the renewal finish and
+                // consume the backup before the cancellation, and the window this test names
+                // would never open at all.
+                setAside.complete(Unit)
+                awaitCancellation()
+            }
+        }
+
+        // Waiting for the provisioning step to be entered is the deterministic version of
+        // racing it: the step signals from inside, so there is no sleep-poll and no dependency
+        // on a single yield landing in the right place on a loaded runner.
+        withTimeout(10_000) { setAside.await() }
+        assertTrue("the keys were never set aside", previous.exists())
+        job.cancelAndJoin()
+
         assertEquals("old", AetherIdentityManager.status(dir, AetherProtocol.MASQUE).primary?.deviceId)
         assertFalse(previous.exists())
     }
