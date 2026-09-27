@@ -39,6 +39,7 @@ def verify():
     check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
     check_the_documented_colour_exceptions_hold()
     check_a_flag_walk_survives_its_own_publish()
+    check_the_country_walk_has_a_reachable_provider()
     check_concurrent_lookups_of_one_address_share_a_round_trip()
     check_no_concurrency_test_freezes_the_clock_it_depends_on()
     check_a_concurrency_test_can_reach_concurrency()
@@ -734,6 +735,33 @@ def check_concurrent_lookups_of_one_address_share_a_round_trip():
             name + ": fetchOnce() starts a detached coroutine again, which runTest cancels")
         assert "Deferred" not in code, (
             name + ": a shared Deferred is back; it needs a detached scope to start")
+
+def check_the_country_walk_has_a_reachable_provider():
+    """proxycheck.io answers in 0.3s from some networks and not at all from others.
+
+    Measured while fixing the missing flag: the verdict provider blackholes every request from one
+    egress (21s, zero bytes, connect never completes) while ipwho.is answers 5.180.82.45 in 0.3s.
+    The verdict walk and the country walk are separate jobs, so a stalled provider costs the
+    verdict, not the flag, but only as long as the country walk has a provider that answers and
+    only as long as the walks are genuinely independent. Both are structural, so both are checked.
+    """
+    country = (APP / "src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt").read_text("utf-8")
+    eps = re.search(r"COUNTRY_ENDPOINTS = listOf\(([^)]*)\)", country, re.S)
+    assert eps, "the country lookup has no provider list, so a flag depends on one host"
+    hosts = re.findall(r'"https://([^/"]+)/', eps.group(1))
+    assert len(hosts) >= 2, (
+        "the country lookup has one provider (" + str(hosts) + "); the first one blackholes whole "
+        "networks, so one host means the flag is gone whenever that host is unreachable")
+    # The verdict provider is allowed to be flaky, so the country walk must not be able to stall
+    # on it: its connect timeout has to be short enough that a dead provider still leaves a page.
+    m = re.search(r"connectTimeout\((\d+),\s*TimeUnit\.SECONDS?\)", country)
+    assert m, "the country lookup sets no connect timeout, so a blackholed host stalls the page"
+    assert int(m.group(1)) <= 5, (
+        "the country lookup waits " + m.group(1) + "s to connect; a blackholed host then costs "
+        "every row that much before the next provider is tried")
+    flagged = (APP / "src/main/java/com/v2ray/ang/handler/ServerFlaggedLookup.kt").read_text("utf-8")
+    assert "proxycheck.io" in flagged, "the verdict provider is gone, so the guard is stale"
+
 
 def check_a_flag_walk_survives_its_own_publish():
     """A walk that publishes into the state it derives its work from cancels itself.
