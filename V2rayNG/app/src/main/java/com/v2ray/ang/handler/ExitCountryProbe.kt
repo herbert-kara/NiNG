@@ -14,6 +14,7 @@ import okhttp3.Request
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.net.Socket
 import java.util.concurrent.TimeUnit
 
 /**
@@ -139,7 +140,12 @@ internal object ExitCountryProbe {
     }
 
     private fun canConnect(port: Int): Boolean = try {
-        java.net.Socket().use { it.connect(InetSocketAddress(LOOPBACK, port), READY_POLL_MS.toInt()) }
+        // use returns whatever the block returns and connect returns Unit, so the block has to
+        // answer the question itself rather than leaning on the value that falls out.
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(LOOPBACK, port), READY_POLL_MS.toInt())
+            true
+        }
     } catch (_: Exception) {
         false
     }
