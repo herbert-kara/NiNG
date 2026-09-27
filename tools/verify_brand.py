@@ -40,6 +40,7 @@ def verify():
     check_concurrent_lookups_of_one_address_share_a_round_trip()
     check_no_concurrency_test_freezes_the_clock_it_depends_on()
     check_a_concurrency_test_can_reach_concurrency()
+    check_a_concurrency_test_uses_only_fake_dependencies()
     check_the_sources_have_no_defect_a_compiler_would_catch()
     check_the_row_has_one_flag_slot()
     check_the_flag_path_is_covered_by_a_real_test()
@@ -520,6 +521,43 @@ def check_the_sources_have_no_defect_a_compiler_would_catch():
             assert not re.fullmatch(r"[\w.]+\([^()]*\)", tail[-1]), (
                 str(rel) + ": " + name + "() ends with the discarded expression " + tail[-1]
                 + " and returns Unit, so the result never leaves the function")
+
+
+def check_a_concurrency_test_uses_only_fake_dependencies():
+    """A coroutine test that reaches a real thread pool measures the thread pool, not the code.
+
+    Two of these tests failed for that reason. One built a ServerCountryLookup without resolveDns,
+    so it fell through to the platform DNS on a real ThreadPoolExecutor; runTest's virtual clock
+    does not govern that thread, so the round trips stopped overlapping and the assertion read as
+    proof of serialisation. The other asserted a country its own stub never returns, so it had been
+    failing since it was written and was only ever run once the earlier ones passed.
+
+    Both are checkable: a lookup under test names every dependency it has, and a stub's return
+    value appears in the assertions that follow it.
+    """
+    for rel in ("src/test/java/com/v2ray/ang/handler/LookupConcurrencyTest.kt",):
+        src = (APP / rel).read_text("utf-8")
+        code = re.sub(r"/\*[\s\S]*?\*/", "", src)
+        code = re.sub(r"//[^\n]*", "", code)
+        for m in re.finditer(r"ServerCountryLookup\(([^)]*)\)", code, re.S):
+            args = m.group(1)
+            assert "resolveDns" in args, (
+                "a ServerCountryLookup in a coroutine test is built without resolveDns, so it "
+                "reaches the platform DNS on a real thread pool that the virtual clock does not "
+                "govern. Pass resolveDns and the test measures the code instead of the pool.")
+        # A stub that answers one thing cannot be asserted to answer another. Read the country
+        # the stub returns and the countries the rest of the test asserts, and compare the sets.
+        for stub in re.finditer(r'isocode"\s*:\s*"([A-Z]{2})"', code):
+            country = stub.group(1)
+            fn_start = code.rfind("\n    fun ", 0, stub.start())
+            fn_end = code.find("\n    fun ", stub.end())
+            body = code[stub.end(): fn_end if fn_end > 0 else len(code)]
+            asserted = set(re.findall(r'assert(?:Equals|True)\(\s*"([A-Z]{2})"', body))
+            wrong = {a for a in asserted if a != country}
+            assert not wrong, (
+                "the stub answers " + country + " but the test asserts " + str(sorted(wrong))
+                + ", so that assertion cannot hold for any implementation")
+
 
 
 def check_a_concurrency_test_can_reach_concurrency():

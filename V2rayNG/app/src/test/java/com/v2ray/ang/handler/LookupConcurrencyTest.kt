@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.InetAddress
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -60,8 +61,8 @@ class LookupConcurrencyTest {
             fetch = { asked++; """{"status":"ok","$it":{"isocode":"FR","proxy":"no","risk":0}}""" },
             nowMillis = { testScheduler.currentTime },
         )
-        assertEquals("DE", lookup.resolve("1.1.1.1")?.countryCode ?: "DE")
-        val first = lookup.resolve("1.1.1.1")
+        // The stub answers FR for every call; what is under test is how many times it is asked.
+        assertEquals("FR", lookup.resolve("1.1.1.1")?.countryCode)
         assertEquals(1, asked)
 
         // The second pass without force is served from the cache.
@@ -79,6 +80,10 @@ class LookupConcurrencyTest {
         val inFlight = AtomicInteger(0)
         val peak = AtomicInteger(0)
         val lookup = ServerCountryLookup(
+            // Without this the lookup reaches for the platform DNS, which runs on a real thread
+            // pool. runTest's virtual clock does not govern it, so the round trips stop overlapping
+            // for a reason that has nothing to do with the locking under test.
+            resolveDns = { host -> listOf(InetAddress.getByName(host)) },
             fetch = {
                 peak.updateAndGet { p -> maxOf(p, inFlight.incrementAndGet()) }
                 // Must outlast the 250ms pacing gap, or the first request is always finished before
