@@ -115,7 +115,7 @@ internal class ServerFlaggedLookup(
      * instead of starting a competing one. Nothing here holds a lock across the network call, which
      * is what let a page of different addresses overlap in the first place.
      */
-    private suspend fun fetchOnce(ip: String, timeoutMs: Long, request: suspend (String) -> String?): FlagVerdict? {
+    private suspend fun fetchOnce(ip: String, timeoutMs: Long, request: suspend (String) -> FlagVerdict?): FlagVerdict? {
         val waiter = cacheLock.withLock { inFlight[ip] }
         if (waiter != null) return waiter.await()
         val deferred = CoroutineScope(currentCoroutineContext())

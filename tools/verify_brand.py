@@ -38,6 +38,7 @@ def verify():
     check_a_rewritten_function_keeps_its_helpers_and_returns()
     check_the_launcher_wordmark_is_teal_and_20_percent_smaller()
     check_concurrent_lookups_of_one_address_share_a_round_trip()
+    check_the_sources_have_no_defect_a_compiler_would_catch()
     check_the_row_has_one_flag_slot()
     check_the_flag_path_is_covered_by_a_real_test()
     check_release_workflow()
@@ -331,6 +332,100 @@ _IDIOMS = {
 }
 
 
+def check_the_sources_have_no_defect_a_compiler_would_catch():
+    """Three builds died on mistakes a compiler finds in seconds and a text pass can also find.
+
+    Duplicate imports, a helper whose declared parameter type does not match its body's, and a
+    function that returns the wrong type are all local, all mechanical, and all cost a full native
+    build to discover. Nothing here needs to understand Kotlin; it only needs to check that the
+    file is internally consistent.
+    """
+    files = list((APP / "src/main/java").rglob("*.kt")) + list((APP / "src/test/java").rglob("*.kt"))
+    for src in files:
+        text = src.read_text("utf-8")
+        rel = src.relative_to(APP)
+        imports = [l.strip() for l in text.splitlines() if l.startswith("import ")]
+        dupes = sorted({i for i in imports if imports.count(i) > 1})
+        assert not dupes, str(rel) + " imports " + dupes[0] + " twice, which the compiler rejects"
+        # Brackets counted with a scanner rather than a regex: a hand edit that drops a closing
+        # brace must not read as balanced. A regex cannot do this reliably, because a Kotlin string
+        # may hold any character, including the ones a pattern treats as syntax.
+        depth = {"{": 0, "(": 0, "[": 0}
+        pairs = {"}": "{", ")": "(", "]": "["}
+        i, n = 0, len(text)
+        while i < n:
+            c = text[i]
+            two = text[i:i + 2]
+            if two == "//":
+                i = text.find("\n", i)
+                if i < 0: break
+                continue
+            if two == "/*":
+                j = text.find("*/", i + 2)
+                i = n if j < 0 else j + 2
+                continue
+            if text[i:i + 3] == '"""':
+                j = text.find('"""', i + 3)
+                i = n if j < 0 else j + 3
+                continue
+            if c == '"':
+                i += 1
+                while i < n and text[i] != '"':
+                    i += 2 if text[i] == "\\" else 1
+                i += 1
+                continue
+            if c == "'":
+                i += 1
+                while i < n and text[i] != "'":
+                    i += 2 if text[i] == "\\" else 1
+                i += 1
+                continue
+            if c in depth:
+                depth[c] += 1
+            elif c in pairs:
+                depth[pairs[c]] -= 1
+            i += 1
+        for opener in depth:
+            closer = {"{": "}", "(": ")", "[": "]"}[opener]
+            assert depth[opener] == 0, (
+                str(rel) + " leaves " + str(depth[opener]) + " " + opener
+                + " unclosed, so it cannot compile")
+        # A signature that promises one type and returns another. A suspend (String) -> T lambda
+        # parameter is matched on its own, since the inner parentheses are not the call's own.
+        for m in re.finditer(r"\bfun\s+(fetchOnce|fetchFrom|fetch)\b", text):
+            name = m.group(1)
+            sig = text[m.start():m.start() + 300]
+            lam = re.search(r"request\s*:\s*suspend\s*\(\s*String\s*\)\s*->\s*([\w?<>]+)", sig)
+            if not lam:
+                continue
+            ret = re.search(r"\)\s*:\s*([\w?<>]+)", sig)
+            assert ret, str(rel) + ": " + name + "() has no declared return type to compare"
+            assert lam.group(1) == ret.group(1), (
+                str(rel) + ": " + name + "() takes a request returning " + lam.group(1)
+                + " but declares " + ret.group(1) + ", so every call is a type error")
+        # A block-bodied function whose last statement is a bare value is a discarded result.
+        for m in re.finditer(r"\n    (?:private |internal )?(?:suspend )?fun (\w+)\([^)]*\)(?:: ([\w?<>]+))? \{", text):
+            name = m.group(1)
+            if name in ("main", "toString", "equals", "hashCode", "invoke", "get", "compareTo"):
+                continue
+            i = m.end()
+            depth, j = 1, i
+            while j < len(text) and depth:
+                if text[j] == "{": depth += 1
+                elif text[j] == "}": depth -= 1
+                j += 1
+            body = text[i:j - 1]
+            if "return" in body:
+                continue
+            tail = [l.strip() for l in body.rstrip().splitlines() if l.strip()]
+            if not tail or tail[-1].endswith(("}", ")", ",")):
+                continue
+            # A trailing bare expression in a Unit function is fine; in a valued one it is not.
+            assert not re.fullmatch(r"[\w.]+\([^()]*\)", tail[-1]), (
+                str(rel) + ": " + name + "() ends with the discarded expression " + tail[-1]
+                + " and returns Unit, so the result never leaves the function")
+
+
 def check_concurrent_lookups_of_one_address_share_a_round_trip():
     """Splitting the single lock dropped deduplication as a side effect.
 
@@ -391,7 +486,10 @@ def check_the_launcher_wordmark_is_teal_and_20_percent_smaller():
     for rel in ("mipmap-xxxhdpi/ic_launcher.png", "drawable/ic_ning_logo.png",
                 "mipmap-xhdpi/ic_banner.png"):
         im = Image.open(APP / ("src/main/res/" + rel)).convert("RGB")
-        c = Counter(im.getdata())
+        # getdata() is deprecated in Pillow 14; get_flattened_data() is the replacement when the
+        # installed Pillow has it, and the guard has to run on whatever the runner happens to have.
+        flat = getattr(im, "get_flattened_data", None)
+        c = Counter(flat() if flat else im.getdata())
         teal = sum(n for (r, g, b), n in c.items()
                    if abs(r - 0x00) + abs(g - 0x9F) + abs(b - 0xB7) < 40)
         bright = sum(n for (r, g, b), n in c.items() if r > 200 and g > 200 and b > 200)
