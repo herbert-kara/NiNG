@@ -34,6 +34,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_the_sync_reports_the_commits_it_is_actually_missing()
     check_no_guard_reaches_outside_the_repository()
     check_the_workflows_are_steps_github_can_actually_dispatch()
     check_the_upstream_sync_can_actually_push()
@@ -378,6 +379,25 @@ def check_no_guard_reaches_outside_the_repository():
             + ": " + m.group(1) + ". It resolves on the machine that wrote it and nowhere else, "
             "and on the runner a path that does not resolve is a file that reads as missing. Derive "
             "it from APP instead, so the same check runs in both places.")
+
+
+def check_the_sync_reports_the_commits_it_is_actually_missing():
+    """The unmerged list was built from a merge base, and this history has more than one.
+
+    $base..upstream/HEAD listed five commits on a run whose own next line said there was nothing
+    to do. Both lines were right about their own question and together they said upstream had work
+    that was skipped -- on the run whose whole job is to not skip it. The range that answers the
+    question is HEAD..upstream/HEAD, which is empty when the fork is current, so the count is
+    printed next to the list and the two can be compared by eye.
+    """
+    sync = (APP.parent.parent / ".github/workflows" / "upstream-sync.yml").read_text("utf-8")
+    assert "git log --oneline HEAD..upstream/HEAD" in sync, (
+        "the unmerged list is not HEAD..upstream/HEAD. With several merge bases in this history a "
+        "base-relative range reports commits that are already merged, so the log says upstream has "
+        "work pending on a run that then does nothing about it")
+    assert 'echo "unmerged count:' in sync, (
+        "the unmerged commits are listed with no count beside them, so a list that is not empty "
+        "cannot be told apart from a list that is")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():

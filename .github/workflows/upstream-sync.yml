@@ -44,8 +44,14 @@ jobs:
           git remote add upstream "$UPSTREAM" 2>/dev/null || git remote set-url upstream "$UPSTREAM"
           git fetch upstream --quiet
           base=$(git merge-base HEAD upstream/master || git merge-base HEAD upstream/main)
+          # HEAD..upstream/HEAD, not $base..upstream/HEAD. The history has more than one merge base, so
+          # the base form reports commits that are already merged: it listed five of them on a run
+          # whose own next line said there was nothing to do, which reads as upstream having work
+          # that was skipped. This range is what is genuinely unmerged, and it is empty when the
+          # fork is current.
           echo "upstream commits not yet merged:"
-          git log --oneline "$base"..upstream/HEAD 2>/dev/null | head -20 || true
+          git log --oneline HEAD..upstream/HEAD | head -20
+          echo "unmerged count: $(git rev-list --count HEAD..upstream/HEAD)"
           if git merge-base --is-ancestor upstream/HEAD HEAD; then
             echo "Already up to date with upstream; nothing to rebuild."
             echo "merged=false" >> "$GITHUB_OUTPUT"
