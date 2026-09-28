@@ -40,6 +40,14 @@ jobs:
           PASSPHRASE: ${{ secrets.NING_EXPORT_PASSPHRASE || inputs.passphrase }}
         run: |
           set -euo pipefail
+          # LC_ALL=C, or the printable-ASCII pattern is not an ASCII range. In a UTF-8 locale
+          # "[! -~]" spans from the space character into the multibyte range, and bash rejects the
+          # pattern as a syntax error rather than testing it -- so the first run of this failed
+          # with an error that named the passphrase length and never mentioned the real cause.
+          export LC_ALL=C
+          # Report the shape, never the value: a step that says only "failed" sends you looking in
+          # the wrong place, and that is how this took a run to diagnose.
+          echo "passphrase length: ${#PASSPHRASE}"
           [ -n "$PASSPHRASE" ] || { echo "::error::no passphrase: register the secret NING_EXPORT_PASSPHRASE or type one"; exit 1; }
           # A four-character passphrase is not a passphrase, and a backup anyone can guess is
           # worse than no backup: it looks like the risk was handled.
@@ -48,8 +56,9 @@ jobs:
             exit 1
           fi
           case "$PASSPHRASE" in
-            *[! -~]*) echo "::error::use printable ASCII so the passphrase can be typed on any machine later"; exit 1 ;;
+            *[!\ -~]*) echo "::error::use printable ASCII so the passphrase can be typed on any machine later"; exit 1 ;;
           esac
+          echo "passphrase accepted"
 
       - name: Encrypt the key under the passphrase
         id: enc
