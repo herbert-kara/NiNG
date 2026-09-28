@@ -1,5 +1,6 @@
 """Static NiNG identity checks; Android compilation remains in CI."""
 import subprocess
+import yaml
 import sys
 from pathlib import Path
 import re
@@ -34,7 +35,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
-    check_the_release_is_dispatched_on_a_ref_and_not_a_commit()
+    check_the_release_calls_the_build_workflow_rather_than_dispatching_it()
     check_the_sync_reports_the_commits_it_is_actually_missing()
     check_no_guard_reaches_outside_the_repository()
     check_the_workflows_are_steps_github_can_actually_dispatch()
@@ -323,13 +324,14 @@ def check_the_upstream_sync_can_actually_push():
         "upstream-sync.yml has no contents: write. The merge succeeds, the fork checks pass, and "
         "the push is refused with a 403 -- the run reports failure having changed nothing, and "
         "the branch never moves. That is what happened twice before this was found.")
-    assert "gh run watch" in sync, (
-        "the sync dispatches build.yml and does not wait for it. It reports success the moment a "
-        "build starts, so a red build leaves a green sync and a release that never happened.")
-    assert "--draft=false" in sync, (
+    assert "draft: false" in sync, (
         "the sync leaves the release a draft. build.yml drafts on purpose for a manual dispatch, "
         "but after an upstream merge nobody is there to publish it, and an installed NiNG never "
-        "learns the upstream moved -- which is the whole reason for tracking it.")
+        "learns the upstream moved -- which is the whole reason for tracking it. A draft release "
+        "is invisible to the updater.")
+    # Waiting is not optional here and needs no code: the release is a job of this run, so the
+    # run cannot report success while the build is still going. gh run watch was the way to wait
+    # on a dispatched run, and a dispatched run is refused.
     assert "max_by" in sync, (
         "the next version is chosen with a text sort, so -ning.100 comes before -ning.99 and the "
         "next build carries a tag the updater has already seen. Nobody is offered the release.")
@@ -401,26 +403,36 @@ def check_the_sync_reports_the_commits_it_is_actually_missing():
         "cannot be told apart from a list that is")
 
 
-def check_the_release_is_dispatched_on_a_ref_and_not_a_commit():
-    """--ref takes a branch or a tag. A commit is "No ref found for: <sha>".
+def check_the_release_calls_the_build_workflow_rather_than_dispatching_it():
+    """A workflow's own GITHUB_TOKEN cannot start another workflow.
 
-    The release job pinned the build to the exact merge commit, which is the right idea -- a
-    dispatch on a moving branch can pick up a commit that landed between the two jobs -- but the
-    dispatch API does not accept a SHA, so the build never started and the step died under set -e
-    on a request it had already made.
+    The sync dispatched build.yml with gh workflow run and got 403 Resource not accessible by
+    integration, on a tag it had already pushed successfully -- so the pin worked and the dispatch
+    did not. Two earlier fixes led here: the run id was read off the dispatch URL, and before
+    that the dispatch was pinned to a SHA, which the API answers with 422 No ref found.
 
-    The commit is pinned to a tag of its own instead, so the pin survives and the dispatch works.
+    It is called as a reusable workflow instead, so the build is a job of the same run: the same
+    signing steps, the same secrets, and the sync cannot lose track of it because there is no
+    separate run to go and find. The merge commit still pins it -- a reusable workflow called at
+    the job level runs against the caller's ref, not a moving one.
     """
     sync = (APP.parent.parent / ".github/workflows" / "upstream-sync.yml").read_text("utf-8")
-    assert '--ref "$COMMIT"' not in sync, (
-        "the release is dispatched with --ref \"$COMMIT\". A dispatch takes a branch or a tag and "
-        "answers a SHA with 422 No ref found, so the build never starts and the step dies on a "
-        "request it already made. Pin the merge to a tag and dispatch that.")
-    assert 'git tag -f "$build_ref" "$COMMIT"' in sync, (
-        "nothing pins the build to the merged commit any more, so a commit landing between the "
-        "sync job and the release job can be the one that gets built and shipped")
-    assert '--ref "$build_ref"' in sync, (
-        "the dispatch does not use the pinned ref, so the pin is created and then not used")
+    assert "gh workflow run" not in sync, (
+        "the sync starts build.yml with gh workflow run. A workflow's GITHUB_TOKEN is not allowed "
+        "to dispatch another workflow -- the API answers 403 Resource not accessible by "
+        "integration -- so the build never runs and the sync reports a release that never "
+        "happened. Call build.yml as a reusable workflow instead.")
+    rel = yaml.safe_load(sync)["jobs"]["release"]
+    assert rel.get("uses", "").endswith("build.yml"), (
+        "the release job does not call build.yml: " + repr(rel.get("uses")) + ". It has to be a "
+        "reusable-workflow call, because a dispatch is refused and an inline copy of the signing "
+        "steps would drift from the ones a manual release uses.")
+    assert rel.get("secrets") == "inherit", (
+        "the reusable call does not inherit secrets, so it has no signing key and cannot produce a "
+        "release anybody can install")
+    assert "tag: ${{ steps.version.outputs.tag }}" in sync, (
+        "the sync job does not publish the tag it derived, so the release job is handed an empty "
+        "release_tag and build.yml's release_tag != '' gate skips the release")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():

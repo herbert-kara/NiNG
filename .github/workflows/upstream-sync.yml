@@ -27,6 +27,7 @@ jobs:
     outputs:
       merged: ${{ steps.merge.outputs.merged }}
       commit: ${{ steps.merge.outputs.commit }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -97,93 +98,45 @@ jobs:
           # a schedule overlap, the second push would otherwise re-push a stale branch and be
           # rejected, leaving a merge that passed every check unpublished.
           MERGED: ${{ steps.merge.outputs.commit }}
-        run: git push origin "$MERGED:my-releases" 
+        id: push
+        run: git push origin "$MERGED:my-releases"
 
-  release:
-    needs: sync
-    if: needs.sync.outputs.merged == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-          ref: ${{ needs.sync.outputs.commit }}
       - name: Derive the next -ning version from existing tags
         id: version
+        if: steps.merge.outputs.merged == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Compared as numbers, not as strings. max over strings puts v2.3.9-ning.100 before
-          # v2.3.9-ning.99, and the first release after that would be a tag the updater has already
-          # seen -- so the build would publish a version nobody is offered.
-          # Compared as numbers rather than as strings: max over strings puts v2.3.9-ning.100
-          # before v2.3.9-ning.99, and the first release after that would carry a tag the updater
-          # has already seen, so nobody would be offered the build. jq prints the finished tag so
+          # Not max over tag strings: that puts v2.3.9-ning.100 before v2.3.9-ning.99, so the
+          # first release past .99 would carry a tag the updater has already seen and nobody
+          # would be offered the build. Compared as numbers, and jq prints the finished tag so
           # there is nothing to recompute in the shell and no second tool to disagree with it.
-          tag=$(gh release list -R herbert-kara/NiNG --limit 100 --json tagName --jq '
-            [ .[].tagName
-              | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-ning\\.[0-9]+$"))
-              | split("-ning.") as $p
-              | ($p[0] | sub("^v"; "") | split(".") | map(tonumber)) as $ver
-              | { ver: $ver, n: ($p[1] | tonumber) } ]
-            | if length == 0 then "v2.3.9-ning.0"
-              else ( max_by([.ver[0], .ver[1], .ver[2], .n]) ) as $m
-                 | "v" + ($m.ver | map(tostring) | join(".")) + "-ning." + (($m.n + 1) | tostring)
-              end')
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          tag=$(gh release list -R herbert-kara/NiNG --limit 100 --json tagName \
+            --jq '[.[].tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-ning\\.[0-9]+$"))] as $t
+                   | (if ($t | length) > 0
+                      then ($t | map({v: (split("-ning.")[0] | split(".") | map(tonumber)),
+                                      n: (split("-ning.")[1] | tonumber)}) | max_by([.v[0], .v[1], .v[2], .n]))
+                      else {v: [0,0,0], n: -1} end)
+                   | "v\(.[0] | map(tostring) | join("."))-ning\(.n + 1)"')
           echo "next release: $tag"
           # A tag that already exists means the version step lost a race or read a stale list.
-          # Publishing over one would replace an APK that users have already installed, so it
-          # stops here instead.
+          # Publishing over one replaces an APK that is already installed on someone's phone, so
+          # it stops here instead.
           if gh release view "$tag" -R herbert-kara/NiNG >/dev/null 2>&1; then
             echo "::error::$tag already exists. Someone released while this run was merging; re-run."
             exit 1
           fi
-      - name: Build the signed release from the merged commit and wait for it
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          COMMIT: ${{ needs.sync.outputs.commit }}
-        run: |
-          set -euo pipefail
-          # Reuse the reviewed release workflow rather than duplicating the signing steps here,
-          # and build the merge commit rather than the branch: the branch may have moved since the
-          # checks above, and a release of a commit nobody verified is worse than no release.
-          # Waiting for the run is the point -- a dispatch that is not awaited reports success
-          # while the build is still red, and the sync looks healthy on a release that never
-          # happened.
-          # gh workflow run prints the URL of the run it started, and that URL ends in the run
-          # id. Asking for JSON instead is the obvious move and it is not supported here: the
-          # dispatch succeeds and the flag fails, so under set -e the step dies on a run that is
-          # already going, and the sync reports a build that was never started.
-          # The dispatch is pinned to a ref, not a commit: --ref takes a branch or a tag, and a
-          # SHA comes back as "No ref found for: <sha>". A dispatch on a moving branch could pick
-          # up a commit that landed between the two jobs, so the merge is given a tag of its own
-          # to build from, and that tag is what build.yml is told to use.
-          build_ref="sync-$TAG"
-          git tag -f "$build_ref" "$COMMIT" && git push --force origin "$build_ref"
-          url=$(gh workflow run build.yml -R herbert-kara/NiNG \
-            --ref "$build_ref" -f release_tag="$TAG")
-          run_id="${url##*/}"
-          echo "build.yml run: $run_id ($url)"
-          case "$run_id" in
-            ''|*[!0-9]*) echo "::error::could not read a run id from '$url'"; exit 1 ;;
-          esac
-          gh run watch "$run_id" -R herbert-kara/NiNG --exit-status
-      - name: Publish it, so the in-app updater can see the new version
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          # build.yml creates a draft on purpose: on a manual dispatch nobody has looked at the
-          # tree yet. After an upstream merge the tree has passed the brand guard, the fork
-          # feature checks and the whole unit test suite, and leaving it a draft would mean an
-          # installed NiNG never learns the upstream updated -- which is the entire point of
-          # tracking upstream.
-          gh release edit "$TAG" -R herbert-kara/NiNG --draft=false --prerelease=false --latest
-          echo "published $TAG"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: sync
+    if: needs.sync.outputs.merged == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      release_tag: ${{ needs.sync.outputs.tag }}
+      draft: false
+    secrets: inherit
+    permissions:
+      contents: write
+      actions: read

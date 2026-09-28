@@ -6,6 +6,22 @@ on:
         description: Optional tag for a draft prerelease (empty uploads artifacts only)
         required: false
         type: string
+  # The sync cannot use gh workflow run to call this: a workflow's own GITHUB_TOKEN is not
+  # allowed to start another workflow, and the dispatch comes back 403 Resource not accessible by
+  # integration. Called as a reusable workflow instead, the same run that the sync would have
+  # dispatched happens inline -- same signing steps, same secrets, and the sync can wait for it
+  # because it is a job of the same run rather than a run it has to go and find.
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Tag to publish under, so the in-app updater can see the new version
+        required: true
+        type: string
+      draft:
+        description: Publish as a draft, for a manual dispatch where someone will look at it
+        required: false
+        default: true
+        type: boolean
 permissions:
   contents: read
 concurrency:
@@ -183,7 +199,7 @@ jobs:
   sign-and-release:
     needs: build
     runs-on: ubuntu-26.04
-    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.release_tag != ''
     # A job's env does not inherit another job's env. This job compiles native code and reads
     # the native cache keys, so the pins the build job exports have to be repeated here; an
     # empty RUST_TOOLCHAIN makes dtolnay/rust-toolchain fail with an unhelpful error.
@@ -342,4 +358,10 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-ning\.[0-9]+$ ]]
-          gh release create "$TAG" --repo herbert-kara/NiNG --target "$SHA" --draft --prerelease --title "NiNG $TAG" --notes "Signed NiNG APKs. Unit tests passed in CI. Android device runtime testing remains separate." release-files/*
+          # A manual dispatch leaves this a draft, which is deliberate: someone asked for a build
+          # and should look at it before anyone is offered it. The sync passes draft=false, and it
+          # has to be able to publish, because a release left as a draft is invisible to the
+          # in-app updater -- which is the only reason the sync is watching upstream at all.
+          draft_flag="--draft"
+          if [ "${{ inputs.draft }}" = "false" ]; then draft_flag=""; fi
+          gh release create "$TAG" --repo herbert-kara/NiNG --target "$SHA" $draft_flag --prerelease --title "NiNG $TAG" --notes "Signed NiNG APKs. Unit tests passed in CI. Android device runtime testing remains separate." release-files/*

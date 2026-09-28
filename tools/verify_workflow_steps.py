@@ -49,6 +49,11 @@ def main() -> int:
             problems.append(f"{path.name}: has no jobs key")
             continue
         for job_name, job in doc["jobs"].items():
+            if "uses" in job:
+                # A reusable-workflow job has no steps: it calls another workflow, and GitHub
+                # rejects a steps list on the same job. Reading the absence of steps as a
+                # mis-indented header would send you looking for a line that is not wrong.
+                continue
             steps = job.get("steps")
             if not isinstance(steps, list) or not steps:
                 problems.append(
