@@ -364,4 +364,41 @@ jobs:
           # in-app updater -- which is the only reason the sync is watching upstream at all.
           draft_flag="--draft"
           if [ "${{ inputs.draft }}" = "false" ]; then draft_flag=""; fi
-          gh release create "$TAG" --repo herbert-kara/NiNG --target "$SHA" $draft_flag --prerelease --title "NiNG $TAG" --notes "Signed NiNG APKs. Unit tests passed in CI. Android device runtime testing remains separate." release-files/*
+          # --prerelease is not a property of a build that is still being tested, it is a label
+          # GitHub shows. Every release was created with it, so /releases/latest kept pointing at
+          # an older build: a visitor who opened the repository saw .29 while .30 was the one the
+          # app could update to. A prerelease also does not notify subscribers.
+          #
+          # So the flag follows the draft flag, which is the thing that actually means "not ready":
+          # a manual dispatch leaves it a draft to look at, the sync passes draft: false and
+          # publishes it as the current release.
+          # The release page is where someone lands after Play Protect has already worried them,
+          # so it repeats the three things that decide whether they install: what this is, why the
+          # warning is expected, and how to confirm the file. It is generated here so it cannot
+          # fall out of step with the README.
+          {
+            printf '## Play Protect will warn you. Here is why that is expected.\n\n'
+            printf 'This build is signed with a self-signed key, not one issued by Google, which is true of\n'
+            printf 'every app installed from outside the Play Store -- including V2RayNG and PattNG.\n\n'
+            printf 'If Play Protect blocks the install, the one-time fix is:\n\n'
+            printf '**Play Protect -> Settings -> App verification -> Off**\n\n'
+            printf 'That setting only affects installs from outside the Play Store.\n\n'
+            printf '## Check the download\n\n'
+            printf '```\n'
+            printf 'sha256sum %s_arm64-v8a.apk\n' "$TAG"
+            printf '```\n\n'
+            printf 'Compare it with the line for that file in `SHA256SUMS.txt`. If they differ, do not install it.\n\n'
+            printf '## What this is\n\n'
+            printf 'A fork of [PattNG](https://github.com/patterniha/PattNG), which is itself a fork of\n'
+            printf '[V2RayNG](https://github.com/2dust/v2rayNG). Not an official build of either. Farsi UI,\n'
+            printf 'a country flag per server, and an in-app updater. Licensed GPL-3.0.\n\n'
+            printf 'Per-server flags have two speeds: a fast one from DNS, which can show a CDN or proxy\n'
+            printf 'address rather than the origin, and an exact one behind a button on the row that asks\n'
+            printf 'the connection itself.\n'
+          } > release-notes.md
+          NOTES=$(cat release-notes.md)
+          pre_flag="--prerelease"
+          if [ "${{ inputs.draft }}" = "false" ]; then pre_flag=""; fi
+          latest_flag="--latest"
+          if [ "${{ inputs.draft }}" != "false" ]; then latest_flag=""; fi
+          gh release create "$TAG" --repo herbert-kara/NiNG --target "$SHA" $draft_flag $pre_flag $latest_flag --title "NiNG $TAG" --notes "$NOTES" release-files/*
