@@ -29,6 +29,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_the_files_the_sync_reads_line_by_line_have_unix_line_endings()
     check_a_reader_keeps_the_listener_a_latency_test_drops()
     check_a_probe_waits_for_its_core_before_asking_it()
     check_no_silent_catch_where_the_user_is_waiting()
@@ -263,6 +264,34 @@ def check_a_reader_keeps_the_listener_a_latency_test_drops():
         "listener. The core starts, the probe waits for a port that was never opened, the request "
         "is refused, and the row keeps the flag it had -- which reads as a server that could not "
         "be reached rather than a config built for the wrong purpose.")
+
+
+def check_the_files_the_sync_reads_line_by_line_have_unix_line_endings():
+    """A carriage return on one of these lines is a path with a character stuck to its end.
+
+    The sync reads tools/fork_manifest.txt line by line and tests each path with -e. Written on
+    Windows the file has CRLF, so on the Linux runner every path comes back as
+    "V2rayNG/.../ExitCountryProbe.kt\r", matches nothing, and the guard reports all 375 fork
+    files as lost. The same line endings on the workflow itself break the shell that runs the
+    merge. Both are invisible from a Windows editor and fatal on the runner.
+
+    So the check is bytes, not text: these are the files a shell reads line by line, and a
+    carriage return in any of them is a bug that only appears in CI.
+    """
+    for rel in ("tools/fork_manifest.txt",
+                ".github/workflows/upstream-sync.yml",
+                ".github/workflows/build.yml",
+                ".github/workflows/ci.yml"):
+        path = APP.parent.parent / rel
+        if not path.exists():
+            continue
+        raw = path.read_bytes()
+        assert b"\r\n" not in raw, (
+            str(rel) + " has CRLF line endings. The sync and the build run shell on a Linux "
+            "runner: a workflow with CRLF breaks the shell that executes it, and a manifest with "
+            "CRLF turns every path it lists into a path with a trailing carriage return, so every "
+            "fork file reads as lost. .gitattributes asks for LF on these; re-check out the file "
+            "rather than converting it, so the fix lands for everyone.")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():

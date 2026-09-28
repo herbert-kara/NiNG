@@ -11,7 +11,10 @@ on:
     - cron: '23 4 * * *'
   workflow_dispatch:
 permissions:
-  contents: read
+  # The sync merges upstream and pushes the result, so it needs write. With read the merge is
+  # computed, the fork features are verified, and then the push is refused with a 403 -- the run
+  # reports failure having changed nothing, which is the same as no sync at all.
+  contents: write
   actions: read
 concurrency:
   group: ning-upstream-rebuild
@@ -23,6 +26,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       merged: ${{ steps.merge.outputs.merged }}
+      commit: ${{ steps.merge.outputs.commit }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,22 +59,39 @@ jobs:
             exit 1
           fi
           echo "merged=true" >> "$GITHUB_OUTPUT"
+          # The release job builds from my-releases, so it has to be told the exact commit rather
+          # than re-reading a branch that could move between the two jobs.
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           git diff --stat "$base" HEAD | tail -20
       - name: Verify fork features survived the merge
         if: steps.merge.outputs.merged == 'true'
         run: |
           set -euo pipefail
           python3 tools/verify_brand.py
-          for f in \
-            V2rayNG/app/src/main/java/com/v2ray/ang/handler/ProfileRisk.kt \
-            V2rayNG/app/src/main/java/com/v2ray/ang/handler/ServerFlaggedLookup.kt \
-            V2rayNG/app/src/main/java/com/v2ray/ang/handler/ProfileCountry.kt \
-            V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/RiskBadge.kt; do
-            test -f "$f" || { echo "::error::fork feature file lost in merge: $f"; exit 1; }
-          done
+          # Every path the fork owns and upstream does not have. A merge can only delete one of
+          # these, so this is the check that matters: the brand guard proves the strings and the
+          # colours are right, and this proves the files they live in are still there at all.
+          missing=0
+          while IFS= read -r f; do
+            case "$f" in ''|'#'*) continue;; esac
+            if [ ! -e "$f" ]; then
+              echo "::error::fork file lost in the upstream merge: $f"
+              missing=$((missing + 1))
+            fi
+          done < tools/fork_manifest.txt
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::$missing file(s) this fork owns are gone after the merge. Upstream renamed or removed them; bring the fork's version across on my-releases before releasing."
+            exit 1
+          fi
+          echo "all $(grep -cv '^#' tools/fork_manifest.txt) fork files survived the merge"
       - name: Push the merge so the branch keeps its history
         if: steps.merge.outputs.merged == 'true'
-        run: git push origin my-releases
+        env:
+          # Pushing the commit that was just built rather than the branch name: if a dispatch and
+          # a schedule overlap, the second push would otherwise re-push a stale branch and be
+          # rejected, leaving a merge that passed every check unpublished.
+          MERGED: ${{ steps.merge.outputs.commit }}
+        run: git push origin "$MERGED:my-releases" 
 
   release:
     needs: sync
@@ -82,7 +103,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-          ref: my-releases
+          ref: ${{ needs.sync.outputs.commit }}
       - name: Derive the next -ning version from existing tags
         id: version
         env:
@@ -95,12 +116,33 @@ jobs:
           patch=$(( ${latest##*.} + 1 ))
           echo "tag=v${base#v}-ning.${patch}" >> "$GITHUB_OUTPUT"
           echo "version=${base#v}-ning.${patch}" >> "$GITHUB_OUTPUT"
-      - name: Build and publish the signed release
+      - name: Build the signed release from the merged commit and wait for it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          COMMIT: ${{ needs.sync.outputs.commit }}
+        run: |
+          set -euo pipefail
+          # Reuse the reviewed release workflow rather than duplicating the signing steps here,
+          # and build the merge commit rather than the branch: the branch may have moved since the
+          # checks above, and a release of a commit nobody verified is worse than no release.
+          # Waiting for the run is the point -- a dispatch that is not awaited reports success
+          # while the build is still red, and the sync looks healthy on a release that never
+          # happened.
+          run_id=$(gh workflow run build.yml -R herbert-kara/NiNG \
+            --ref "$COMMIT" -f release_tag="$TAG" --json databaseId --jq .databaseId)
+          echo "build.yml run: $run_id"
+          gh run watch "$run_id" -R herbert-kara/NiNG --exit-status
+      - name: Publish it, so the in-app updater can see the new version
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          # Reuse the reviewed release workflow rather than duplicating the signing steps here.
-          gh workflow run build.yml -R herbert-kara/NiNG --ref my-releases -f release_tag="$TAG"
-          echo "Dispatched build.yml for $TAG"
+          # build.yml creates a draft on purpose: on a manual dispatch nobody has looked at the
+          # tree yet. After an upstream merge the tree has passed the brand guard, the fork
+          # feature checks and the whole unit test suite, and leaving it a draft would mean an
+          # installed NiNG never learns the upstream updated -- which is the entire point of
+          # tracking upstream.
+          gh release edit "$TAG" -R herbert-kara/NiNG --draft=false --prerelease=false --latest
+          echo "published $TAG"

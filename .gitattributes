@@ -1,0 +1,7 @@
+# The sync and build workflows run shell on a Linux runner and read the fork manifest line
+# by line. A CRLF there is not cosmetic: every path comes back with a trailing carriage
+# return, no file matches, and the guard reports all 375 fork files as lost.
+*.yml text eol=lf
+*.yaml text eol=lf
+*.txt text eol=lf
+*.sh text eol=lf
