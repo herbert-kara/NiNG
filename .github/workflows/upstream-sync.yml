@@ -110,13 +110,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          latest=$(gh release list -R herbert-kara/NiNG --limit 100 --json tagName \
-            --jq '[.[].tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-ning\\.[0-9]+$"))] | max // "v0.0.0-ning.0"')
-          base="${latest%-ning.*}"
-          patch=$(( ${latest##*.} + 1 ))
-          echo "tag=v${base#v}-ning.${patch}" >> "$GITHUB_OUTPUT"
-          echo "version=${base#v}-ning.${patch}" >> "$GITHUB_OUTPUT"
-      - name: Build the signed release from the merged commit and wait for it
+          # Compared as numbers, not as strings. max over strings puts v2.3.9-ning.100 before
+          # v2.3.9-ning.99, and the first release after that would be a tag the updater has already
+          # seen -- so the build would publish a version nobody is offered.
+          # Compared as numbers rather than as strings: max over strings puts v2.3.9-ning.100
+          # before v2.3.9-ning.99, and the first release after that would carry a tag the updater
+          # has already seen, so nobody would be offered the build. jq prints the finished tag so
+          # there is nothing to recompute in the shell and no second tool to disagree with it.
+          tag=$(gh release list -R herbert-kara/NiNG --limit 100 --json tagName --jq '
+            [ .[].tagName
+              | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-ning\\.[0-9]+$"))
+              | split("-ning.") as $p
+              | ($p[0] | sub("^v"; "") | split(".") | map(tonumber)) as $ver
+              | { ver: $ver, n: ($p[1] | tonumber) } ]
+            | if length == 0 then "v2.3.9-ning.0"
+              else ( max_by([.ver[0], .ver[1], .ver[2], .n]) ) as $m
+                 | "v" + ($m.ver | map(tostring) | join(".")) + "-ning." + (($m.n + 1) | tostring)
+              end')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "next release: $tag"
+          # A tag that already exists means the version step lost a race or read a stale list.
+          # Publishing over one would replace an APK that users have already installed, so it
+          # stops here instead.
+          if gh release view "$tag" -R herbert-kara/NiNG >/dev/null 2>&1; then
+            echo "::error::$tag already exists. Someone released while this run was merging; re-run."
+            exit 1
+          fi
+           - name: Build the signed release from the merged commit and wait for it
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}

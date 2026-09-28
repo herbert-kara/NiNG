@@ -29,6 +29,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_the_upstream_sync_can_actually_push()
     check_the_files_the_sync_reads_line_by_line_have_unix_line_endings()
     check_a_reader_keeps_the_listener_a_latency_test_drops()
     check_a_probe_waits_for_its_core_before_asking_it()
@@ -292,6 +293,40 @@ def check_the_files_the_sync_reads_line_by_line_have_unix_line_endings():
             "CRLF turns every path it lists into a path with a trailing carriage return, so every "
             "fork file reads as lost. .gitattributes asks for LF on these; re-check out the file "
             "rather than converting it, so the fix lands for everyone.")
+
+
+def check_the_upstream_sync_can_actually_push():
+    """The sync merged and verified, then the push was refused: contents: read, error 403.
+
+    It failed twice a day, silently, and the branch never moved -- which looks exactly like
+    upstream having nothing new. So the permission is checked, and so is the part that would let
+    it fail the same way again quietly: a release the sync dispatches but never waits for, a
+    release left as a draft that the in-app updater cannot see, and a version chosen by sorting
+    tags as text, where -ning.100 sorts before -ning.99 and the next build is a version the updater
+    has already seen.
+
+    A sync that merges, passes every check, and publishes nothing is worse than one that fails
+    loudly, because nothing is left to look at.
+    """
+    rel = "upstream-sync.yml"
+    sync = (APP.parent.parent / ".github/workflows" / rel).read_text("utf-8")
+    assert "contents: write" in sync, (
+        "upstream-sync.yml has no contents: write. The merge succeeds, the fork checks pass, and "
+        "the push is refused with a 403 -- the run reports failure having changed nothing, and "
+        "the branch never moves. That is what happened twice before this was found.")
+    assert "gh run watch" in sync, (
+        "the sync dispatches build.yml and does not wait for it. It reports success the moment a "
+        "build starts, so a red build leaves a green sync and a release that never happened.")
+    assert "--draft=false" in sync, (
+        "the sync leaves the release a draft. build.yml drafts on purpose for a manual dispatch, "
+        "but after an upstream merge nobody is there to publish it, and an installed NiNG never "
+        "learns the upstream moved -- which is the whole reason for tracking it.")
+    assert "max_by" in sync, (
+        "the next version is chosen with a text sort, so -ning.100 comes before -ning.99 and the "
+        "next build carries a tag the updater has already seen. Nobody is offered the release.")
+    assert 'gh release view "$tag"' in sync, (
+        "nothing stops the sync from publishing over a tag that exists, which replaces an APK "
+        "that is already installed on someone's phone.")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():
