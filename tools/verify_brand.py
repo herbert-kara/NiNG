@@ -35,6 +35,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_no_logging_survives_in_a_path_a_unit_test_constructs()
     check_the_version_program_is_one_line_and_has_no_escapes()
     check_the_release_calls_the_build_workflow_rather_than_dispatching_it()
     check_the_sync_reports_the_commits_it_is_actually_missing()
@@ -465,6 +466,35 @@ def check_the_version_program_is_one_line_and_has_no_escapes():
     assert "split(\"/[.]/\")" not in program, (
         "the version program splits on \"[.]\", which returns the string unchanged, so a "
         "three-part version reaches tonumber whole and the step dies on a version number")
+
+
+def check_no_logging_survives_in_a_path_a_unit_test_constructs():
+    """android.util.Log does not exist in a unit test, and a log line in a constructor is fatal.
+
+    A line in MainViewModel's init called LogUtil.w, which reaches android.util.Log.println.
+    Upstream's own test builds a MainViewModel, so the constructor threw:
+
+        java.lang.RuntimeException: Method println in android.util.Log not mocked
+        at com.v2ray.ang.ui.main.MainViewModel.<init>(MainViewModel.kt:191)
+
+    489 of 490 tests passed, and the build stopped -- so the diagnostic that was meant to prove a
+    path was reached is what kept the release from happening. Logging is not free in a file that
+    other code constructs in a test, and the line was added to explain a symptom rather than to
+    record something anybody reads.
+
+    The check is on the constructor, not on logging in general: the collectors below it log on
+    their own coroutines, which a unit test never reaches.
+    """
+    vm = APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt"
+    text = vm.read_text("utf-8")
+    start = text.index("    init {")
+    end = text.index("\n    }", start)
+    block = text[start:end]
+    assert "LogUtil." not in block and "Log." not in block, (
+        "MainViewModel's init logs again. A unit test constructs this ViewModel, android.util.Log "
+        "is not mocked, and the constructor throws -- which is how one diagnostic line stopped a "
+        "release with 489 of 490 tests passing. Put the log where the collectors are, not in the "
+        "constructor.")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():

@@ -184,11 +184,6 @@ class MainViewModel(
 
     // ---------- Service events ----------
     init {
-        // Seven releases of fixes were reasoned about a path that never ran, and every one of them
-        // changed something downstream of here. These two lines are the only evidence that would
-        // have shown it: if the start line is missing, the ViewModel never built the collectors and
-        // nothing below them is worth reading.
-        LogUtil.w(AppConfig.TAG, "flag init: collectors starting")
         collectServerCountries()
         collectServerFlags()
         collectServiceEvents()
