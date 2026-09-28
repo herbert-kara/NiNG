@@ -1,0 +1,127 @@
+name: Export the release key, once, encrypted
+
+# The release key exists in exactly one place: this repository's secrets, which GitHub will not
+# read back. It was generated inside a CI runner and written straight to NING_KEYSTORE_BASE64, so
+# there is no file on any disk and no copy anywhere. If the secret is ever lost -- an account
+# problem, a mistaken overwrite -- every installed NiNG can never be updated again, and each of
+# those users has to reinstall and loses their configuration.
+#
+# This reads the key and writes it out encrypted under a passphrase the operator supplies at
+# runtime, so the passphrase never sits in the repository or in a secret. The artifact is useless
+# to anyone without it, and the whole point is that only the operator has it.
+#
+# After a successful run, delete the artifact and the tag: an encrypted key left in artifact
+# storage is still a copy of the key.
+
+on:
+  workflow_dispatch:
+    inputs:
+      passphrase:
+        # A workflow_dispatch input is readable in this run's own page, through the REST API and
+        # in `gh run view`, so a passphrase typed here is a passphrase written down in a log
+        # anyone with read access to the repository can see. It is masked only if the operator
+        # adds it as a secret -- which is also what makes it safe to run this more than once.
+        description: >-
+          Passphrase to encrypt the key with. Prefer registering it as a repository secret
+          (NING_EXPORT_PASSPHRASE) and clearing this field: an input is visible in the run log.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Reject a passphrase that would make the backup useless
+        env:
+          PASSPHRASE: ${{ secrets.NING_EXPORT_PASSPHRASE || inputs.passphrase }}
+        run: |
+          set -euo pipefail
+          [ -n "$PASSPHRASE" ] || { echo "::error::no passphrase: register the secret NING_EXPORT_PASSPHRASE or type one"; exit 1; }
+          # A four-character passphrase is not a passphrase, and a backup anyone can guess is
+          # worse than no backup: it looks like the risk was handled.
+          if [ "${#PASSPHRASE}" -lt 12 ]; then
+            echo "::error::the passphrase must be at least 12 characters. A short one produces a file that looks like a safe backup and is not one."
+            exit 1
+          fi
+          case "$PASSPHRASE" in
+            *[! -~]*) echo "::error::use printable ASCII so the passphrase can be typed on any machine later"; exit 1 ;;
+          esac
+
+      - name: Encrypt the key under the passphrase
+        id: enc
+        env:
+          KEYSTORE: ${{ secrets.NING_KEYSTORE_BASE64 }}
+          ALIAS: ${{ secrets.NING_KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.NING_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.NING_KEY_PASSWORD }}
+          PASSPHRASE: ${{ secrets.NING_EXPORT_PASSPHRASE || inputs.passphrase }}
+        run: |
+          set -euo pipefail
+          for v in KEYSTORE ALIAS STORE_PASSWORD KEY_PASSWORD PASSPHRASE; do
+            [ -n "${!v}" ] || { echo "::error::$v is empty; refusing to write a partial backup"; exit 1; }
+          done
+          umask 077
+          mkdir -p out
+
+          # The key file, the passwords and the alias travel together, because a .p12 without its
+          # passwords is not a backup -- it is a file that cannot be signed with again.
+          printf '%s' "$KEYSTORE" | base64 --decode > out/ning-release.p12
+          {
+            printf 'alias=%s\n'     "$ALIAS"
+            printf 'store=%s\n'     "$STORE_PASSWORD"
+            printf 'key=%s\n'       "$KEY_PASSWORD"
+            printf 'created=%s\n'   "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf 'format=PKCS12\n'
+          } > out/ning-release.secrets
+          chmod 600 out/ning-release.p12 out/ning-release.secrets
+
+          # openssl is on every ubuntu runner, and -pbkdf2 keeps the file readable by a future
+          # openssl rather than depending on a tool that may not be installed then.
+          tar -C out -cf - ning-release.p12 ning-release.secrets \
+            | openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt \
+                -pass env:PASSPHRASE -out ning-release-key.tar.gz.enc
+          rm -rf out
+          chmod 600 ning-release-key.tar.gz.enc
+          echo "size=$(stat -c%s ning-release-key.tar.gz.enc)" >> "$GITHUB_OUTPUT"
+
+      - name: Prove the file decrypts before publishing it
+        env:
+          PASSPHRASE: ${{ secrets.NING_EXPORT_PASSPHRASE || inputs.passphrase }}
+        run: |
+          set -euo pipefail
+          # An encrypted file that cannot be decrypted is not a backup, and nobody would find out
+          # until the day it was needed. So it is decrypted here, with the same passphrase, and
+          # the certificate is read back from the keystore rather than trusting the tar.
+          rm -rf check && mkdir -p check
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 \
+            -pass env:PASSPHRASE -in ning-release-key.tar.gz.enc | tar -C check -xf -
+          test -s check/ning-release.p12
+          CERT=$(keytool -list -v \
+                   -keystore check/ning-release.p12 \
+                   -storepass "$(grep '^store=' check/ning-release.secrets | cut -d= -f2-)" \
+                   -alias "$(grep '^alias=' check/ning-release.secrets | cut -d= -f2-)" 2>/dev/null \
+                 | grep -m1 -A2 'Owner:' | tr -s ' ' | tr '\n' ' ')
+          echo "read back: ${CERT:-unreadable}"
+          case "$CERT" in
+            *"CN=N"*|*herbert*|*ning*) : ;;
+            *) echo "::error::the keystore decrypted but the certificate did not read as the NiNG release cert (got: ${CERT:-nothing}). Not publishing."
+               exit 1 ;;
+          esac
+          # Leave nothing readable behind on the runner.
+          rm -rf check
+
+      - name: Upload the encrypted backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: ning-release-key-ENCRYPTED
+          path: ning-release-key.tar.gz.enc
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Say what to do with it
+        run: |
+          echo "::notice::Download the artifact ning-release-key-ENCRYPTED, keep it somewhere you would keep a password manager export, then delete the artifact and the tag ning-key-export. A key left in artifact storage is a copy of the key."
