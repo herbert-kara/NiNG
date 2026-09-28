@@ -7,6 +7,10 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / 'V2rayNG/app'
+# The unit tests live beside the module they test, and the path is derived rather than
+# written out: a literal C:/ path resolves to nothing on the Linux runner, and exists() then
+# reports a file that is present as one that is missing.
+TESTS = APP / "src/test/java/com/v2ray/ang"
 TEST = ROOT / 'V2rayNG/app/src/test/java'
 
 def verify():
@@ -30,6 +34,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_no_guard_reaches_outside_the_repository()
     check_the_workflows_are_steps_github_can_actually_dispatch()
     check_the_upstream_sync_can_actually_push()
     check_the_files_the_sync_reads_line_by_line_have_unix_line_endings()
@@ -351,6 +356,28 @@ def check_the_workflows_are_steps_github_can_actually_dispatch():
         + (r.stdout or r.stderr).strip().splitlines()[0][:150]
         + " -- a step header at the wrong indent is absorbed into the previous run block, which "
         "parses fine and then leaves the job with fewer steps than it names")
+
+
+def check_no_guard_reaches_outside_the_repository():
+    """A literal Windows path reads as a missing file on the runner, and the guard says so.
+
+    Four checks here named C:/Users/nima/... for the unit tests. On this machine they resolve; on
+    the Linux runner they do not, exists() is false, and the guard reports a file that is present
+    as one that is gone -- with a message about the thing the file was written to protect. The
+    sync failed on exactly that: the brand guard asserted against a test that had been there the
+    whole time, and the run stopped before the push.
+
+    So the paths are derived from the module, and this checks that none of them is written out. A
+    guard that cannot see the file it guards is worse than no guard, because it fails on the safe
+    side of the truth and looks like the thing it protects is gone.
+    """
+    here = Path(__file__).resolve()
+    for m in re.finditer(r'Path\(\s*["\']([A-Za-z]:[\\/][^"\']*)["\']', here.read_text("utf-8")):
+        raise AssertionError(
+            "verify_brand.py names an absolute path at line " + str(here.read_text("utf-8")[:m.start()].count("\n") + 1)
+            + ": " + m.group(1) + ". It resolves on the machine that wrote it and nowhere else, "
+            "and on the runner a path that does not resolve is a file that reads as missing. Derive "
+            "it from APP instead, so the same check runs in both places.")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():
@@ -1203,7 +1230,7 @@ def check_no_test_file_carries_an_import_it_does_not_use_or_a_type_it_cannot_see
         "completeCurrent must return Completed? so a completed test with no server is "
         "distinguishable from a reply for a test that was already replaced")
     for name in ("MainTestRequestsTest.kt", "MeasuredCountryTest.kt"):
-        path = Path("C:/Users/nima/PattNG/V2rayNG/app/src/test/java/com/v2ray/ang/ui/main") / name
+        path = TESTS / "ui/main" / name
         if not path.exists():
             continue
         text = path.read_text("utf-8")
@@ -1244,7 +1271,7 @@ def check_a_bounded_read_bounds_instead_of_judging_the_size():
         "the body cap is " + str(cap) + " bytes. A provider answers a country query in a few "
         "hundred, so a cap below 8 KB is inside the range of a legitimate answer and would cut "
         "real data to protect memory that a few hundred bytes do not threaten")
-    test = Path("C:/Users/nima/PattNG/V2rayNG/app/src/test/java/com/v2ray/ang/handler/CountryBodyReadTest.kt")
+    test = TESTS / "handler/CountryBodyReadTest.kt"
     assert test.exists() and "request(16_385)" in test.read_text("utf-8"), (
         "nothing pins the difference between the two calls, so read() can be swapped back for "
         "request() by a change that looks like a simplification")
@@ -1289,7 +1316,7 @@ def check_a_test_address_would_survive_the_public_ip_filter():
     # succeed is a bad fixture, so the check is scoped to the route tests, whose whole subject is
     # that a row resolves.
     for name in ("LookupConcurrencyTest.kt", "CountryRouteTest.kt"):
-        path = Path("C:/Users/nima/PattNG/V2rayNG/app/src/test/java/com/v2ray/ang/handler") / name
+        path = TESTS / "handler" / name
         if not path.exists():
             continue
         text = path.read_text("utf-8")
@@ -1410,7 +1437,7 @@ def check_a_row_flag_does_not_depend_on_a_running_service():
     assert "tunnelPort = {" not in vm, (
         "the production wiring passes a tunnel port again, so the flag will go back to failing "
         "while the app is disconnected")
-    test = Path("C:/Users/nima/PattNG/V2rayNG/app/src/test/java/com/v2ray/ang/handler/CountryRouteTest.kt")
+    test = TESTS / "handler/CountryRouteTest.kt"
     assert test.exists(), (
         "the route test is gone, so nothing stops the loopback dependency from being reintroduced "
         "by a well-meaning change that copies the panel's route again")
