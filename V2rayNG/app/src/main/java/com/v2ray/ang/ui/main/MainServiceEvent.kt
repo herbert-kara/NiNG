@@ -17,6 +17,9 @@ sealed class MainServiceEvent {
     data class MeasureConfigFinish(val requestId: String) : MainServiceEvent()
     data class MeasureConfigCancelled(val requestId: String) : MainServiceEvent()
 
+    /** Servers, subscriptions or test results changed away from this screen. */
+    data object ServersChanged : MainServiceEvent()
+
     companion object {
 
         /**

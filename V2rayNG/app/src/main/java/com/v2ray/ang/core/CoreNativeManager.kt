@@ -72,14 +72,28 @@ object CoreNativeManager {
      *
      * @param config The configuration JSON string
      * @param testUrl The URL to test against
-     * @return Delay in milliseconds, or -1 if test failed
+     * @param batch The batch of the measurement, which [cancelOutboundDelays] ends at once
+     * @return Delay in milliseconds, or -1 if test failed or its batch was cancelled
      */
-    fun measureOutboundDelay(config: String, testUrl: String): Long {
+    fun measureOutboundDelay(config: String, testUrl: String, batch: String): Long {
         return try {
-            Libv2ray.measureOutboundDelay(config, testUrl)
+            Libv2ray.measureOutboundDelayInBatch(batch, config, testUrl)
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to measure outbound delay", e)
             -1L
+        }
+    }
+
+    /**
+     * End the measurements of a batch at once: the running ones return -1, and so do those that start later.
+     *
+     * @param batch The batch of the measurements
+     */
+    fun cancelOutboundDelays(batch: String) {
+        try {
+            Libv2ray.cancelOutboundDelays(batch)
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "Failed to cancel outbound delays", e)
         }
     }
 

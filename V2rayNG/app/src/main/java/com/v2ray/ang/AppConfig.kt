@@ -104,6 +104,9 @@ object AppConfig {
     const val BROADCAST_ACTION_ACTIVITY = "$ANG_PACKAGE.action.activity"
     const val BROADCAST_ACTION_WIDGET_CLICK = "$ANG_PACKAGE.action.widget.click"
 
+    /** Messages for a running SubscriptionUpdateService, which a broadcast delivers without starting it. */
+    const val BROADCAST_ACTION_SUBSCRIPTION = "$ANG_PACKAGE.action.subscription"
+
     /** Tasker extras. */
     const val TASKER_EXTRA_BUNDLE = "com.twofortyfouram.locale.intent.extra.BUNDLE"
     const val TASKER_EXTRA_STRING_BLURB = "com.twofortyfouram.locale.intent.extra.BLURB"
@@ -213,6 +216,18 @@ object AppConfig {
 
     const val MSG_SUB_UPDATE_START = 8
     const val MSG_SUB_UPDATE_CANCEL = 81
+
+    /**
+     * Ends the test phase of the subscription updates that run or wait: their tests stop and they start no more,
+     * while their downloads go on. Sent on [BROADCAST_ACTION_SUBSCRIPTION].
+     */
+    const val MSG_SUB_UPDATE_CANCEL_TEST = 82
+
+    /**
+     * Servers, subscriptions or test results changed away from the main screen, which reloads them;
+     * content is the ID of the subscription, or empty for several.
+     */
+    const val MSG_SERVERS_CHANGED = 9
 
     /** Notification channel IDs and names. */
     // Use a new ID because Android does not let an app raise an existing channel's importance.

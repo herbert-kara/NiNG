@@ -17,6 +17,7 @@ import com.v2ray.ang.contracts.IDialerService
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.dto.ConnectionTestResult
 import com.v2ray.ang.dto.OutboundTrafficStat
+import com.v2ray.ang.dto.SubscriptionUpdateMessage
 import com.v2ray.ang.dto.TestServiceMessage
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.BrowserDialerMode
@@ -181,10 +182,15 @@ object CoreServiceManager {
         cancelAetherWarmUp()
         // Starting a configuration ends the config tests, whatever the configuration: that is what a start
         // means to the user, and the tests spawn Aether cores of their own, which a session's core must not
-        // come up beside, on the same key or with Psiphon on the same datastore. A reload keeps the
-        // session's place and leaves the tests alone.
+        // come up beside, on the same key or with Psiphon on the same datastore. The same goes for the test
+        // phase of subscription updates, whose downloads go on. A reload keeps the session's place and
+        // leaves the tests alone.
         if (!isReload) {
             MessageHelper.sendMsg2TestService(service, TestServiceMessage(key = AppConfig.MSG_MEASURE_CONFIG_CANCEL))
+            MessageHelper.sendMsg2SubscriptionService(
+                service,
+                SubscriptionUpdateMessage(AppConfig.MSG_SUB_UPDATE_CANCEL_TEST, forcedUpdate = false)
+            )
         }
         // One core serves every Aether outbound of the configuration: the selected profile itself, the
         // entry hop of its chain, a routing target, a policy-group member, or the SOCKS outbounds of a

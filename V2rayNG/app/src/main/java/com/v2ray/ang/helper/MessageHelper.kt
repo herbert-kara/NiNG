@@ -133,6 +133,11 @@ object MessageHelper {
                     ctx.stopService(intent)
                 }
 
+                AppConfig.MSG_SUB_UPDATE_CANCEL_TEST -> {
+                    // A broadcast reaches only a running service; a service intent would start one to cancel nothing.
+                    sendMsg(ctx, AppConfig.BROADCAST_ACTION_SUBSCRIPTION, message.key, message)
+                }
+
                 else -> {
                     ctx.startService(intent)
                 }

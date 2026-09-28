@@ -74,6 +74,7 @@ class MainRepository(
                     requestId
                 )
                 AppConfig.MSG_MEASURE_CONFIG_CANCEL -> MainServiceEvent.MeasureConfigCancelled(requestId)
+                AppConfig.MSG_SERVERS_CHANGED -> MainServiceEvent.ServersChanged
 
                 else -> null
             }

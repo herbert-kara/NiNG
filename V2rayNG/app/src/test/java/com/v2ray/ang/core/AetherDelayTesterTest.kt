@@ -4,8 +4,13 @@ import com.v2ray.ang.core.AetherDelayTester.Route
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherProtocol
 import com.v2ray.ang.enums.EConfigType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -15,6 +20,7 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
@@ -193,11 +199,47 @@ class AetherDelayTesterTest {
         }
     }
 
+    @Test
+    fun aCancelledTestEndsItsProbeAtOnce() {
+        StallingSocksStub().use { socks ->
+            runBlocking {
+                val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(AetherDelayTester.TEST_BUDGET_MS)
+                val probe = launch(Dispatchers.Default) {
+                    AetherDelayTester.cancellableRequestDelay(socks.port, "http://127.0.0.1:1/generate_204", deadline)
+                }
+                assertTrue("the probe did not connect", socks.awaitClient(5_000))
+                val started = System.nanoTime()
+                probe.cancelAndJoin()
+                val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+                // Its request would otherwise wait for the rest of the 12-second budget, and keep the tunnel up.
+                assertTrue("ended after $elapsedMs ms", elapsedMs < 2_000)
+            }
+        }
+    }
+
+    @Test
+    fun aProbeRequestThatStartsAfterItsTestEndedIsCancelled() {
+        val client = OkHttpClient()
+        val request = Request.Builder().url("http://127.0.0.1:1/").build()
+        val calls = AetherDelayTester.ProbeCalls()
+
+        val running = calls.start(client.newCall(request))
+        calls.cancel()
+        val late = calls.start(client.newCall(request))
+
+        assertTrue(running.isCanceled())
+        assertTrue(late.isCanceled())
+    }
+
     /** Accepts connections and never answers, like a tunnel whose far end is gone. */
     private class StallingSocksStub : AutoCloseable {
         private val server = ServerSocket(0, 50, InetAddress.getLoopbackAddress())
         private val clients = mutableListOf<Socket>()
+        private val connected = CountDownLatch(1)
         val port: Int get() = server.localPort
+
+        /** Whether a client connected within [timeoutMs]. */
+        fun awaitClient(timeoutMs: Long): Boolean = connected.await(timeoutMs, TimeUnit.MILLISECONDS)
 
         init {
             thread(isDaemon = true) {
@@ -208,6 +250,7 @@ class AetherDelayTesterTest {
                         return@thread
                     }
                     synchronized(clients) { clients.add(client) }
+                    connected.countDown()
                 }
             }
         }

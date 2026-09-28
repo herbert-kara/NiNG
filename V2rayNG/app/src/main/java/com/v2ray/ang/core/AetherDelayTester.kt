@@ -10,12 +10,16 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SpeedtestManager
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okio.blackholeSink
@@ -55,7 +59,7 @@ object AetherDelayTester {
     }
 
     suspend fun measure(context: Context, guid: String, profile: ProfileItem, url: String): Long =
-        measureVia(context, guid, AetherCore.of(profile)) { port, deadline -> withContext(Dispatchers.IO) { requestDelay(port, url, deadline) } }
+        measureVia(context, guid, AetherCore.of(profile)) { port, deadline -> cancellableRequestDelay(port, url, deadline) }
 
     /**
      * Runs [probe] against [core]: the live session when it runs this core, a test tunnel on a port
@@ -191,10 +195,50 @@ object AetherDelayTester {
     }
 
     /**
-     * The best of up to [ATTEMPTS] requests through the SOCKS port at [port], each given what is
-     * left of the budget ending at [deadline]; -1 when none of them was answered in time.
+     * [requestDelay], which a cancelled test ends at once. A cancelled coroutine does not interrupt the
+     * thread that its requests block, so they are cancelled from here: they would otherwise keep a test
+     * tunnel up for the rest of the budget, also beside a session that starts meanwhile.
      */
-    internal fun requestDelay(port: Int, url: String, deadline: Long = deadlineAfter(TEST_BUDGET_MS)): Long {
+    internal suspend fun cancellableRequestDelay(port: Int, url: String, deadline: Long): Long = coroutineScope {
+        val calls = ProbeCalls()
+        val probe = async(Dispatchers.IO) { requestDelay(port, url, deadline, calls) }
+        try {
+            probe.await()
+        } catch (e: CancellationException) {
+            calls.cancel()
+            throw e
+        }
+    }
+
+    /** The requests of a probe, which [cancel] ends; a request that starts after it is cancelled as it starts. */
+    internal class ProbeCalls {
+        private val calls = mutableListOf<Call>()
+        private var cancelled = false
+
+        @Synchronized
+        fun start(call: Call): Call {
+            if (cancelled) call.cancel() else calls += call
+            return call
+        }
+
+        @Synchronized
+        fun cancel() {
+            cancelled = true
+            calls.forEach(Call::cancel)
+        }
+    }
+
+    /**
+     * The best of up to [ATTEMPTS] requests through the SOCKS port at [port], each given what is
+     * left of the budget ending at [deadline]; -1 when none of them was answered in time. Its
+     * requests start through [calls].
+     */
+    internal fun requestDelay(
+        port: Int,
+        url: String,
+        deadline: Long = deadlineAfter(TEST_BUDGET_MS),
+        calls: ProbeCalls = ProbeCalls(),
+    ): Long {
         val request = try {
             Request.Builder().url(url).build()
         } catch (_: IllegalArgumentException) {
@@ -214,7 +258,7 @@ object AetherDelayTester {
                     .connectTimeout(remaining, TimeUnit.MILLISECONDS)
                     .callTimeout(remaining, TimeUnit.MILLISECONDS)
                     .build()
-                val time = timedRequest(attempt, request) ?: return@repeat
+                val time = timedRequest(attempt, request, calls) ?: return@repeat
                 if (best < 0 || time < best) best = time
             }
             best
@@ -226,9 +270,9 @@ object AetherDelayTester {
 
     private fun deadlineAfter(ms: Long): Long = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ms)
 
-    private fun timedRequest(client: OkHttpClient, request: Request): Long? = try {
+    private fun timedRequest(client: OkHttpClient, request: Request, calls: ProbeCalls): Long? = try {
         val started = System.nanoTime()
-        client.newCall(request).execute().use { response ->
+        calls.start(client.newCall(request)).execute().use { response ->
             response.body.source().readAll(blackholeSink())
             if (response.code == 200 || response.code == 204) {
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)

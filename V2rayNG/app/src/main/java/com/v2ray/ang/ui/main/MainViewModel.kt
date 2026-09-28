@@ -427,6 +427,8 @@ class MainViewModel(
                     resetTestStatus()
                 }
             }
+
+            MainServiceEvent.ServersChanged -> setupGroupTab(forceRefresh = true)
         }
     }
 

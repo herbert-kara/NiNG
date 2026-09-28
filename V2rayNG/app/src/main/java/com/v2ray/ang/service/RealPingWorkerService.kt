@@ -21,8 +21,10 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.thread
 
 internal object RealPingExecutionLimiter {
     private val customConfigMutex = Mutex()
@@ -53,6 +55,9 @@ class RealPingWorkerService(
     private val concurrency = SettingsManager.getRealPingConcurrency()
     private val dispatcher = Executors.newFixedThreadPool(if (onlyTcp) concurrency * 2 else concurrency).asCoroutineDispatcher()
     private val scope = CoroutineScope(job + dispatcher + CoroutineName("RealPingBatchWorker"))
+
+    // Names the measurements of this batch in the native core, so that cancel() ends them and no other batch's
+    private val batch = UUID.randomUUID().toString()
 
     private val runningCount = AtomicInteger(0)
     private val totalCount = AtomicInteger(0)
@@ -95,6 +100,9 @@ class RealPingWorkerService(
 
     fun cancel() {
         job.cancel()
+        // A measurement blocks its thread in the native core, where a cancelled coroutine does not reach it. The
+        // native call runs on a thread of its own: cancel() is often called on the main thread of a service.
+        thread(name = "RealPingCancel") { CoreNativeManager.cancelOutboundDelays(batch) }
     }
 
     private fun close() {
@@ -131,7 +139,7 @@ class RealPingWorkerService(
                         ?: return@measureVia retFailure
                 }
                 RealPingExecutionLimiter.run(config.configType) {
-                    CoreNativeManager.measureOutboundDelay(content, SettingsManager.getDelayTestUrl())
+                    CoreNativeManager.measureOutboundDelay(content, SettingsManager.getDelayTestUrl(), batch)
                 }
             }
         }
@@ -151,7 +159,7 @@ class RealPingWorkerService(
         }
 
         return RealPingExecutionLimiter.run(config.configType) {
-            CoreNativeManager.measureOutboundDelay(configResult.content, SettingsManager.getDelayTestUrl())
+            CoreNativeManager.measureOutboundDelay(configResult.content, SettingsManager.getDelayTestUrl(), batch)
         }
     }
 
