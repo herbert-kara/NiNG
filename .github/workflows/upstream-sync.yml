@@ -37,7 +37,7 @@ jobs:
       - name: Merge upstream without dropping fork features
         id: merge
         env:
-          UPSTREAM: https://github.com/patterniha/PattNG.git
+          UPSTREAM: https://github.com/herbert-kara/PattNG-probe.git
         run: |
           set -euo pipefail
           git config user.name 'herbert-kara'
