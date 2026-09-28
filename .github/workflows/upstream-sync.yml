@@ -160,8 +160,14 @@ jobs:
           # id. Asking for JSON instead is the obvious move and it is not supported here: the
           # dispatch succeeds and the flag fails, so under set -e the step dies on a run that is
           # already going, and the sync reports a build that was never started.
+          # The dispatch is pinned to a ref, not a commit: --ref takes a branch or a tag, and a
+          # SHA comes back as "No ref found for: <sha>". A dispatch on a moving branch could pick
+          # up a commit that landed between the two jobs, so the merge is given a tag of its own
+          # to build from, and that tag is what build.yml is told to use.
+          build_ref="sync-$TAG"
+          git tag -f "$build_ref" "$COMMIT" && git push --force origin "$build_ref"
           url=$(gh workflow run build.yml -R herbert-kara/NiNG \
-            --ref "$COMMIT" -f release_tag="$TAG")
+            --ref "$build_ref" -f release_tag="$TAG")
           run_id="${url##*/}"
           echo "build.yml run: $run_id ($url)"
           case "$run_id" in

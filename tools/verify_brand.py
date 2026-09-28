@@ -34,6 +34,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_the_release_is_dispatched_on_a_ref_and_not_a_commit()
     check_the_sync_reports_the_commits_it_is_actually_missing()
     check_no_guard_reaches_outside_the_repository()
     check_the_workflows_are_steps_github_can_actually_dispatch()
@@ -398,6 +399,28 @@ def check_the_sync_reports_the_commits_it_is_actually_missing():
     assert 'echo "unmerged count:' in sync, (
         "the unmerged commits are listed with no count beside them, so a list that is not empty "
         "cannot be told apart from a list that is")
+
+
+def check_the_release_is_dispatched_on_a_ref_and_not_a_commit():
+    """--ref takes a branch or a tag. A commit is "No ref found for: <sha>".
+
+    The release job pinned the build to the exact merge commit, which is the right idea -- a
+    dispatch on a moving branch can pick up a commit that landed between the two jobs -- but the
+    dispatch API does not accept a SHA, so the build never started and the step died under set -e
+    on a request it had already made.
+
+    The commit is pinned to a tag of its own instead, so the pin survives and the dispatch works.
+    """
+    sync = (APP.parent.parent / ".github/workflows" / "upstream-sync.yml").read_text("utf-8")
+    assert '--ref "$COMMIT"' not in sync, (
+        "the release is dispatched with --ref \"$COMMIT\". A dispatch takes a branch or a tag and "
+        "answers a SHA with 422 No ref found, so the build never starts and the step dies on a "
+        "request it already made. Pin the merge to a tag and dispatch that.")
+    assert 'git tag -f "$build_ref" "$COMMIT"' in sync, (
+        "nothing pins the build to the merged commit any more, so a commit landing between the "
+        "sync job and the release job can be the one that gets built and shipped")
+    assert '--ref "$build_ref"' in sync, (
+        "the dispatch does not use the pinned ref, so the pin is created and then not used")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():
