@@ -35,6 +35,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_the_version_program_is_one_line_and_has_no_escapes()
     check_the_release_calls_the_build_workflow_rather_than_dispatching_it()
     check_the_sync_reports_the_commits_it_is_actually_missing()
     check_no_guard_reaches_outside_the_repository()
@@ -433,6 +434,37 @@ def check_the_release_calls_the_build_workflow_rather_than_dispatching_it():
     assert "tag: ${{ steps.version.outputs.tag }}" in sync, (
         "the sync job does not publish the tag it derived, so the release job is handed an empty "
         "release_tag and build.yml's release_tag != '' gate skips the release")
+
+
+def check_the_version_program_is_one_line_and_has_no_escapes():
+    """Three versions of this jq program passed the workflow check and failed on the runner.
+
+    A multi-line --jq program inside a block scalar is legal YAML -- the lines just become part of
+    the shell string -- and the shell then runs a program that is not the one that was written.
+    Backslashes written for jq arrive doubled, because the block scalar does not read escapes, so
+    the regex matches nothing and the tag comes back empty. Then split("[.]") was trusted to split
+    on a dot, and it returns the string unchanged, so a three-part version came out as one number
+    and tonumber refused it. Each of those is a run that fails on a line of shell rather than on
+    anything a check here could see.
+
+    So the program is one line, with no backslash in it, and a check says so. A version program
+    that cannot be read in the file that runs it is not a program.
+    """
+    sync = (APP.parent.parent / ".github/workflows" / "upstream-sync.yml").read_text("utf-8")
+    start = sync.find("tag=$(gh release list")
+    assert start > 0, "the sync no longer derives a version at all"
+    block = sync[start:sync.find("echo \"next release", start)]
+    program = block[block.find("--jq '") + 6:block.rfind("'")]
+    assert "\\" not in program, (
+        "the version program carries a backslash. A block scalar does not read escapes, so what "
+        "jq receives is not what is written here, and the program matches nothing instead of "
+        "failing loudly")
+    assert "\\n" not in block and block.count("--jq") == 1, (
+        "the version program spans lines inside a block scalar. That is valid YAML and an "
+        "unrunnable program: the shell gets a different jq than the one written here")
+    assert "split(\"/[.]/\")" not in program, (
+        "the version program splits on \"[.]\", which returns the string unchanged, so a "
+        "three-part version reaches tonumber whole and the step dies on a version number")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():
