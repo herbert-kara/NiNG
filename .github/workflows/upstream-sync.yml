@@ -150,9 +150,17 @@ jobs:
           # Waiting for the run is the point -- a dispatch that is not awaited reports success
           # while the build is still red, and the sync looks healthy on a release that never
           # happened.
-          run_id=$(gh workflow run build.yml -R herbert-kara/NiNG \
-            --ref "$COMMIT" -f release_tag="$TAG" --json databaseId --jq .databaseId)
-          echo "build.yml run: $run_id"
+          # gh workflow run prints the URL of the run it started, and that URL ends in the run
+          # id. Asking for JSON instead is the obvious move and it is not supported here: the
+          # dispatch succeeds and the flag fails, so under set -e the step dies on a run that is
+          # already going, and the sync reports a build that was never started.
+          url=$(gh workflow run build.yml -R herbert-kara/NiNG \
+            --ref "$COMMIT" -f release_tag="$TAG")
+          run_id="${url##*/}"
+          echo "build.yml run: $run_id ($url)"
+          case "$run_id" in
+            ''|*[!0-9]*) echo "::error::could not read a run id from '$url'"; exit 1 ;;
+          esac
           gh run watch "$run_id" -R herbert-kara/NiNG --exit-status
       - name: Publish it, so the in-app updater can see the new version
         env:
