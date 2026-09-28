@@ -488,8 +488,18 @@ def check_no_logging_survives_in_a_path_a_unit_test_constructs():
     vm = APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt"
     text = vm.read_text("utf-8")
     start = text.index("    init {")
-    end = text.index("\n    }", start)
-    block = text[start:end]
+    # the init block runs to the closing brace at this indent, not to the first one: a nested
+    # brace from an if or a lambda inside it is not the end of the constructor
+    depth, i = 0, start
+    while i < len(text):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    block = text[start:i]
     assert "LogUtil." not in block and "Log." not in block, (
         "MainViewModel's init logs again. A unit test constructs this ViewModel, android.util.Log "
         "is not mocked, and the constructor throws -- which is how one diagnostic line stopped a "
@@ -1658,28 +1668,24 @@ def check_flag_diagnostics_use_a_level_that_survives_the_default():
     # one cannot bypass the check by being unnamed here.
     # Count the call sites by their message, not by scanning forward from the call: the messages
     # are built with string interpolation, so the text after LogUtil.w( is not the text in the log.
+    # Found by scanning the file, not by a list written out here. A named list is a second copy
+    # of the set, and the two drift: one of these was deleted from the code and the guard kept
+    # looking for it, so the check stopped being able to run at all. The constructor line is gone
+    # because a unit test builds this ViewModel and android.util.Log is not mocked there.
     found = 0
-    for message in ("flag init: collectors starting", "flag init: verdict walk",
-                    "flag init: country walk", "verdict targets=", "country targets=",
-                    "flag walk $kind", "country lookup ${"):
-        at = vm.index(message)
-        call = vm[:at].rsplit("LogUtil.", 1)[1][0]
-        level = {"v": 2, "d": 3, "i": 4, "w": 5, "e": 6}[call]
+    for m in re.finditer(r'LogUtil\.([vdiwe])\(\s*AppConfig\.TAG,\s*"(flag |country |verdict |onOutcome)', vm):
+        level = {"v": 2, "d": 3, "i": 4, "w": 5, "e": 6}[m.group(1)]
         assert level >= floor, (
-            "the diagnostic \"" + message + "\" is logged at " + call + " but the default level "
+            "a diagnostic on the flag path is logged at " + m.group(1) + " but the default level "
             "is \"" + default + "\", so a stock install discards it and the line can never be "
             "observed. A diagnostic nobody can see is the failure mode this guard exists to "
             "prevent: an empty logcat read as untested code.")
         found += 1
-    assert found == 7, (
-        "found " + str(found) + " flag diagnostics, expected 7. Each one is checked against the "
-        "level a stock install keeps, so a name added to this list is checked without being "
-        "written down twice, and a line added to the code without being added here is not "
-        "checked at all -- which is how onOutcome was logged at INFO for eight releases.")
-    assert found >= 7, (
-        "only " + str(found) + " flag diagnostics were found, and there are seven: the collector "
-        "start, the two walk entries, the two target counts, the two walk records. A guard that "
-        "counts its own samples instead of the real set will be satisfied by a partial file.")
+    assert found >= 6, (
+        "found " + str(found) + " flag diagnostics, expected at least 6: the two walk entries, "
+        "the two target counts, and the two walk records. Counting the real set means a line "
+        "added to the code is checked without being written down a second time -- which is how "
+        "onOutcome went unlogged at INFO for eight releases.")
 
 
 def check_the_flag_path_says_where_it_stops():
@@ -1700,9 +1706,13 @@ def check_the_flag_path_says_where_it_stops():
     """
     vm = (APP / "src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt").read_text("utf-8")
     for line, why in (
-        ("flag init: collectors starting",
-         "nothing records whether the ViewModel built the flag collectors at all, which is the "
-         "first question when the whole path is silent"),
+        ("flag init: verdict walk on group",
+         "nothing records whether the flag collectors ran at all, which is the first question "
+         "when the whole path is silent. The entry line used to sit in the ViewModel's "
+         "constructor, and that is where it had to go: upstream's own test constructs a "
+         "MainViewModel, android.util.Log is not mocked off a device, and the constructor threw "
+         "on 489 of 490 tests passing. The collectors are the thing being reported on, and they "
+         "are reached without the constructor."),
         ("flag init: verdict walk",
          "nothing records that the verdict collector started, so a group that never emits and a "
          "collector that never ran look the same"),
