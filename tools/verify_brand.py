@@ -1,5 +1,6 @@
 """Static NiNG identity checks; Android compilation remains in CI."""
 import subprocess
+import sys
 from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
@@ -29,6 +30,7 @@ def verify():
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
+    check_the_workflows_are_steps_github_can_actually_dispatch()
     check_the_upstream_sync_can_actually_push()
     check_the_files_the_sync_reads_line_by_line_have_unix_line_endings()
     check_a_reader_keeps_the_listener_a_latency_test_drops()
@@ -327,6 +329,28 @@ def check_the_upstream_sync_can_actually_push():
     assert 'gh release view "$tag"' in sync, (
         "nothing stops the sync from publishing over a tag that exists, which replaces an APK "
         "that is already installed on someone's phone.")
+
+
+def check_the_workflows_are_steps_github_can_actually_dispatch():
+    """A mis-indented step header parses as a string, so PyYAML passes and the API refuses.
+
+    The sync lost a step this way and came back as HTTP 422 when the release path tried to use
+    it. Every other check on this tree would have passed that file, because the file was valid
+    YAML -- it just was not a workflow. The step-level checker walks the jobs and names the steps
+    that are gone, so the failure says which stage vanished rather than which line is indented
+    wrongly.
+    """
+    import subprocess as _sp
+    script = APP.parent.parent / "tools/verify_workflow_steps.py"
+    if not script.exists():
+        assert False, "tools/verify_workflow_steps.py is missing: nothing would catch a workflow "\
+            "that parses but cannot be dispatched, which is the shape the sync failure had"
+    r = _sp.run([sys.executable, str(script)], capture_output=True, text=True)
+    assert r.returncode == 0, (
+        "the workflows do not survive a step-level check: "
+        + (r.stdout or r.stderr).strip().splitlines()[0][:150]
+        + " -- a step header at the wrong indent is absorbed into the previous run block, which "
+        "parses fine and then leaves the job with fewer steps than it names")
 
 
 def check_a_modifier_extension_is_imported_not_a_member():

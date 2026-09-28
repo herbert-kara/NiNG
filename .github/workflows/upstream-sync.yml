@@ -137,7 +137,7 @@ jobs:
             echo "::error::$tag already exists. Someone released while this run was merging; re-run."
             exit 1
           fi
-           - name: Build the signed release from the merged commit and wait for it
+      - name: Build the signed release from the merged commit and wait for it
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
