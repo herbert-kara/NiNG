@@ -577,20 +577,34 @@ object AngConfigManager {
     /**
      * Sorts servers by test results for a subscription.
      *
-     * @param subId The subscription ID.
+     * Ordered by the score from the multi-sample run, falling back to the delay. Sorting on the
+     * delay alone ranked a server that answered once at 60ms above one that answers every time at
+     * 150ms, which is the opposite of what a list of servers is for. The delay is still the
+     * tiebreaker, so a row from an older build that has no score keeps sorting the way it did.
      */
     fun sortByTestResultsForSub(subId: String) {
         val serverList = MmkvManager.decodeServerList(subId)
         if (serverList.isEmpty()) return
 
+        // A named row rather than nested pairs: the three keys are what the order is made of, and
+        // a tuple of a tuple hides which one a comparator is reading.
+        data class Ranked(val guid: String, val score: Int, val delay: Long)
+
         val sorted = serverList
             .map { guid ->
-                val delay =
-                    MmkvManager.decodeServerAffiliationInfo(guid)?.testDelayMillis ?: 0L
-                guid to if (delay <= 0L) Long.MAX_VALUE else delay
+                val aff = MmkvManager.decodeServerAffiliationInfo(guid)
+                val delay = aff?.testDelayMillis ?: 0L
+                val score = aff?.testScore ?: -1
+                Ranked(guid, if (score > 0) score else 0, if (delay <= 0L) Long.MAX_VALUE else delay)
             }
-            .sortedBy { it.second }
-            .map { it.first }
+            .sortedWith(
+                // guid last so two servers that measured identically keep their original order
+                // instead of being reshuffled by a later run.
+                compareByDescending<Ranked> { it.score }
+                    .thenBy { it.delay }
+                    .thenBy { it.guid }
+            )
+            .map { it.guid }
             .toMutableList()
         MmkvManager.encodeServerList(sorted, subId)
     }

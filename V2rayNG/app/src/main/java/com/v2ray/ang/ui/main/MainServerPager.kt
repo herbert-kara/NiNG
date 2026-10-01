@@ -330,6 +330,20 @@ private fun ServerListItem(
     } else {
         stringResource(R.string.server_test_delay_value, row.testDelayMillis)
     }
+    // The spread between the fastest and the slowest sample, and the share of samples that
+    // answered at all. Both are absent for a row measured before this existed, and a row with a
+    // delay and no spread says less than it used to -- so they are added to the same line rather
+    // than given their own, which would push the layout the width of the list along.
+    val testSpread = if (row.testJitterMillis > 0L) {
+        stringResource(R.string.server_test_jitter_value, row.testJitterMillis)
+    } else {
+        null
+    }
+    val testDelivery = if (row.testLossPercent >= 0 && row.testDelayMillis != 0L) {
+        stringResource(R.string.server_test_delivery_value, 100 - row.testLossPercent)
+    } else {
+        null
+    }
     val selectedStateDescription = if (isSelected) {
         stringResource(R.string.acc_selected_server)
     } else {
@@ -449,7 +463,20 @@ private fun ServerListItem(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(row.typeDescription, style = MaterialTheme.typography.bodySmall, color = colorConfigType, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(testResult, style = MaterialTheme.typography.bodySmall, color = if (row.testDelayMillis < 0L) colorPingRed else colorPing, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // One text, one colour, one line: the delay and its two qualifiers belong to the
+                // same measurement, and splitting them across the row would let a reader compare
+                // the delay of one server against the loss of another.
+                Text(
+                    text = listOfNotNull(
+                        testResult.takeIf { it.isNotEmpty() },
+                        testSpread,
+                        testDelivery,
+                    ).joinToString("  "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (row.testDelayMillis < 0L) colorPingRed else colorPing,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

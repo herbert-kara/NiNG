@@ -26,6 +26,11 @@ internal data class ServerRowUiModel(
     val riskLevel: RiskLevel = RiskLevel.UNKNOWN,
     val riskReason: RiskReason? = null,
     val flagStatus: FlagStatus = FlagStatus.UNKNOWN,
+    // What the last batch test learned beyond the delay. Absent (-1) when the run predates
+    // multi-sample testing, so a row can say it knows nothing rather than claiming zero jitter.
+    val testJitterMillis: Long = -1L,
+    val testLossPercent: Int = -1,
+    val testScore: Int = -1,
 )
 
 internal data class ServerGroupUiState(
@@ -47,6 +52,9 @@ internal fun buildServerRowUiModel(
             ?: AngConfigManager.generateDescription(profile),
         typeDescription = serverProtocolDescription(profile),
         testDelayMillis = server.testDelayMillis,
+        testJitterMillis = server.testJitterMillis,
+        testLossPercent = server.testLossPercent,
+        testScore = server.testScore,
         subscriptionBadge = subscriptionRemarks.firstOrNull()?.toString().orEmpty(),
         riskLevel = risk.level,
         riskReason = risk.primary?.reason,

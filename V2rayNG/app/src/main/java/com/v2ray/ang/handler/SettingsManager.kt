@@ -403,6 +403,22 @@ object SettingsManager {
      * Get real ping concurrency.
      * @return The number of concurrent real-ping tests (clamped to 1..64).
      */
+    /**
+     * How many times each server is measured in a real test.
+     *
+     * Three is the smallest number of samples that has a median at all, and a fixed count means the
+     * number in a row and the order of the list mean the same thing on every install: a score
+     * computed from two samples is not comparable with one computed from five, so a setting here
+     * would quietly break the comparison the score exists for.
+     */
+    fun getRealPingSampleCount(): Int = REAL_PING_SAMPLE_COUNT
+
+    /**
+     * Long enough that the next sample is not the tail of the same TCP connection, short enough that
+     * a 100-server batch stays a batch rather than a coffee break.
+     */
+    fun getRealPingSampleGapMillis(): Long = REAL_PING_SAMPLE_GAP_MS
+
     fun getRealPingConcurrency(): Int {
         val value = MmkvManager.decodeSettingsString(AppConfig.PREF_REAL_PING_CONCURRENCY)?.toIntOrNull() ?: 16
         return value.coerceIn(1, 128)
@@ -601,4 +617,10 @@ object SettingsManager {
         }
     }
 
+
+/** How many times a real test measures each server; see getRealPingSampleCount. */
+private const val REAL_PING_SAMPLE_COUNT = 3
+
+/** The pause between samples of one server; see getRealPingSampleGapMillis. */
+private const val REAL_PING_SAMPLE_GAP_MS = 350L
 }

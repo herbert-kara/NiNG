@@ -51,27 +51,55 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.regex.PatternSyntaxException
 
-private fun applyTestDelayResults(
+/**
+ * What a finished measurement did to a server, so the row can show the whole verdict rather than
+ * only the delay the test used to report.
+ */
+internal data class TestStatsUpdate(
+    val delayMillis: Long,
+    val jitterMillis: Long,
+    val lossPercent: Int,
+    val score: Int,
+)
+
+/**
+ * Applies a batch-test result to loaded servers.
+ *
+ * Every field of the update is written together, never the delay alone: a row showing a fresh
+ * delay beside the jitter and score of an earlier run describes two different measurements as
+ * though they were one, and the score is what the sort order was decided by.
+ */
+private fun applyTestStatsResults(
     servers: List<ServersCache>,
-    updates: Map<String, Long>,
+    updates: Map<String, TestStatsUpdate>,
 ): List<ServersCache> = servers.map { server ->
-    val delayMillis = updates[server.guid]
-    if (delayMillis == null || delayMillis == server.testDelayMillis) {
+    val stats = updates[server.guid]
+    if (stats == null) {
         server
     } else {
-        server.copy(testDelayMillis = delayMillis)
+        server.copy(
+            testDelayMillis = stats.delayMillis,
+            testJitterMillis = stats.jitterMillis,
+            testLossPercent = stats.lossPercent,
+            testScore = stats.score,
+        )
     }
 }
 
-private fun applyTestDelayResultsToRows(
+private fun applyTestStatsResultsToRows(
     rows: List<ServerRowUiModel>,
-    updates: Map<String, Long>,
+    updates: Map<String, TestStatsUpdate>,
 ): List<ServerRowUiModel> = rows.map { row ->
-    val delayMillis = updates[row.guid]
-    if (delayMillis == null || delayMillis == row.testDelayMillis) {
+    val stats = updates[row.guid]
+    if (stats == null) {
         row
     } else {
-        row.copy(testDelayMillis = delayMillis)
+        row.copy(
+            testDelayMillis = stats.delayMillis,
+            testJitterMillis = stats.jitterMillis,
+            testLossPercent = stats.lossPercent,
+            testScore = stats.score,
+        )
     }
 }
 
@@ -129,7 +157,7 @@ class MainViewModel(
     private var selectedGroupLoadJob: Job? = null
     private var reloadJob: Job? = null
     private var testResultFlushJob: Job? = null
-    private val pendingTestResults = linkedMapOf<String, Long>()
+    private val pendingTestResults = linkedMapOf<String, TestStatsUpdate>()
 
     private val testRequests = MainTestRequests()
     private var bulkTestJob: Job? = null
@@ -428,7 +456,15 @@ class MainViewModel(
     }
 
     private fun queueTestResult(result: RealPingResult, request: MainTestRequests.Bulk) {
-        pendingTestResults[result.guid] = result.delayMillis
+        // The whole verdict is queued, not just the delay: the row's stability numbers and the
+        // score the list will be sorted by come from this same run, and a later partial update
+        // would leave them describing a measurement the row no longer shows.
+        pendingTestResults[result.guid] = TestStatsUpdate(
+            delayMillis = result.delayMillis,
+            jitterMillis = result.jitterMillis,
+            lossPercent = result.lossPercent,
+            score = result.score,
+        )
         if (testResultFlushJob?.isActive == true) return
 
         testResultFlushJob = viewModelScope.launch {
@@ -447,7 +483,7 @@ class MainViewModel(
             val drained = pendingTestResults.toMap()
             pendingTestResults.clear()
             groupDataCache[request.groupId]?.let { cached ->
-                groupDataCache[request.groupId] = applyTestDelayResults(cached, drained)
+                groupDataCache[request.groupId] = applyTestStatsResults(cached, drained)
             }
             drained
         }
@@ -455,8 +491,8 @@ class MainViewModel(
         if (testRequests.bulk?.id != request.id) return
         mutableServerGroupState(request.groupId).update { current ->
             current.copy(
-                servers = applyTestDelayResults(current.servers, updates),
-                rows = applyTestDelayResultsToRows(current.rows, updates),
+                servers = applyTestStatsResults(current.servers, updates),
+                rows = applyTestStatsResultsToRows(current.rows, updates),
             )
         }
         // A measured delay is the moment the user is actually looking at a row, so the lookup for
@@ -723,7 +759,10 @@ class MainViewModel(
             ServersCache(
                 guid = guid,
                 profile = profile.copy(),
-                testDelayMillis = affiliation?.testDelayMillis ?: 0L
+                testDelayMillis = affiliation?.testDelayMillis ?: 0L,
+                testJitterMillis = affiliation?.testJitterMillis ?: -1L,
+                testLossPercent = affiliation?.testLossPercent ?: -1,
+                testScore = affiliation?.testScore ?: -1,
             )
         }
 
@@ -1220,12 +1259,25 @@ class MainViewModel(
         mutableServerGroupState(groupId).update { current ->
             current.copy(
                 servers = current.servers.map { server ->
+                    // The stability fields go with the delay: a row cleared for a re-test that
+                    // still shows the old score would claim a verdict the new run has not made
+                    // yet, and the list would be sorted by a measurement that no longer exists.
                     if (server.testDelayMillis == 0L) server
-                    else server.copy(testDelayMillis = 0L)
+                    else server.copy(
+                        testDelayMillis = 0L,
+                        testJitterMillis = -1L,
+                        testLossPercent = -1,
+                        testScore = -1,
+                    )
                 },
                 rows = current.rows.map { row ->
                     if (row.testDelayMillis == 0L) row
-                    else row.copy(testDelayMillis = 0L)
+                    else row.copy(
+                        testDelayMillis = 0L,
+                        testJitterMillis = -1L,
+                        testLossPercent = -1,
+                        testScore = -1,
+                    )
                 }
             )
         }
@@ -1250,7 +1302,12 @@ class MainViewModel(
                     groupDataCache[groupId]?.let { cached ->
                         groupDataCache[groupId] = cached.map { server ->
                             if (server.guid !in resetGuids || server.testDelayMillis == 0L) server
-                            else server.copy(testDelayMillis = 0L)
+                            else server.copy(
+                                testDelayMillis = 0L,
+                                testJitterMillis = -1L,
+                                testLossPercent = -1,
+                                testScore = -1,
+                            )
                         }
                     }
                 }

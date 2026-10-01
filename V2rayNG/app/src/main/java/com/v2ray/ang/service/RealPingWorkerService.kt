@@ -5,6 +5,7 @@ import com.v2ray.ang.core.AetherDelayTester
 import com.v2ray.ang.core.CoreConfigManager
 import com.v2ray.ang.core.CoreNativeManager
 import com.v2ray.ang.dto.RealPingEvent
+import com.v2ray.ang.dto.RealPingSample
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.isNotNullEmpty
@@ -13,6 +14,7 @@ import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.SpeedtestManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -59,6 +61,9 @@ class RealPingWorkerService(
     // Names the measurements of this batch in the native core, so that cancel() ends them and no other batch's
     private val batch = UUID.randomUUID().toString()
 
+    private val sampleCount = SettingsManager.getRealPingSampleCount()
+    private val sampleGapMillis = SettingsManager.getRealPingSampleGapMillis()
+
     private val runningCount = AtomicInteger(0)
     private val totalCount = AtomicInteger(0)
 
@@ -68,9 +73,24 @@ class RealPingWorkerService(
             scope.launch {
                 runningCount.incrementAndGet()
                 try {
-                    val result = if (onlyTcp) startTcping(guid) else startRealPing(guid)
+                    val stats = if (onlyTcp) {
+                        // TCP reachability is a yes/no about a port, so extra samples say nothing new
+                        // about it: a port that answered once is open. Only the real test repeats.
+                        val once = startTcping(guid)
+                        RealPingSample.summarize(listOf(once))
+                    } else {
+                        measureRepeatedly(guid)
+                    }
                     if (scope.isActive) {
-                        onEvent(RealPingEvent.Result(guid, result))
+                        onEvent(
+                            RealPingEvent.Result(
+                                guid = guid,
+                                delayMillis = stats.delayMillis,
+                                jitterMillis = stats.jitterMillis,
+                                lossPercent = stats.lossPercent,
+                                score = stats.score,
+                            )
+                        )
                     }
                 } catch (_: Throwable) {
                     // ignore
@@ -96,6 +116,35 @@ class RealPingWorkerService(
                 close()
             }
         }
+    }
+
+    /**
+     * Measures one profile several times and reports what the samples together say.
+     *
+     * The samples are spaced rather than back to back: two measurements in the same second share
+     * the same congestion, the same DNS answer and the same core warm-up, so they would report the
+     * same number twice and the spread would always read as zero. A server that has to buffer a
+     * full window before it answers -- which is what makes a tunnel feel slow in a call -- is only
+     * visible once the connection is not new.
+     *
+     * A sample that fails still counts. Dropping failures would make loss read as zero for exactly
+     * the servers that are least dependable, and the whole point of repeating is that loss is
+     * visible at all.
+     */
+    private suspend fun measureRepeatedly(guid: String): RealPingSample.Stats {
+        val samples = ArrayList<Long>(sampleCount)
+        repeat(sampleCount) { index ->
+            if (!scope.isActive) {
+                // Cancelled mid-batch: keep what was measured rather than padding with failures
+                // that would report the server as lossy when the user stopped the test.
+                if (index == 0) return RealPingSample.summarize(samples)
+            }
+            samples.add(startRealPing(guid))
+            if (index < sampleCount - 1) {
+                delay(sampleGapMillis)
+            }
+        }
+        return RealPingSample.summarize(samples)
     }
 
     fun cancel() {

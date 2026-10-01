@@ -17,6 +17,7 @@ import com.v2ray.ang.extension.serializable
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.AppLocaleManager
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.helper.MessageHelper
 import com.v2ray.ang.helper.NotificationHelper
 import com.v2ray.ang.util.LogUtil
@@ -151,11 +152,24 @@ class CoreTestService : Service() {
             }
 
             is RealPingEvent.Result -> {
-                MmkvManager.encodeServerTestDelayMillis(event.guid, event.delayMillis)
+                MmkvManager.encodeServerTestStats(
+                    guid = event.guid,
+                    delayMillis = event.delayMillis,
+                    jitterMillis = event.jitterMillis,
+                    lossPercent = event.lossPercent,
+                    score = event.score,
+                )
                 MessageHelper.sendMsg2UI(
                     this,
                     AppConfig.MSG_MEASURE_CONFIG_SUCCESS,
-                    RealPingResult(event.guid, event.delayMillis),
+                    RealPingResult(
+                        guid = event.guid,
+                        delayMillis = event.delayMillis,
+                        jitterMillis = event.jitterMillis,
+                        lossPercent = event.lossPercent,
+                        samples = SettingsManager.getRealPingSampleCount(),
+                        score = event.score,
+                    ),
                     requestId,
                 )
             }

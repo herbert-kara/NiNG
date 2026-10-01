@@ -491,6 +491,29 @@ object MmkvManager {
     }
 
     /**
+     * Records a whole multi-sample result, so the row and the sort order both come from the same
+     * run. Writing only the delay here would leave a stale score from an earlier run beside a fresh
+     * delay, and the list would then be ordered by a measurement of a different moment.
+     */
+    fun encodeServerTestStats(
+        guid: String,
+        delayMillis: Long,
+        jitterMillis: Long,
+        lossPercent: Int,
+        score: Int,
+    ) {
+        if (guid.isBlank()) {
+            return
+        }
+        val aff = decodeServerAffiliationInfo(guid) ?: ServerAffiliationInfo()
+        aff.testDelayMillis = delayMillis
+        aff.testJitterMillis = jitterMillis
+        aff.testLossPercent = lossPercent
+        aff.testScore = score
+        serverAffStorage.encode(guid, JsonUtil.toJson(aff))
+    }
+
+    /**
      * Clears all test delay results.
      *
      * @param keys The list of server GUIDs.
@@ -498,7 +521,13 @@ object MmkvManager {
     fun clearAllTestDelayResults(keys: List<String>?) {
         keys?.forEach { key ->
             decodeServerAffiliationInfo(key)?.let { aff ->
+                // The stability fields go too: leaving them behind would let a cleared server keep
+                // the score of the run that was just discarded, and "clear results" that still
+                // sorts is not a result the user asked to clear.
                 aff.testDelayMillis = 0
+                aff.testJitterMillis = -1L
+                aff.testLossPercent = -1
+                aff.testScore = -1
                 serverAffStorage.encode(key, JsonUtil.toJson(aff))
             }
         }
