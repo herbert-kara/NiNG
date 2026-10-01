@@ -79,9 +79,24 @@ def check_the_score_survives_the_process_boundary():
         'loss count. That reconstruction reads as zero jitter, which is a better score than any '
         'server measured actually earns.')
     service = (APP / 'src/main/java/com/v2ray/ang/service/CoreTestService.kt').read_text('utf-8')
-    assert 'score = event.score' in service, (
-        'the service does not forward the score from the event into the result the UI receives, '
-        'so the row and the sort would disagree about the same run')
+    # The RealPingResult the UI receives is the one that matters, and the file passes the score to
+    # a storage call as well -- so grepping the whole file finds the string in both cases and
+    # passes either way. Read the constructor instead.
+    # rfind, not find: the import at the top of the file also spells RealPingResult, and reading
+    # from there gives a window that ends long before the constructor.
+    i = service.rfind('RealPingResult(')
+    assert i > 0, (
+        'the service no longer builds a RealPingResult, so the run reaches the UI through some '
+        'other path and this check has nothing to look at')
+    # to the end of the argument list, which is the ')' on a line of its own: the arguments
+    # contain a call of their own, so the first ')' closes getRealPingSampleCount() instead
+    end = service.find('\n                    ),', i)
+    assert end > i, 'could not find the end of the RealPingResult argument list'
+    window = service[i:end]
+    assert 'score' in window, (
+        'the RealPingResult sent to the UI does not carry the score. It is written to storage a '
+        'few lines above, which is what a whole-file search finds -- so the row and the sort '
+        'would be reading different runs while the file still contains the string.')
     vm = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt').read_text('utf-8')
     assert 'score = result.score' in vm, (
         'the ViewModel does not take the score the result carried. Recomputing it here is the '
@@ -94,6 +109,22 @@ def check_clearing_a_test_clears_the_verdict_it_produced():
     a row that claims a verdict while showing no measurement, and -- because the sort reads the
     score -- leaves the list ordered by a run that was thrown away.
     """
+    # Every site that zeroes the delay, in both files, checked by counting rather than by name:
+    # the re-test path has three of them (the visible state, the rows and the group cache) and
+    # naming them means a fourth added later is not covered.
+    vm = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt').read_text('utf-8')
+    # one pattern, not two: 'testDelayMillis = 0' is a prefix of '= 0L', so counting both counts
+    # every site twice and the comparison below is off by exactly the number of sites
+    vm_clears = len(re.findall(r'testDelayMillis = 0L?\b', vm))
+    vm_scores = vm.count('testScore = -1')
+    assert vm_clears > 0, (
+        'no site in MainViewModel clears the delay any more, so this check has nothing to compare')
+    assert vm_scores >= vm_clears, (
+        f'{vm_clears} places clear the delay and only {vm_scores} clear the score with them. The '
+        'delay and the stability fields come from one measurement, so a site that keeps the score '
+        'leaves a row claiming a verdict the new run has not made, and the list sorted by a run '
+        'that was thrown away.')
+
     for name, source in (
         ('clearAllTestDelayResults', APP / 'src/main/java/com/v2ray/ang/handler/MmkvManager.kt'),
         ('fun testAllRealPing', APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt'),
@@ -101,11 +132,18 @@ def check_clearing_a_test_clears_the_verdict_it_produced():
         text = source.read_text('utf-8')
         i = text.find(name)
         assert i > 0, f'{name} is gone from {source.name}'
-        window = text[max(0, i - 400):i + 2600]
-        if 'testDelayMillis = 0L' not in window:
+        # The body of the named function only. These field names also appear in the write path
+        # just above, so a window that starts before the function finds the assignment in the
+        # other one and passes on a clear that drops it.
+        end = text.find('\n    fun ', i + len(name))
+        body = text[i:end if end > 0 else i + 2600]
+        # The delay assignment spells the literal differently across these two call sites (0 and
+        # 0L), so match the name and not the value; requiring one spelling would skip a clear path
+        # that does exactly the right thing.
+        if 'testDelayMillis = 0' not in body:
             continue
         for field in ('testJitterMillis = -1L', 'testLossPercent = -1', 'testScore = -1'):
-            assert field in window, (
+            assert field in body, (
                 f'{name} resets the delay but not {field.split(" =")[0]}. The delay and the stability '
                 'fields are one measurement; clearing part of it leaves the row and the sort '
                 'describing a run that no longer exists.')
@@ -124,7 +162,20 @@ def check_the_row_shows_what_the_test_learned():
         assert res in pager, (
             f'the row does not render {res}. The score decides the order of the list, so a reordering '
             'with no visible reason for it reads as a bug in the sort rather than a measurement.')
-        assert field in pager, f'the row reads no {field}, so the string would be a constant'
+        # the binding that produces the string, not the whole file: the field is read in the cache
+        # and the row builder too, and a grep finds either
+        i = pager.find(res)
+        # the guard of the binding, read as the whole 'val' it belongs to: a window that ends at
+        # the string still contains the field name from the declaration above the condition, so
+        # replacing the condition with a constant passes it
+        v = pager.rfind('val ', 0, i)
+        end = pager.find('\n', pager.find('else', i))
+        decl = pager[v:end if end > v else i]
+        assert field in decl and re.search(rf'{field}\s*([<>]=?|==)\s*\S', decl), (
+            f'{res} is rendered but the binding does not compare {field} to decide whether to '
+            'render it, so the row shows a number that no longer tracks the test. The field also '
+            'appears in the row model and elsewhere in the pager, which is why this reads the '
+            'declaration rather than the file.')
 
 def check_the_new_strings_reach_every_locale_the_app_ships():
     """A key present in one locale and missing in another is English leaking into a translated app.
