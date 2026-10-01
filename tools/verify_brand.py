@@ -203,6 +203,40 @@ def check_the_new_strings_reach_every_locale_the_app_ships():
             assert f'name="{key}"' in default, f'{key} is missing from the default strings.xml'
 
 
+def check_a_manual_dispatch_can_publish():
+    """A dispatch is a person asking for a release; a run that can only make drafts makes them edit.
+
+    The draft input existed on workflow_call only, because the sync was the first caller and it
+    passes draft: false explicitly. A person dispatching by hand got the workflow_call default
+    instead -- no, they got no input at all, and GitHub rejects the dispatch with 422 Unexpected
+    inputs provided: ["draft"]. The release then came out as a draft, which the in-app updater
+    cannot see, and publishing it took a second command by hand. That second command is the step
+    that gets forgotten, so a release that built and signed and reported success was invisible to
+    every user.
+
+    The two triggers now differ deliberately: workflow_call defaults to draft because the sync
+    passes the flag explicitly anyway, and workflow_dispatch defaults to publishing.
+    """
+    import yaml
+    wf = yaml.safe_load((ROOT / '.github/workflows/build.yml').read_text(encoding='utf-8'))
+    triggers = wf.get(True, wf.get('on', {}))
+    dispatch = (triggers.get('workflow_dispatch') or {}).get('inputs') or {}
+    call = (triggers.get('workflow_call') or {}).get('inputs') or {}
+
+    assert 'draft' in dispatch, (
+        'workflow_dispatch has no draft input, so gh workflow run build.yml -f draft=false is '
+        'rejected with HTTP 422 Unexpected inputs provided. Every manual release is then built, '
+        'signed and left as a draft, which the updater does not see.')
+    assert dispatch['draft'].get('default') is False, (
+        f"workflow_dispatch's draft defaults to {dispatch['draft'].get('default')!r}. A dispatch is "
+        'someone asking for a release, so the default has to be publishing: a release that needs '
+        'a second manual command to become visible is one that silently does not ship.')
+    assert 'draft' in call and call['draft'].get('default') is True, (
+        "workflow_call's draft should keep defaulting to true. The sync passes the flag "
+        'explicitly, so this default only decides what a caller that forgets the argument gets, '
+        'and a draft is the safe thing to hand someone who has not said what they want.')
+
+
 def verify():
     gradle = (APP / 'build.gradle.kts').read_text(encoding='utf-8')
     assert 'applicationId = "com.herbertkara.ning"' in gradle
@@ -221,6 +255,7 @@ def verify():
         assert '@drawable/ic_ning_monochrome' in text
     drawer = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainDrawer.kt').read_text(encoding='utf-8')
     assert 'R.drawable.ic_ning_logo' in drawer
+    check_a_manual_dispatch_can_publish()
     check_a_batch_test_measures_more_than_once()
     check_a_sample_that_did_not_answer_still_counts()
     check_the_score_survives_the_process_boundary()

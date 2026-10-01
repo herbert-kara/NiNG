@@ -6,6 +6,15 @@ on:
         description: Optional tag for a draft prerelease (empty uploads artifacts only)
         required: false
         type: string
+      # A dispatch is a person asking for a release, so it publishes. Without this the input
+      # existed only on workflow_call, and every manual release came out as a draft that had to
+      # be published by a second command -- which is the step that gets forgotten, and a draft
+      # release is not one the in-app updater can see.
+      draft:
+        description: Publish as a draft instead of a release
+        required: false
+        default: false
+        type: boolean
   # The sync cannot use gh workflow run to call this: a workflow's own GITHUB_TOKEN is not
   # allowed to start another workflow, and the dispatch comes back 403 Resource not accessible by
   # integration. Called as a reusable workflow instead, the same run that the sync would have
