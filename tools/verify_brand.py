@@ -14,6 +14,144 @@ APP = ROOT / 'V2rayNG/app'
 TESTS = APP / "src/test/java/com/v2ray/ang"
 TEST = ROOT / 'V2rayNG/app/src/test/java'
 
+def check_a_batch_test_measures_more_than_once():
+    """One sample per server is a snapshot, and the row cannot show a difference it never measured.
+
+    The batch test took a single measurement and stored it, so a server that was briefly free
+    answered 60ms and sorted above one that answers every time at 150ms. The three numbers the row
+    now shows -- median, spread, delivery -- are all functions of more than one sample, and with a
+    single sample each of them is a constant: the median is that sample, the spread is zero, and
+    the loss is either zero or everything. So the repeat has to be in the measurement itself, not
+    in the presentation of its result.
+    """
+    worker = (APP / 'src/main/java/com/v2ray/ang/service/RealPingWorkerService.kt').read_text('utf-8')
+    i = worker.find('private suspend fun measureRepeatedly')
+    assert i > 0, (
+        'the worker measures each server once. RealPingSample.summarize exists to turn several '
+        'samples into a verdict, and a single sample makes its median, its spread and its loss '
+        'three different ways of reporting the same measurement -- which is what the row then '
+        'shows as if they were three findings.')
+    body = worker[i:worker.find('\n    fun cancel', i)]
+    assert 'repeat(' in body, 'measureRepeatedly never repeats; the name promises what the body does not do'
+    assert body.count('startRealPing') >= 1, (
+        'the repeat loop never calls startRealPing, so it repeats nothing and returns one sample')
+    # TCP reachability is a fact about a port, so repeating it is three times the wait for the
+    # same answer; the real measurement is the one that needs a distribution.
+    assert 'summarize(listOf(once))' in worker, (
+        'the TCP path is being sampled repeatedly. A port that answered once is open; the extra '
+        'samples cost a full delay test each and change nothing the row can report.')
+
+def check_a_sample_that_did_not_answer_still_counts():
+    """Dropping failed samples makes loss read as zero for the least dependable servers.
+
+    A measurement the core could not complete is reported as -1. If those are filtered out before
+    the statistics are computed, a server that failed every sample and one that answered every
+    sample produce the same loss, and the sort cannot tell them apart -- which is the entire
+    reason the measurement is repeated.
+    """
+    dto = (APP / 'src/main/java/com/v2ray/ang/dto/RealPingResult.kt').read_text('utf-8')
+    i = dto.find('fun summarize')
+    assert i > 0, 'RealPingSample.summarize is gone; the samples are not being reduced to a verdict'
+    body = dto[i:]
+    assert 'isEmpty()' in body.split('val answered')[0], (
+        'an empty sample list is no longer a failure. It used to report loss of 100%, and a run '
+        'that measured nothing would otherwise produce a row that looks measured and healthy.')
+    assert 'filter' in body and 'it > 0L' in body, (
+        'the filter that selects the samples which answered is gone from summarize')
+    assert 'samples.size - answered.size' in body, (
+        'loss is no longer computed from the samples that did not answer, so it will read as zero '
+        'for a server that never answered -- the one number that has to survive a failed run')
+    assert 'answered.isEmpty()' in body, (
+        'a run where nothing answered falls through to the median of an empty list instead of '
+        'reporting the failure that happened')
+
+def check_the_score_survives_the_process_boundary():
+    """The score is computed where the samples are, and carried -- not rebuilt from the summary.
+
+    A median plus a loss count describes a jitter of zero, so recomputing the score in the UI from
+    the numbers that crossed the process boundary scores every server as perfectly stable, and the
+    fastest one wins a list it should have lost. The samples only exist in the task process, so the
+    score has to travel with them or not be shown at all.
+    """
+    dto = (APP / 'src/main/java/com/v2ray/ang/dto/RealPingResult.kt').read_text('utf-8')
+    assert 'val score: Int = 0' in dto, (
+        'RealPingResult does not carry the score, so the UI has to rebuild it from a median and a '
+        'loss count. That reconstruction reads as zero jitter, which is a better score than any '
+        'server measured actually earns.')
+    service = (APP / 'src/main/java/com/v2ray/ang/service/CoreTestService.kt').read_text('utf-8')
+    assert 'score = event.score' in service, (
+        'the service does not forward the score from the event into the result the UI receives, '
+        'so the row and the sort would disagree about the same run')
+    vm = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt').read_text('utf-8')
+    assert 'score = result.score' in vm, (
+        'the ViewModel does not take the score the result carried. Recomputing it here is the '
+        'reconstruction the DTO field exists to avoid.')
+
+def check_clearing_a_test_clears_the_verdict_it_produced():
+    """A row cleared for a re-test must not keep the score the new run has not made yet.
+
+    The delay and the stability numbers come from one measurement. Resetting only the delay leaves
+    a row that claims a verdict while showing no measurement, and -- because the sort reads the
+    score -- leaves the list ordered by a run that was thrown away.
+    """
+    for name, source in (
+        ('clearAllTestDelayResults', APP / 'src/main/java/com/v2ray/ang/handler/MmkvManager.kt'),
+        ('fun testAllRealPing', APP / 'src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt'),
+    ):
+        text = source.read_text('utf-8')
+        i = text.find(name)
+        assert i > 0, f'{name} is gone from {source.name}'
+        window = text[max(0, i - 400):i + 2600]
+        if 'testDelayMillis = 0L' not in window:
+            continue
+        for field in ('testJitterMillis = -1L', 'testLossPercent = -1', 'testScore = -1'):
+            assert field in window, (
+                f'{name} resets the delay but not {field.split(" =")[0]}. The delay and the stability '
+                'fields are one measurement; clearing part of it leaves the row and the sort '
+                'describing a run that no longer exists.')
+
+def check_the_row_shows_what_the_test_learned():
+    """The two qualifiers only help if they are on screen; a stored number nobody sees is not a result.
+
+    Storing the spread and the loss without rendering them leaves the sort reordering a list on a
+    measurement the user cannot see, which is indistinguishable from the list being wrong.
+    """
+    pager = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainServerPager.kt').read_text('utf-8')
+    for res, field in (
+        ('R.string.server_test_jitter_value', 'testJitterMillis'),
+        ('R.string.server_test_delivery_value', 'testLossPercent'),
+    ):
+        assert res in pager, (
+            f'the row does not render {res}. The score decides the order of the list, so a reordering '
+            'with no visible reason for it reads as a bug in the sort rather than a measurement.')
+        assert field in pager, f'the row reads no {field}, so the string would be a constant'
+
+def check_the_new_strings_reach_every_locale_the_app_ships():
+    """A key present in one locale and missing in another is English leaking into a translated app.
+
+    The app declares its locales in androidResources.localeFilters, and a value added to
+    strings.xml alone falls back to English for every user whose language is not the default.
+    """
+    import xml.etree.ElementTree as ET
+    build = (APP / 'build.gradle.kts').read_text('utf-8')
+    m = re.search(r'localeFilters\s*\+=\s*listOf\((.*?)\n\s*\)', build, re.S)
+    declared = set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
+    assert declared, (
+        'could not read the localeFilters listOf(...) out of build.gradle.kts, so this check has '
+        'nothing to compare the strings against and would pass on a key that exists in no locale')
+    default = (APP / 'src/main/res/values/strings.xml').read_text('utf-8')
+    # 'en' is declared but has no values-en: it is the default bucket, so values/ is its file.
+    for loc in sorted(declared - {'en'}):
+        f = APP / f'src/main/res/values-{loc}/strings.xml'
+        assert f.exists(), f'locale {loc} is declared in localeFilters but has no strings.xml'
+        text = f.read_text('utf-8')
+        for key in ('server_test_jitter_value', 'server_test_delivery_value'):
+            assert f'name="{key}"' in text, (
+                f'{key} is missing from values-{loc}. It exists in the default strings, so a {loc} '
+                'user sees the row in English inside an otherwise translated app.')
+            assert f'name="{key}"' in default, f'{key} is missing from the default strings.xml'
+
+
 def verify():
     gradle = (APP / 'build.gradle.kts').read_text(encoding='utf-8')
     assert 'applicationId = "com.herbertkara.ning"' in gradle
@@ -32,6 +170,12 @@ def verify():
         assert '@drawable/ic_ning_monochrome' in text
     drawer = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainDrawer.kt').read_text(encoding='utf-8')
     assert 'R.drawable.ic_ning_logo' in drawer
+    check_a_batch_test_measures_more_than_once()
+    check_a_sample_that_did_not_answer_still_counts()
+    check_the_score_survives_the_process_boundary()
+    check_clearing_a_test_clears_the_verdict_it_produced()
+    check_the_row_shows_what_the_test_learned()
+    check_the_new_strings_reach_every_locale_the_app_ships()
     check_no_user_visible_upstream_brand()
     check_fork_feature_files()
     check_a_modifier_extension_is_imported_not_a_member()
