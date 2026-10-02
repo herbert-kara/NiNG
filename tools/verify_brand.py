@@ -321,6 +321,44 @@ def check_the_sync_merges_the_branch_upstream_actually_publishes_from():
         'message about refspecs and says nothing about the branch being unreadable')
 
 
+def check_the_release_tag_is_placed_on_a_ref_github_will_accept():
+    """--target takes the tip of a branch or the branch name, not an arbitrary commit.
+
+    Measured on the runner token with a throwaway workflow, because the failure names none of this:
+    a tip SHA is accepted, a branch name is accepted, no --target is accepted, and a commit that is
+    an ancestor of the tip but not the tip comes back 403 Resource not accessible by integration.
+
+    That last case is the one that happened. The release step passed --target "$SHA" with
+    github.sha, which is the tip when the run starts -- but the branch was pushed to while the
+    native build was running, so by the time the release job came to make the tag the SHA was no
+    longer the tip. Every other step was green and the message named neither the flag nor the
+    branch, so it read as a permissions problem and sent us looking at PATs and scopes.
+
+    The tag still has to sit on the commit whose APK was built, so that is checked against the
+    branch instead of assumed; if the branch moved, the run says so and stops.
+    """
+    build = (ROOT / ".github/workflows/build.yml").read_text('utf-8')
+    i = build.find('gh release create "$TAG"')
+    assert i > 0, 'the release step no longer calls gh release create'
+    line = build[build.rfind('\n', 0, i) + 1: build.find('\n', i)]
+
+    assert '--target "$SHA"' not in line, (
+        '--target is given a raw SHA. GitHub refuses a commit that is not the tip of a branch with '
+        '403 Resource not accessible by integration, which is what made a green build fail at the '
+        'release step after the branch moved; the message points at permissions, not at the flag.')
+    assert '--target "$BRANCH"' in line, (
+        'the release tag is not pinned to the branch it was built from, so the tag lands wherever '
+        'GitHub decides rather than being checked against the built commit')
+
+    # the check itself, so a moved branch is named rather than refused by the API
+    assert '$BRANCH moved to' in build, (
+        'nothing verifies that the branch still points at the built commit. Moving on --target '
+        'alone would silently tag a commit other than the one whose APK is attached.')
+    assert 'BRANCH: ${{ github.ref_name }}' in build, (
+        'BRANCH is not defined in the release step env, so --target "$BRANCH" would expand to '
+        'nothing and the tag would be created at the default branch tip without the check.')
+
+
 def verify():
     gradle = (APP / 'build.gradle.kts').read_text(encoding='utf-8')
     assert 'applicationId = "com.herbertkara.ning"' in gradle
@@ -339,6 +377,7 @@ def verify():
         assert '@drawable/ic_ning_monochrome' in text
     drawer = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainDrawer.kt').read_text(encoding='utf-8')
     assert 'R.drawable.ic_ning_logo' in drawer
+    check_the_release_tag_is_placed_on_a_ref_github_will_accept()
     check_the_sync_merges_the_branch_upstream_actually_publishes_from()
     check_no_pipe_is_truncated_under_pipefail()
     check_a_manual_dispatch_can_publish()

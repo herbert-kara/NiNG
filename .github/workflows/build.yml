@@ -365,6 +365,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.release_tag }}
           SHA: ${{ github.sha }}
+          # The branch the run was dispatched on or called from; --target needs a ref GitHub will
+          # create a tag on, and a branch name is one of the two things that works.
+          BRANCH: ${{ github.ref_name }}
         run: |
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-ning\.[0-9]+$ ]]
           # A manual dispatch leaves this a draft, which is deliberate: someone asked for a build
@@ -405,9 +408,26 @@ jobs:
             printf 'address rather than the origin, and an exact one behind a button on the row that asks\n'
             printf 'the connection itself.\n'
           } > release-notes.md
+          # --target takes a ref GitHub is willing to create a tag on, and that means the tip of
+          # a branch or the branch name itself -- not an arbitrary commit. Measured on the runner
+          # token: a tip SHA and a branch name both work, a commit that is an ancestor but not the
+          # tip comes back 403 Resource not accessible by integration, and no --target at all
+          # works. So the pin that was here broke exactly when the branch moved while the build
+          # was running, which is what happened: the release step was refused while every other
+          # step was green, and the message named neither the flag nor the branch.
+          #
+          # The tag still has to land on the commit whose APK was built, so that is checked
+          # instead of assumed. If the branch moved, the release names a version that would point
+          # at a different commit than the files beside it, and saying so is more useful than a
+          # 403 from an API call.
+          tip=$(gh api "repos/herbert-kara/NiNG/branches/$BRANCH" --jq .commit.sha)
+          if [ "$tip" != "$SHA" ]; then
+            echo "::error::$BRANCH moved to ${tip:0:8} while this build ran, so tag $TAG cannot be placed on the built commit ${SHA:0:8}. Re-run the release."
+            exit 1
+          fi
           NOTES=$(cat release-notes.md)
           pre_flag="--prerelease"
           if [ "${{ inputs.draft }}" = "false" ]; then pre_flag=""; fi
           latest_flag="--latest"
           if [ "${{ inputs.draft }}" != "false" ]; then latest_flag=""; fi
-          gh release create "$TAG" --repo herbert-kara/NiNG --target "$SHA" $draft_flag $pre_flag $latest_flag --title "NiNG $TAG" --notes "$NOTES" release-files/*
+          gh release create "$TAG" --repo herbert-kara/NiNG --target "$BRANCH" $draft_flag $pre_flag $latest_flag --title "NiNG $TAG" --notes "$NOTES" release-files/*
