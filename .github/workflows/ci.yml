@@ -5,6 +5,10 @@ on:
     branches: [my-releases]
 permissions:
   contents: read
+env:
+  # The Go line AndroidLibXrayLite's own workflow builds its AAR with; pinned so the AAR this
+  # workflow builds from the submodule is the same one upstream would publish.
+  GO_VERSION: "1.26"
 concurrency:
   group: ning-ci-${{ github.ref }}
   cancel-in-progress: true
@@ -28,14 +32,26 @@ jobs:
           cmdline-tools-version: '14742923'
           packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Download core paired with committed gitlink
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # Compiling needs Libv2ray, and the AAR that provides it is a native artifact whose symbols
+      # have to match the Kotlin that calls them. Upstream's release tag lags the commit PattNG
+      # pins, so tools/fetch-libv2ray.sh takes the release only when the tag is that commit and
+      # builds from the submodule otherwise -- which needs Go and the NDK here too.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/cache@v4
+        id: libv2ray
+        with:
+          path: V2rayNG/app/libs/libv2ray.aar
+          key: libv2ray-${{ runner.os }}-ndk29-${{ hashFiles('.git/modules/AndroidLibXrayLite/HEAD') }}
+      - name: Install the NDK the core builds against
+        if: steps.libv2ray.outputs.cache-hit != 'true'
         run: |
-          set -euo pipefail
-          tag=$(git -C AndroidLibXrayLite describe --tags --abbrev=0)
-          mkdir -p V2rayNG/app/libs
-          gh release download "$tag" --repo patterniha/AndroidLibXrayLite --pattern libv2ray.aar --dir V2rayNG/app/libs
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --channel=0 \
+            --install "ndk;29.0.14206865"
+      - name: Fetch or build libv2ray
+        if: steps.libv2ray.outputs.cache-hit != 'true'
+        run: bash tools/fetch-libv2ray.sh
       - name: Compile and unit test
         working-directory: V2rayNG
         run: |

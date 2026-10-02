@@ -73,7 +73,6 @@ object CoreConfigManager {
     fun getV2rayConfig4Speedtest(
         context: Context,
         guid: String,
-        aetherPort: Int? = null,
         keepInbound: Boolean = false,
     ): ConfigResult {
         try {
@@ -92,9 +91,6 @@ object CoreConfigManager {
             if (takesExitNodeName(dependency, configContext.resolvedOutbounds)) return exitNodeNameFailure(context, guid)
             val v2rayConfig = buildUnifiedConfig(configContext)
             postProcessForSpeedtest(v2rayConfig, keepInbound)
-            if (aetherPort != null && dependency is AetherDependency.Single) {
-                rebindAetherOutbounds(v2rayConfig.outbounds, from = dependency.core.port, port = aetherPort)
-            }
 
             // Not routed through an inbound of this configuration: a test's core of its own dials out through
             // the exit of the process's Xray, see AetherCoreManager.exitConfiguration, and the session's core,
@@ -524,12 +520,11 @@ object CoreConfigManager {
     /**
      * Trim runtime sections that are not needed for latency testing.
      */
-    private fun postProcessForSpeedtest(v2rayConfig: V2rayConfig, keepInbound: Boolean) {
+    private fun postProcessForSpeedtest(v2rayConfig: V2rayConfig, keepInbound: Boolean = false) {
         v2rayConfig.log.loglevel = MmkvManager.decodeSettingsString(AppConfig.PREF_LOGLEVEL) ?: "warning"
-        // A latency test sends nothing, so it drops the listener. A reader that has to ask a
-        // question from inside the tunnel is the opposite case: the listener is the only way the
-        // request gets out, and without it the core comes up, accepts nothing, and reports the
-        // server as unreachable.
+        // A latency test sends nothing, so the inbounds are dead weight; a config someone sends a
+        // request through needs its listener, and with none the core comes up with nothing to
+        // connect to and the request fails as though the server were unreachable.
         if (!keepInbound) v2rayConfig.inbounds.clear()
         v2rayConfig.routing.rules.clear()
         v2rayConfig.dns = null
@@ -731,18 +726,6 @@ object CoreConfigManager {
 
     /**
      * Configure inbound listeners and related runtime options.
-     */
-    /**
-     * Overrides the SOCKS port for one probe.
-     *
-     * A country probe brings this profile's core up on a port of its own, asks an IP service from
-     * inside it, and takes it back down. The port the app normally listens on belongs to the
-     * running connection, so binding a probe to it would either fail or, worse, answer the probe
-     * from the connection the user is already on -- which is a different server, and would put
-     * one profile's flag on another row.
-     *
-     * The override is read and cleared in one place, and only by the probe that set it, so a
-     * normal connection cannot pick it up.
      */
     /**
      * The port one country probe owns, or null when no probe is in flight.

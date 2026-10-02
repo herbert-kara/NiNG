@@ -182,21 +182,22 @@ jobs:
       run: |
         bash fetch-psiphon-servers.sh
 
-    - name: Fetch AndroidLibXrayLite tag
-      run: |
-        pushd AndroidLibXrayLite
-        CURRENT_TAG=$(git describe --tags --abbrev=0)
-        echo "Current tag in this repo: $CURRENT_TAG"
-        echo "CURRENT_TAG=$CURRENT_TAG" >> $GITHUB_ENV
-        popd
-
-    - name: Download libv2ray
-      uses: robinraju/release-downloader@v1.13
+    # The AAR is the native core's Kotlin binding, so its symbols have to match the Kotlin that
+    # calls them. Upstream's release tag lags the commit PattNG pins, and the download by tag then
+    # succeeds while handing over an AAR that predates the native work the Kotlin uses -- the
+    # failure is an unresolved reference at compile time, which reads as a broken merge rather than
+    # a stale artifact. tools/fetch-libv2ray.sh uses the release only when the tag is the pinned
+    # commit and builds from the submodule otherwise. Cached on the pinned commit, so only a core
+    # bump pays for the build.
+    - uses: actions/cache@v4
+      id: libv2ray
       with:
-        repository: 'patterniha/AndroidLibXrayLite'
-        tag: ${{ env.CURRENT_TAG }}
-        fileName: 'libv2ray.aar'
-        out-file-path: V2rayNG/app/libs/
+        path: V2rayNG/app/libs/libv2ray.aar
+        key: libv2ray-${{ runner.os }}-ndk29-${{ hashFiles('.git/modules/AndroidLibXrayLite/HEAD') }}
+
+    - name: Fetch or build libv2ray
+      if: steps.libv2ray.outputs.cache-hit != 'true'
+      run: bash tools/fetch-libv2ray.sh
 
     - name: Setup Java
       uses: actions/setup-java@v6.0.1
