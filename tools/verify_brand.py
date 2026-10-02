@@ -237,6 +237,45 @@ def check_a_manual_dispatch_can_publish():
         'and a draft is the safe thing to hand someone who has not said what they want.')
 
 
+def check_no_pipe_is_truncated_under_pipefail():
+    """`| head` under set -o pipefail kills the step, and the step that dies is the merge.
+
+    A pipeline where the reader stops early makes the writer take SIGPIPE and exit 141. With
+    pipefail that 141 is the status of the whole pipeline, so the step fails -- and `set -e` turns
+    that into a red run. The sync hit exactly this: the step reporting which upstream commits were
+    unmerged ended with `git log --oneline HEAD..upstream/HEAD | head -20`, and once upstream had
+    more than twenty commits the run went red at "Merge upstream without dropping fork features"
+    with exit code 141. Nothing had been merged and nothing was wrong with the merge; the report
+    of it was what failed. It stayed green only while upstream was nearly empty, so the number of
+    upstream commits decided whether the fork could sync at all.
+    """
+    import yaml
+    for wf_path in sorted((ROOT / '.github/workflows').glob('*.yml')):
+        text = wf_path.read_text(encoding='utf-8')
+        doc = yaml.safe_load(text)
+        if not isinstance(doc, dict):
+            continue
+        jobs = doc.get('jobs') or {}
+        for job_name, job in jobs.items():
+            for step in (job.get('steps') or []):
+                run = step.get('run') if isinstance(step, dict) else None
+                if not run or 'pipefail' not in run:
+                    continue
+                for n, line in enumerate(run.splitlines(), 1):
+                    body = line.strip()
+                    if not body.startswith(('git ', 'echo ', 'printf ')):
+                        continue
+                    # head / tail -n +N close the pipe; grep -m and awk exit early do too
+                    if re.search(r'\|\s*(head\b|tail\s+-n\s*\+|[a-z]+\s+-m\d|awk\s+[^|]*exit)', body):
+                        raise AssertionError(
+                            f'{wf_path.name}: job {job_name}, step {step.get("name", "?")}, line {n}: '
+                            f'{body[:80]!r} closes the pipe while the step runs under '
+                            '`set -o pipefail`. git takes SIGPIPE and exits 141, pipefail makes '
+                            'that the step result, and the run goes red on a command that '
+                            'succeeded. Cap the command itself (git log -n 20) instead of its '
+                            'output.')
+
+
 def verify():
     gradle = (APP / 'build.gradle.kts').read_text(encoding='utf-8')
     assert 'applicationId = "com.herbertkara.ning"' in gradle
@@ -255,6 +294,7 @@ def verify():
         assert '@drawable/ic_ning_monochrome' in text
     drawer = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainDrawer.kt').read_text(encoding='utf-8')
     assert 'R.drawable.ic_ning_logo' in drawer
+    check_no_pipe_is_truncated_under_pipefail()
     check_a_manual_dispatch_can_publish()
     check_a_batch_test_measures_more_than_once()
     check_a_sample_that_did_not_answer_still_counts()
@@ -626,7 +666,8 @@ def check_the_sync_reports_the_commits_it_is_actually_missing():
     printed next to the list and the two can be compared by eye.
     """
     sync = (APP.parent.parent / ".github/workflows" / "upstream-sync.yml").read_text("utf-8")
-    assert "git log --oneline HEAD..upstream/HEAD" in sync, (
+    # -n 20 caps the command's own output; the range is what matters, not the options around it
+    assert re.search(r"git log --oneline(?: -n \d+)? HEAD\.\.upstream/HEAD", sync), (
         "the unmerged list is not HEAD..upstream/HEAD. With several merge bases in this history a "
         "base-relative range reports commits that are already merged, so the log says upstream has "
         "work pending on a run that then does nothing about it")

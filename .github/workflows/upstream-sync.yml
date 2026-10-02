@@ -51,7 +51,12 @@ jobs:
           # that was skipped. This range is what is genuinely unmerged, and it is empty when the
           # fork is current.
           echo "upstream commits not yet merged:"
-          git log --oneline HEAD..upstream/HEAD | head -20
+          # No | head here. The step runs under set -o pipefail, so when head stops reading after
+          # twenty lines git takes SIGPIPE, exits 141, and pipefail turns a successful report into
+          # a failed step -- which is what happened: the run was red at the merge while the merge
+          # itself was never reached. The count below is what the decision is made on; this is the
+          # human-readable part of the same fact, so it is capped with git's own limit.
+          git log --oneline -n 20 HEAD..upstream/HEAD
           echo "unmerged count: $(git rev-list --count HEAD..upstream/HEAD)"
           if git merge-base --is-ancestor upstream/HEAD HEAD; then
             echo "Already up to date with upstream; nothing to rebuild."
