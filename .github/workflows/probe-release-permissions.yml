@@ -11,36 +11,35 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Which release call does the runner token allow
+      - name: Which part of the failing command is refused
         env:
           GH_TOKEN: ${{ github.token }}
+          SHA: 9c9fc229407f3f600a3d0dd10bd0a08b8b6cb1be
         run: |
           set -uo pipefail
           R=herbert-kara/NiNG
-          # 1. a draft, which we know succeeded for .31
-          if gh release create v0.0.0-probe-draft --repo "$R" --draft --title p --notes p >/dev/null 2>err1; then
-            echo "CREATE_DRAFT: ok"
-          else
-            echo "CREATE_DRAFT: $(cat err1 | head -1)"
-          fi
-          # 2. publish that draft -- this is the alternative fix if create-published is refused
-          if gh release edit v0.0.0-probe-draft --repo "$R" --draft=false >/dev/null 2>err2; then
-            echo "PUBLISH_EXISTING_DRAFT: ok"
-          else
-            echo "PUBLISH_EXISTING_DRAFT: $(cat err2 | head -1)"
-          fi
-          # 3. create one already published, which is what failed with 403
-          if gh release create v0.0.0-probe-live --repo "$R" --title p --notes p >/dev/null 2>err3; then
-            echo "CREATE_PUBLISHED: ok"
-          else
-            echo "CREATE_PUBLISHED: $(cat err3 | head -1)"
-          fi
-          # 4. and with --latest, which the failing command also passed
-          if gh release create v0.0.0-probe-latest --repo "$R" --latest --title p --notes p >/dev/null 2>err4; then
-            echo "CREATE_PUBLISHED_LATEST: ok"
-          else
-            echo "CREATE_PUBLISHED_LATEST: $(cat err4 | head -1)"
-          fi
-          for t in v0.0.0-probe-draft v0.0.0-probe-live v0.0.0-probe-latest; do
+          echo hello > asset.txt
+
+          # A. --target on a published release
+          if gh release create v0.0.0-a --repo "$R" --target "$SHA" --title p --notes p >/dev/null 2>e; then
+            echo "A target+publish: ok"
+          else echo "A target+publish: $(head -1 e)"; fi
+
+          # B. --target on a draft, to separate target from published
+          if gh release create v0.0.0-b --repo "$R" --target "$SHA" --draft --title p --notes p >/dev/null 2>e; then
+            echo "B target+draft: ok"
+          else echo "B target+draft: $(head -1 e)"; fi
+
+          # C. an asset on a published release
+          if gh release create v0.0.0-c --repo "$R" --title p --notes p asset.txt >/dev/null 2>e; then
+            echo "C asset+publish: ok"
+          else echo "C asset+publish: $(head -1 e)"; fi
+
+          # D. the failing command shape: target + assets + latest, published
+          if gh release create v0.0.0-d --repo "$R" --target "$SHA" --latest --title p --notes p asset.txt >/dev/null 2>e; then
+            echo "D target+asset+latest+publish: ok"
+          else echo "D target+asset+latest+publish: $(head -1 e)"; fi
+
+          for t in v0.0.0-a v0.0.0-b v0.0.0-c v0.0.0-d; do
             gh release delete "$t" --repo "$R" --yes --cleanup-tag >/dev/null 2>&1 || true
           done
