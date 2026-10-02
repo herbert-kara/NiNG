@@ -43,8 +43,28 @@ jobs:
           git config user.name 'herbert-kara'
           git config user.email 'herbert-kara@users.noreply.github.com'
           git remote add upstream "$UPSTREAM" 2>/dev/null || git remote set-url upstream "$UPSTREAM"
+          # The default refspec is "+refs/heads/*:refs/remotes/upstream/*" with no HEAD entry, so
+          # a plain fetch leaves upstream/HEAD pointing wherever it was set when the remote was
+          # added -- and if that was never fetched it does not exist at all. The symref is the only
+          # thing that says which branch upstream actually publishes from, and here it is a branch
+          # called my-relea while refs/heads/master sits 25 commits behind it. Merging the named
+          # branch instead would have merged a stale one and reported the fork as current.
+          #
+          # Read the symref, then fetch it by name. Deriving the name from the remote is the point:
+          # hardcoding master would go wrong the moment upstream renamed it again.
+          # Shell parameter expansion, not sed: this is a two-line string operation and a runner
+          # without sed would take the whole sync down at the line that decides what to merge.
+          upstream_line=$(git ls-remote --symref "$UPSTREAM" HEAD | grep -m1 '^ref:')
+          upstream_ref=${upstream_line#ref: refs/heads/}
+          upstream_ref=${upstream_ref%%$'\t'*}
+          if [ -z "$upstream_ref" ]; then
+            echo "::error::Could not read which branch upstream publishes from; refusing to guess."
+            exit 1
+          fi
+          echo "upstream publishes from: $upstream_ref"
           git fetch upstream --quiet
-          base=$(git merge-base HEAD upstream/master || git merge-base HEAD upstream/main)
+          git fetch upstream --quiet "refs/heads/$upstream_ref:refs/remotes/upstream/HEAD" --force
+          base=$(git merge-base HEAD "upstream/$upstream_ref")
           # HEAD..upstream/HEAD, not $base..upstream/HEAD. The history has more than one merge base, so
           # the base form reports commits that are already merged: it listed five of them on a run
           # whose own next line said there was nothing to do, which reads as upstream having work
@@ -56,16 +76,16 @@ jobs:
           # a failed step -- which is what happened: the run was red at the merge while the merge
           # itself was never reached. The count below is what the decision is made on; this is the
           # human-readable part of the same fact, so it is capped with git's own limit.
-          git log --oneline -n 20 HEAD..upstream/HEAD
-          echo "unmerged count: $(git rev-list --count HEAD..upstream/HEAD)"
-          if git merge-base --is-ancestor upstream/HEAD HEAD; then
+          git log --oneline -n 20 HEAD.."upstream/$upstream_ref"
+          echo "unmerged count: $(git rev-list --count HEAD.."upstream/$upstream_ref")"
+          if git merge-base --is-ancestor "upstream/$upstream_ref" HEAD; then
             echo "Already up to date with upstream; nothing to rebuild."
             echo "merged=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # A merge commit, never a rebase or a reset: the fork's own commits (identity, flags,
           # reputation verdict, CI) must survive an upstream merge untouched and stay reviewable.
-          if ! git merge --no-edit --no-stat upstream/HEAD; then
+          if ! git merge --no-edit --no-stat "upstream/$upstream_ref"; then
             echo "::error::Upstream merge conflicts. Resolve on my-releases and re-run."
             git diff --name-only --diff-filter=U
             exit 1

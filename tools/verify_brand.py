@@ -276,6 +276,51 @@ def check_no_pipe_is_truncated_under_pipefail():
                             'output.')
 
 
+def check_the_sync_merges_the_branch_upstream_actually_publishes_from():
+    """`git fetch upstream` does not update upstream/HEAD, and upstream's HEAD is not master.
+
+    The fetch uses the default refspec, "+refs/heads/*:refs/remotes/upstream/*", which has no entry
+    for HEAD. So a bare fetch leaves upstream/HEAD wherever it was set when the remote was added,
+    and the sync merged a remote-tracking ref that this workflow never refreshes.
+
+    The consequence was invisible until it was measured. Upstream publishes from a branch called
+    my-releases; refs/heads/master sits 25 commits behind it. The sync read $base from
+    upstream/master, printed "unmerged count: 0" against master while merging upstream/HEAD, and
+    reported a fork that looked current on one branch and 25 commits behind on the other. The
+    diffstat that is supposed to show what changed was measured from master, so it described a
+    range nobody merged.
+
+    The fix reads the symref with `git ls-remote --symref` and fetches that branch by name into
+    upstream/HEAD, so the name follows upstream rather than being hardcoded -- hardcoding master is
+    what broke, and hardcoding my-releases would break on the next rename.
+    """
+    sync = (ROOT / ".github/workflows" / "upstream-sync.yml").read_text('utf-8')
+
+    assert 'git ls-remote --symref' in sync, (
+        "the sync never asks upstream which branch it publishes from, so it merges whatever "
+        "upstream/HEAD happens to point at -- a ref the default fetch refspec does not update.")
+    assert 'refs/remotes/upstream/HEAD' in sync, (
+        "the sync reads upstream/HEAD but never fetches into it, so the value it merges is the one "
+        "present when the remote was added, not the one upstream publishes now.")
+    # every decision must be made against the resolved branch, not against the stale tracking ref
+    body = sync[sync.find('upstream_ref='):]
+    for decision in ('rev-list --count', '--is-ancestor', 'git merge '):
+        i = body.find(decision)
+        assert i > 0, f'the sync no longer computes {decision}'
+        line = body[body.rfind('\n', 0, i) + 1: body.find('\n', i)]
+        assert '$upstream_ref' in line or 'upstream_ref' in line, (
+            f'{decision} is not made against the resolved branch. Deciding on a hardcoded branch '
+            'name is what made the run report 0 unmerged against one branch while the merge '
+            'handled 25 on another.')
+
+    # and it must fail loudly rather than guess when the symref cannot be read
+    i = sync.find('upstream_ref=${upstream_line#ref:')
+    assert i > 0, 'the symref line is not parsed'
+    assert 'refusing to guess' in sync, (
+        'an empty upstream_ref would produce a fetch against an empty refspec, which fails with a '
+        'message about refspecs and says nothing about the branch being unreadable')
+
+
 def verify():
     gradle = (APP / 'build.gradle.kts').read_text(encoding='utf-8')
     assert 'applicationId = "com.herbertkara.ning"' in gradle
@@ -294,6 +339,7 @@ def verify():
         assert '@drawable/ic_ning_monochrome' in text
     drawer = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainDrawer.kt').read_text(encoding='utf-8')
     assert 'R.drawable.ic_ning_logo' in drawer
+    check_the_sync_merges_the_branch_upstream_actually_publishes_from()
     check_no_pipe_is_truncated_under_pipefail()
     check_a_manual_dispatch_can_publish()
     check_a_batch_test_measures_more_than_once()
@@ -667,10 +713,14 @@ def check_the_sync_reports_the_commits_it_is_actually_missing():
     """
     sync = (APP.parent.parent / ".github/workflows" / "upstream-sync.yml").read_text("utf-8")
     # -n 20 caps the command's own output; the range is what matters, not the options around it
-    assert re.search(r"git log --oneline(?: -n \d+)? HEAD\.\.upstream/HEAD", sync), (
-        "the unmerged list is not HEAD..upstream/HEAD. With several merge bases in this history a "
-        "base-relative range reports commits that are already merged, so the log says upstream has "
-        "work pending on a run that then does nothing about it")
+    # The range has to be relative to HEAD, not to a merge base: this history has more than one
+    # merge base, and a base-relative range reports commits that are already merged. The far end
+    # is the branch upstream publishes from (see check_the_sync_merges_the_branch_upstream_
+    # actually_publishes_from), so match HEAD on the left and the resolved ref on the right.
+    assert re.search(r'git log --oneline(?: -n \d+)? HEAD\.\."upstream/\$upstream_ref"', sync), (
+        "the unmerged list does not run from HEAD to the branch upstream publishes from. A "
+        "base-relative range reports commits that are already merged on this history, so the log "
+        "says upstream has work pending on a run that then does nothing about it")
     assert 'echo "unmerged count:' in sync, (
         "the unmerged commits are listed with no count beside them, so a list that is not empty "
         "cannot be told apart from a list that is")
