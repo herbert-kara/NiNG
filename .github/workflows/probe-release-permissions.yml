@@ -14,32 +14,34 @@ jobs:
       - name: Which part of the failing command is refused
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: 9c9fc229407f3f600a3d0dd10bd0a08b8b6cb1be
+          # an ancestor of the tip but not the tip itself
+          OLD: 9c9fc229407f3f600a3d0dd10bd0a08b8b6cb1be
         run: |
           set -uo pipefail
           R=herbert-kara/NiNG
-          echo hello > asset.txt
+          TIP=$(git ls-remote https://github.com/herbert-kara/NiNG.git refs/heads/my-releases | cut -f1)
+          echo "tip is ${TIP:0:12}"
 
-          # A. --target on a published release
-          if gh release create v0.0.0-a --repo "$R" --target "$SHA" --title p --notes p >/dev/null 2>e; then
-            echo "A target+publish: ok"
-          else echo "A target+publish: $(head -1 e)"; fi
+          # E. --target = the tip commit
+          if gh release create v0.0.0-e --repo "$R" --target "$TIP" --title p --notes p >/dev/null 2>e; then
+            echo "E target=tip: ok"
+          else echo "E target=tip: $(head -1 e)"; fi
 
-          # B. --target on a draft, to separate target from published
-          if gh release create v0.0.0-b --repo "$R" --target "$SHA" --draft --title p --notes p >/dev/null 2>e; then
-            echo "B target+draft: ok"
-          else echo "B target+draft: $(head -1 e)"; fi
+          # F. --target = the branch name
+          if gh release create v0.0.0-f --repo "$R" --target my-releases --title p --notes p >/dev/null 2>e; then
+            echo "F target=branch: ok"
+          else echo "F target=branch: $(head -1 e)"; fi
 
-          # C. an asset on a published release
-          if gh release create v0.0.0-c --repo "$R" --title p --notes p asset.txt >/dev/null 2>e; then
-            echo "C asset+publish: ok"
-          else echo "C asset+publish: $(head -1 e)"; fi
+          # G. --target = an ancestor that is not the tip
+          if gh release create v0.0.0-g --repo "$R" --target "$OLD" --title p --notes p >/dev/null 2>e; then
+            echo "G target=ancestor: ok"
+          else echo "G target=ancestor: $(head -1 e)"; fi
 
-          # D. the failing command shape: target + assets + latest, published
-          if gh release create v0.0.0-d --repo "$R" --target "$SHA" --latest --title p --notes p asset.txt >/dev/null 2>e; then
-            echo "D target+asset+latest+publish: ok"
-          else echo "D target+asset+latest+publish: $(head -1 e)"; fi
+          # H. no --target at all
+          if gh release create v0.0.0-h --repo "$R" --title p --notes p >/dev/null 2>e; then
+            echo "H no target: ok"
+          else echo "H no target: $(head -1 e)"; fi
 
-          for t in v0.0.0-a v0.0.0-b v0.0.0-c v0.0.0-d; do
+          for t in v0.0.0-e v0.0.0-f v0.0.0-g v0.0.0-h; do
             gh release delete "$t" --repo "$R" --yes --cleanup-tag >/dev/null 2>&1 || true
           done
