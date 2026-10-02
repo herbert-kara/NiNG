@@ -68,6 +68,9 @@ object AppConfig {
     const val PREF_SOCKS_USERNAME = "pref_socks_username"
     const val PREF_SOCKS_PASSWORD = "pref_socks_password"
     const val PREF_SOCKS_ENABLE_UDP = "pref_socks_enable_udp"
+
+    /** PattNG: the loopback port every Aether core listens on, whatever its profile; see SettingsManager.getAetherListenPort. */
+    const val PREF_AETHER_LISTEN_PORT = "pref_aether_listen_port"
     const val PREF_REMOTE_DNS = "pref_remote_dns"
     const val PREF_DOMESTIC_DNS = "pref_domestic_dns"
     const val PREF_DNS_HOSTS = "pref_dns_hosts"
@@ -124,6 +127,10 @@ object AppConfig {
     const val TAG_BALANCER = "balancer-main"
     const val TAG_BALANCER_PRE = "balancer"
 
+    /** PattNG: the inbound the Aether core dials out through, and the outbound its traffic leaves Xray by. */
+    const val TAG_SECONDARY_SOCKS = "secondary-socks"
+    const val TAG_EXIT_NODE = "exit-node"
+
     /** Network-related constants. */
     const val UPLINK = "uplink"
     const val DOWNLINK = "downlink"
@@ -178,6 +185,11 @@ object AppConfig {
     const val PORT_LOCAL_DNS = "10853"
     const val PORT_SOCKS = "10808"
     const val PORT_AETHER_SOCKS = "10819"
+
+    /** PattNG: where the Aether core asks for the ECH key, and the domain whose key it takes, unless a profile names others. */
+    const val AETHER_ECH_DNS = "udp://1.1.1.1"
+    const val AETHER_ECH_DOMAIN = "cloudflare-ech.com"
+
     const val WIREGUARD_LOCAL_ADDRESS_V4 = "172.16.0.2/32"
     const val WIREGUARD_LOCAL_ADDRESS_V6 = "2606:4700:110:8f81:d551:a0:532e:a2b3/128"
     const val WIREGUARD_LOCAL_MTU = "1420"

@@ -1,5 +1,8 @@
 package com.v2ray.ang.fmt
 
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.core.AetherCore
+import com.v2ray.ang.core.AetherCoreManager
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherIpVersion
 import com.v2ray.ang.enums.AetherObfuscation
@@ -29,6 +32,17 @@ class AetherFmtTest {
             aetherIpVersion = AetherIpVersion.V4.type
             block()
         }
+
+    /** What [block] returns with the Aether listen port of the settings at [port]. */
+    private fun <T> onListenPort(port: Int, block: () -> T): T {
+        val source = AetherCoreManager.listenPortSource
+        AetherCoreManager.listenPortSource = { port }
+        try {
+            return block()
+        } finally {
+            AetherCoreManager.listenPortSource = source
+        }
+    }
 
     @Test
     fun aPinnedMasqueNodeSurvivesTheRoundTrip() {
@@ -149,7 +163,6 @@ class AetherFmtTest {
         assertEquals(AetherFmt.Problem.NEXT_PORT_TAKEN, AetherFmt.normalize(profile { aetherPsiphon = "chain" }, takenPorts = setOf(10820)))
         assertEquals(AetherFmt.Problem.LISTEN_PORT_TAKEN, AetherFmt.normalize(profile { aetherPsiphon = "chain" }, takenPorts = setOf(10819)))
         assertNull(AetherFmt.normalize(profile { aetherPsiphon = "chain" }, takenPorts = setOf(10821)))
-        assertEquals(AetherFmt.Problem.INVALID_LISTEN_PORT, AetherFmt.normalize(profile { aetherPsiphon = "chain"; aetherListenPort = "65535" }))
         // Without Psiphon inside, the port after the listen port is nobody's business.
         assertNull(AetherFmt.normalize(profile {}, takenPorts = setOf(10820)))
     }
@@ -175,6 +188,25 @@ class AetherFmtTest {
         assertFalse(plain.contains("tor="))
         assertFalse(plain.contains("bridges"))
         assertNull(AetherFmt.parse(link(profile {}))?.aetherTor)
+    }
+
+    @Test
+    fun theExitNodeSurvivesTheRoundTripUnderTheNamesOfAnOrdinaryLink() {
+        val mask = """{"tcp": [{"type": "fragment", "settings": {"packets": "tlshello", "length": "50-100"}}]}"""
+        val masked = profile { finalMask = mask; dialMode = "code-1" }
+        val uri = AetherFmt.toUri(masked)
+        assertTrue(uri.contains("fm="))
+        assertTrue(uri.contains("dialMode=code-1"))
+        val parsed = AetherFmt.parse(link(masked))
+        assertEquals(mask, parsed?.finalMask)
+        assertEquals("code-1", parsed?.dialMode)
+
+        val plain = AetherFmt.toUri(profile {})
+        assertFalse(plain.contains("fm="))
+        assertFalse(plain.contains("dialMode"))
+        val bare = AetherFmt.parse(link(profile {}))
+        assertNull(bare?.finalMask)
+        assertNull(bare?.dialMode)
     }
 
     @Test
@@ -236,6 +268,19 @@ class AetherFmtTest {
     }
 
     @Test
+    fun aCommandCannotListenOnTheSecondarySocksPort() {
+        // The editor holds the ports of a core to the local proxy ports and the Aether secondary SOCKS port together.
+        val secondary = AetherCoreManager.secondarySocksPort
+        val taken = setOf(10808, 10809) + secondary
+        assertEquals(
+            AetherFmt.Problem.LISTEN_PORT_TAKEN,
+            AetherFmt.normalize(profile { aetherCommand = "aether --wg --bind 127.0.0.1:$secondary" }, taken)
+        )
+        // On the Aether listen port, the most that Tor and Psiphon take leaves it free.
+        assertNull(AetherFmt.normalize(profile { aetherPsiphon = "chain"; aetherTor = "reverse" }, taken))
+    }
+
+    @Test
     fun torTakesThePortAfterTheListenPortInsideOrAroundTheTunnel() {
         assertEquals(AetherFmt.Problem.NEXT_PORT_TAKEN, AetherFmt.normalize(profile { aetherTor = "chain" }, takenPorts = setOf(10820)))
         assertEquals(AetherFmt.Problem.NEXT_PORT_TAKEN, AetherFmt.normalize(profile { aetherTor = "reverse" }, takenPorts = setOf(10820)))
@@ -246,11 +291,6 @@ class AetherFmtTest {
             AetherFmt.normalize(profile { aetherPsiphon = "chain"; aetherTor = "reverse" }, takenPorts = setOf(10821))
         )
         assertNull(AetherFmt.normalize(profile { aetherPsiphon = "chain"; aetherTor = "reverse" }, takenPorts = setOf(10822)))
-        assertEquals(
-            AetherFmt.Problem.INVALID_LISTEN_PORT,
-            AetherFmt.normalize(profile { aetherPsiphon = "chain"; aetherTor = "reverse"; aetherListenPort = "65534" })
-        )
-        assertNull(AetherFmt.normalize(profile { aetherTor = "chain"; aetherListenPort = "65534" }))
     }
 
     @Test
@@ -261,6 +301,131 @@ class AetherFmtTest {
         for (named in listOf("off", "light", "firewall", "balanced", "gfw", "aggressive")) {
             assertEquals(named, AetherFmt.parse(link(profile { aetherObfuscation = named }))?.aetherObfuscation)
         }
+    }
+
+    @Test
+    fun theEchResolverAndDomainSurviveTheRoundTripWhileEchIsOn() {
+        val tuned = profile {
+            aetherEch = true
+            aetherEchDns = "https://doq.dns4all.eu/dns-query"
+            aetherEchDomain = "ip.gs"
+        }
+        val parsed = AetherFmt.parse(link(tuned))
+        assertEquals("https://doq.dns4all.eu/dns-query", parsed?.aetherEchDns)
+        assertEquals("ip.gs", parsed?.aetherEchDomain)
+
+        // Without ECH a link says nothing of them, and they are not taken from one.
+        val off = link(profile { aetherEchDns = "tcp://1.1.1.1"; aetherEchDomain = "ip.gs" })
+        assertFalse(off.contains("ech_dns="))
+        assertFalse(off.contains("ech_domain="))
+        val plain = link(profile {})
+        val strayLink = plain.substringBefore('#') + "&ech_dns=tcp%3A%2F%2F1.1.1.1&ech_domain=ip.gs#" + plain.substringAfter('#')
+        assertTrue(strayLink, strayLink.substringBefore('#').contains("ech_dns="))
+        val stray = AetherFmt.parse(strayLink)
+        assertNull(stray?.aetherEchDns)
+        assertNull(stray?.aetherEchDomain)
+    }
+
+    @Test
+    fun theEchResolverIsUdpOrTcpWithAnIpAddressOrAnHttpsUrl() {
+        val good = listOf(
+            "udp://1.0.0.1",
+            "udp://1.1.1.1:5353",
+            "tcp://8.8.8.8",
+            "TCP://[2606:4700:4700::1111]:53",
+            "tcp://[::1]",
+            "udp://2606:4700::1111",
+            "https://doq.dns4all.eu/dns-query",
+            "https://1.1.1.1:8443/dns-query",
+        )
+        for (dns in good) {
+            val config = profile { aetherEch = true; aetherEchDns = " $dns " }
+            assertNull(dns, AetherFmt.normalize(config))
+            assertEquals(dns, config.aetherEchDns)
+        }
+        val bad = listOf(
+            "1.1.1.1",
+            "udp://dns.google",
+            "tls://1.1.1.1",
+            "udp://1.1.1.1:70000",
+            "udp://",
+            "https://",
+            "https:///dns-query",
+            // The core reads no bracketed IPv4 address, no space and no digit outside ASCII, as a Persian keyboard types.
+            "udp://[1.1.1.1]",
+            "udp://[1.1.1.1]:53",
+            "udp:// 1.1.1.1",
+            "udp://1.1.1.1 :53",
+            "udp://1.1.1.1: 53",
+            "udp://\u06f1.\u06f1.\u06f1.\u06f1",
+            "udp://1.1.1.1:\u06f5\u06f3",
+            "udp://\uff11.\uff11.\uff11.\uff11",
+            "https://dns example/dns-query",
+            "https://dns.example/dns-query?x='1'",
+        )
+        for (dns in bad) {
+            assertEquals(dns, AetherFmt.Problem.INVALID_ECH_DNS, AetherFmt.normalize(profile { aetherEch = true; aetherEchDns = dns }))
+        }
+    }
+
+    @Test
+    fun theEchDomainIsADomainName() {
+        for (domain in listOf("crypto.cloudflare.com", "ip.gs", "ip.gs.", "_ech.example.com")) {
+            val config = profile { aetherEch = true; aetherEchDomain = domain }
+            assertNull(domain, AetherFmt.normalize(config))
+            assertEquals(domain, config.aetherEchDomain)
+        }
+        for (domain in listOf("a..b", "with space.com", "https://ip.gs", "ip.gs/", "${"a".repeat(64)}.com", "--upstream", "-ip.gs", "ip-.gs")) {
+            assertEquals(domain, AetherFmt.Problem.INVALID_ECH_DOMAIN, AetherFmt.normalize(profile { aetherEch = true; aetherEchDomain = domain }))
+        }
+    }
+
+    @Test
+    fun echFieldsTheEditorDoesNotShowNeitherBlockSavingNorKeepAValueTheCoreWouldRefuse() {
+        val masque = profile { aetherEch = true; aetherEchDns = "udp://dns.google"; aetherEchDomain = "--upstream" }
+        assertEquals(AetherFmt.Problem.INVALID_ECH_DNS, AetherFmt.normalize(masque))
+
+        val shapes = listOf<ProfileItem.() -> Unit>(
+            { aetherProtocol = AetherProtocol.WIREGUARD.type },
+            { aetherPsiphon = "only" },
+            { aetherTor = "only" },
+        )
+        for (shape in shapes) {
+            val hidden = profile { aetherEch = true; aetherEchDns = "udp://dns.google"; aetherEchDomain = "--upstream"; shape() }
+            assertNull(AetherFmt.normalize(hidden))
+            assertNull(hidden.aetherEchDns)
+            assertNull(hidden.aetherEchDomain)
+
+            // A value the core would take stays, for when the profile is back over MASQUE.
+            val kept = profile { aetherEch = true; aetherEchDns = "tcp://8.8.8.8"; aetherEchDomain = "ip.gs"; shape() }
+            assertNull(AetherFmt.normalize(kept))
+            assertEquals("tcp://8.8.8.8", kept.aetherEchDns)
+            assertEquals("ip.gs", kept.aetherEchDomain)
+        }
+    }
+
+    @Test
+    fun aLinkGivesNoEchResolverOrDomainTheCoreWouldRefuse() {
+        val plain = link(profile { aetherEch = true })
+        val crafted = plain.substringBefore('#') + "&ech_dns=udp%3A%2F%2F%5B1.1.1.1%5D&ech_domain=--upstream#" + plain.substringAfter('#')
+        assertTrue(crafted, crafted.substringBefore('#').contains("ech_domain="))
+        val parsed = AetherFmt.parse(crafted)
+        assertEquals(true, parsed?.aetherEch)
+        assertNull(parsed?.aetherEchDns)
+        assertNull(parsed?.aetherEchDomain)
+    }
+
+    @Test
+    fun theDefaultEchResolverAndDomainAreLeftToTheDefaults() {
+        val config = profile { aetherEch = true; aetherEchDns = AppConfig.AETHER_ECH_DNS; aetherEchDomain = " ${AppConfig.AETHER_ECH_DOMAIN} " }
+        assertNull(AetherFmt.normalize(config))
+        assertNull(config.aetherEchDns)
+        assertNull(config.aetherEchDomain)
+        // Nor are others kept once ECH is off.
+        val off = profile { aetherEchDns = "tcp://1.1.1.1"; aetherEchDomain = "ip.gs" }
+        assertNull(AetherFmt.normalize(off))
+        assertNull(off.aetherEchDns)
+        assertNull(off.aetherEchDomain)
     }
 
     @Test
@@ -680,83 +845,58 @@ class AetherFmtTest {
     }
 
     @Test
-    fun aChosenListenPortSurvivesTheRoundTripAndTheDefaultStaysOutOfTheLink() {
-        val chosen = profile { aetherListenPort = "20808" }
-        assertTrue(link(chosen).contains("listen=20808"))
-        assertEquals("20808", AetherFmt.parse(link(chosen))?.aetherListenPort)
-
-        assertFalse(link(profile { }).contains("listen="))
-        assertFalse(link(profile { aetherListenPort = "10819" }).contains("listen="))
-        assertNull(AetherFmt.parse(link(profile { }))?.aetherListenPort)
-        // A link falls back to the default for a port that is none, as it does for its other settings.
-        assertNull(AetherFmt.parse(link(profile { }).replace("?", "?listen=70000&"))?.aetherListenPort)
-        assertNull(AetherFmt.parse(link(profile { }).replace("?", "?listen=10819&"))?.aetherListenPort)
+    fun aListenPortALinkStillNamesCountsNoMore() {
+        // Links from before every core listened on the Aether listen port of the settings may name a port of their own.
+        val plain = link(profile { })
+        val old = plain.replace("?", "?listen=20808&")
+        val parsed = AetherFmt.parse(old)
+        assertNotNull(parsed)
+        assertNull(parsed?.aetherListenPort)
+        assertEquals(AetherCoreManager.socksPort, AetherCore.of(parsed!!).port)
+        // Otherwise it reads as it did, and a profile that carries such a port gives none to its link.
+        assertEquals(plain, link(parsed))
+        assertFalse(link(profile { aetherListenPort = "20808" }).contains("listen="))
     }
 
     @Test
-    fun theListenPortIsCheckedAndStoredOnlyWhenItIsNotTheDefault() {
-        val chosen = profile { aetherListenPort = " 020808 " }
-        assertNull(AetherFmt.normalize(chosen))
-        assertEquals("20808", chosen.aetherListenPort)
-
-        val default = profile { aetherListenPort = "10819" }
-        assertNull(AetherFmt.normalize(default))
-        assertNull(default.aetherListenPort)
-
-        val blank = profile { aetherListenPort = "  " }
-        assertNull(AetherFmt.normalize(blank))
-        assertNull(blank.aetherListenPort)
-
-        for (invalid in listOf("0", "65536", "-1", "socks", "10819.5")) {
-            assertEquals(AetherFmt.Problem.INVALID_LISTEN_PORT, AetherFmt.normalize(profile { aetherListenPort = invalid }))
+    fun aListenPortAProfileStillCarriesIsNeitherCheckedNorChanged() {
+        for (stored in listOf("20808", "10808", "0", "socks")) {
+            val legacy = profile { aetherListenPort = stored }
+            assertNull(AetherFmt.normalize(legacy, setOf(10808, 10809)))
+            assertEquals(stored, legacy.aetherListenPort)
         }
     }
 
     @Test
-    fun theListenPortCannotBeAPortTheLocalProxyListensOn() {
+    fun theAetherListenPortCannotBeAPortTheLocalProxyListensOn() {
         val localProxy = setOf(10808, 10809)
-
-        val onSocks = profile { aetherListenPort = "10808" }
-        assertEquals(AetherFmt.Problem.LISTEN_PORT_TAKEN, AetherFmt.normalize(onSocks, localProxy))
-        // A refused profile keeps what was typed, for the editor to show again.
-        assertEquals("10808", onSocks.aetherListenPort)
-        assertEquals(AetherFmt.Problem.LISTEN_PORT_TAKEN, AetherFmt.normalize(profile { aetherListenPort = " 10809 " }, localProxy))
-
-        val free = profile { aetherListenPort = "20808" }
-        assertNull(AetherFmt.normalize(free, localProxy))
-        assertEquals("20808", free.aetherListenPort)
         assertNull(AetherFmt.normalize(profile { }, localProxy))
+        onListenPort(10808) {
+            assertEquals(AetherFmt.Problem.LISTEN_PORT_TAKEN, AetherFmt.normalize(profile { }, localProxy))
+        }
+        onListenPort(10807) {
+            assertNull(AetherFmt.normalize(profile { }, localProxy))
+            // Tor inside the tunnel takes the port after it.
+            assertEquals(AetherFmt.Problem.NEXT_PORT_TAKEN, AetherFmt.normalize(profile { aetherTor = "chain" }, localProxy))
+        }
     }
 
     @Test
-    fun theDefaultListenPortIsTakenOnceTheLocalProxyWasMovedOntoIt() {
+    fun theAetherListenPortIsTakenOnceTheLocalProxyWasMovedOntoIt() {
         val movedOntoIt = setOf(10819)
-
         assertEquals(AetherFmt.Problem.LISTEN_PORT_TAKEN, AetherFmt.normalize(profile { }, movedOntoIt))
-        assertEquals(AetherFmt.Problem.LISTEN_PORT_TAKEN, AetherFmt.normalize(profile { aetherListenPort = "" }, movedOntoIt))
-        assertEquals(AetherFmt.Problem.LISTEN_PORT_TAKEN, AetherFmt.normalize(profile { aetherListenPort = "10819" }, movedOntoIt))
-        assertNull(AetherFmt.normalize(profile { aetherListenPort = "20808" }, movedOntoIt))
+        // A command written by hand listens where it says.
+        assertNull(AetherFmt.normalize(profile { aetherCommand = "aether --wg --bind 127.0.0.1:20808" }, movedOntoIt))
+        assertEquals(
+            AetherFmt.Problem.LISTEN_PORT_TAKEN,
+            AetherFmt.normalize(profile { aetherCommand = "aether --wg --bind 127.0.0.1:10819" }, movedOntoIt)
+        )
     }
 
     @Test
-    fun withoutKnownLocalPortsOnlyTheListenPortItselfIsChecked() {
+    fun withoutKnownLocalPortsNoPortIsTaken() {
         // The local proxy port is picked at random on every start, or the caller has none to name.
-        assertNull(AetherFmt.normalize(profile { aetherListenPort = "10808" }))
-        assertNull(AetherFmt.normalize(profile { aetherListenPort = "10808" }, emptySet()))
-        // What is no port at all is reported as that, whatever is taken.
-        assertEquals(AetherFmt.Problem.INVALID_LISTEN_PORT, AetherFmt.normalize(profile { aetherListenPort = "0" }, setOf(10808)))
-    }
-
-    @Test
-    fun theListenPortIsReadFromAProfile() {
-        assertEquals(20808, AetherFmt.listenPortOf("20808"))
-        assertEquals(1, AetherFmt.listenPortOf(" 1 "))
-        assertEquals(65535, AetherFmt.listenPortOf("65535"))
-        assertNull(AetherFmt.listenPortOf(null))
-        assertNull(AetherFmt.listenPortOf(""))
-        assertNull(AetherFmt.listenPortOf("0"))
-        assertNull(AetherFmt.listenPortOf("65536"))
-        assertEquals("20808", AetherFmt.storedListenPort(20808))
-        assertNull(AetherFmt.storedListenPort(10819))
+        assertNull(AetherFmt.normalize(profile { aetherPsiphon = "chain"; aetherTor = "reverse" }))
+        assertNull(AetherFmt.normalize(profile { aetherPsiphon = "chain"; aetherTor = "reverse" }, emptySet()))
     }
 }

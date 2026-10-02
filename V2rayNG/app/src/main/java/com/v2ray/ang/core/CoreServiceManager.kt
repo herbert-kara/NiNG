@@ -192,9 +192,9 @@ object CoreServiceManager {
                 SubscriptionUpdateMessage(AppConfig.MSG_SUB_UPDATE_CANCEL_TEST, forcedUpdate = false)
             )
         }
-        // One core serves every Aether outbound of the configuration: the selected profile itself, the
-        // entry hop of its chain, a routing target, a policy-group member, or the SOCKS outbounds of a
-        // custom configuration that asks for it with aetherCommand. It listens on the port its arguments name.
+        // One core serves every Aether outbound of the configuration: the selected profile itself, a hop
+        // of its chain, a routing target, a policy-group member, or the SOCKS outbounds of a custom
+        // configuration that asks for it with aetherCommand. It listens on the port its arguments name.
         val aether = result.aetherCore
         if (aether != null) {
             if (!AetherCoreManager.isSupported(service)) {
@@ -212,12 +212,10 @@ object CoreServiceManager {
                 AetherCoreManager.stop()
                 throw StartFailure(service.getString(R.string.aether_listen_port_taken))
             }
-            // The tests were told to stop above; the session's core waits for their cores to be gone.
-            aetherExitHandled = false
-            AetherCoreManager.start(service, aether, afterProbes = !isReload) { onAetherExit(guid) }
-        } else {
-            AetherCoreManager.stop()
         }
+        // A reload still has the previous session's core; it ends before Xray starts again. The new core,
+        // if any, starts once Xray listens, see launchNativeCore.
+        AetherCoreManager.stop()
 
         try {
             launchNativeCore(service, guid, config, aether, result.content, vpnInterface, isReload)
@@ -259,6 +257,14 @@ object CoreServiceManager {
 
         if (!isRunning()) {
             error("Core failed to start")
+        }
+
+        // The Aether core dials out through an inbound of Xray, which listens once the start returns, so
+        // the core starts after it rather than spending its first dials on a port nobody listens on yet.
+        if (aether != null) {
+            // The tests were told to stop as this start began; the session's core waits for their cores to be gone.
+            aetherExitHandled = false
+            AetherCoreManager.start(service, aether, afterProbes = !isReload) { onAetherExit(guid) }
         }
 
         if (browserDialer != null) {
@@ -306,7 +312,7 @@ object CoreServiceManager {
             }
             when (AetherCoreManager.warmUpOutcome(listening, isActive, isRunning())) {
                 AetherCoreManager.WarmUpOutcome.ABANDONED -> Unit
-                // The exit callback ran while Xray was still starting and found nothing to stop.
+                // The core's exit callback reports it as well; the service stops on whichever comes first.
                 AetherCoreManager.WarmUpOutcome.CORE_EXITED -> onAetherExit(guid)
                 AetherCoreManager.WarmUpOutcome.LISTENING -> {
                     NotificationManager.setStatusLine(null)

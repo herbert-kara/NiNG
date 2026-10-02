@@ -2,6 +2,7 @@ package com.v2ray.ang.fmt
 
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.core.AetherCore
+import com.v2ray.ang.core.AetherCoreManager
 import com.v2ray.ang.dto.AetherEndpoint
 import com.v2ray.ang.dto.AetherRange
 import com.v2ray.ang.dto.entities.ProfileItem
@@ -31,7 +32,8 @@ object AetherFmt : FmtBase() {
         INVALID_FRAGMENT,
         INVALID_DNS,
         INVALID_EXIT_LOC,
-        INVALID_LISTEN_PORT,
+        INVALID_ECH_DNS,
+        INVALID_ECH_DOMAIN,
         LISTEN_PORT_TAKEN,
         PSIPHON_NEEDS_MASQUE,
         NEXT_PORT_TAKEN,
@@ -58,9 +60,12 @@ object AetherFmt : FmtBase() {
         config.aetherFragmentSize = AetherRange.parse(queryParam["fragment_size"], AetherRange.FRAGMENT_SIZE)?.toString()
         config.aetherFragmentDelay = AetherRange.parse(queryParam["fragment_delay"], AetherRange.FRAGMENT_DELAY)?.toString()
         config.aetherEch = queryParam["ech"] == "1"
+        // A value the core would not take is left out; the profile then follows the default.
+        config.aetherEchDns = queryParam["ech_dns"]?.trim()?.takeIf { config.aetherEch == true && isEchDns(it) }
+        config.aetherEchDomain = queryParam["ech_domain"]?.trim()?.takeIf { config.aetherEch == true && isEchDomain(it) }
         config.aetherDns = queryParam["dns"]
         config.aetherExitLoc = queryParam["exit_loc"]
-        config.aetherListenPort = listenPortOf(queryParam["listen"])?.let(::storedListenPort)
+        // A link from before the Aether listen port was one setting for every profile may name a port of its own, which counts no more.
         config.aetherPsiphon = AetherPsiphon.fromString(queryParam["psiphon"]).type.takeUnless { it == AetherPsiphon.OFF.type }
         config.aetherPsiphonMode = queryParam["psiphon_mode"]?.let { AetherPsiphonMode.fromString(it).type }
         config.aetherPsiphonCdnIps = queryParam["cdn_ips"]
@@ -72,6 +77,9 @@ object AetherFmt : FmtBase() {
         config.aetherTorBridges = queryParam["tor_bridges"]?.let { AetherTorBridges.fromString(it).type }
         config.aetherTorBridgeLines = queryParam["bridges"]?.split(';')?.joinToString("\n")
         config.aetherTorRelays = queryParam["tor_relays"]?.let { AetherTorRelays.fromString(it).type }
+        // The exit-node's, under the names the link of an ordinary profile gives its own outbound's.
+        config.finalMask = queryParam["fm"]
+        config.dialMode = queryParam["dialMode"]
 
         if (protocol.twoHops) {
             val outer = AetherEndpoint.parse(queryParam["outer"])
@@ -107,13 +115,16 @@ object AetherFmt : FmtBase() {
                 AetherRange.parse(config.aetherFragmentDelay, AetherRange.FRAGMENT_DELAY)
                     ?.let { query["fragment_delay"] = it.toString() }
             }
-            if (config.aetherEch == true) query["ech"] = "1"
+            if (config.aetherEch == true) {
+                query["ech"] = "1"
+                config.aetherEchDns?.takeIf { it.isNotBlank() }?.let { query["ech_dns"] = it }
+                config.aetherEchDomain?.takeIf { it.isNotBlank() }?.let { query["ech_domain"] = it }
+            }
         }
         if (protocol.twoHops) {
             AetherEndpoint.parse(config.aetherWiwOuter)?.let { query["outer"] = it.toString() }
             AetherEndpoint.parse(config.aetherWiwInner)?.let { query["inner"] = it.toString() }
         }
-        listenPortOf(config.aetherListenPort)?.let(::storedListenPort)?.let { query["listen"] = it }
         val psiphon = AetherPsiphon.fromString(config.aetherPsiphon)
         if (psiphon != AetherPsiphon.OFF) {
             query["psiphon"] = psiphon.type
@@ -132,20 +143,13 @@ object AetherFmt : FmtBase() {
             // Bridge lines never hold a semicolon: the core itself separates them with one.
             bridgeLines(config.aetherTorBridgeLines).takeIf { it.isNotEmpty() }?.let { query["bridges"] = it.joinToString(";") }
         }
+        config.finalMask?.takeIf { it.isNotBlank() }?.let { query["fm"] = it }
+        config.dialMode?.takeIf { it.isNotBlank() }?.let { query["dialMode"] = it }
         val endpoint = AetherEndpoint.of(config.server, config.serverPort).takeUnless { protocol.twoHops }
 
         val queryText = query.entries.joinToString("&") { "${it.key}=${Utils.encodeURIComponent(it.value)}" }
         return "${endpoint ?: ""}?$queryText#${Utils.encodeURIComponent(config.remarks)}"
     }
-
-    /** The loopback port [text] names for the core to listen on, null when it names none. */
-    fun listenPortOf(text: String?): Int? = text?.trim()?.toIntOrNull()?.takeIf { it in 1..65535 }
-
-    /**
-     * The listen port as a profile stores it: nothing for the default, so a profile saved before
-     * the port could be chosen and one saved with the default stay the same profile.
-     */
-    fun storedListenPort(port: Int): String? = port.toString().takeUnless { it == AppConfig.PORT_AETHER_SOCKS }
 
     /**
      * [takenPorts] are loopback ports something else of the app listens on, the local proxy above
@@ -156,17 +160,20 @@ object AetherFmt : FmtBase() {
             ?: normalizeEndpoints(config)
             ?: normalizeDns(config)
             ?: normalizeExitLoc(config)
+            ?: normalizeEch(config)
             ?: normalizePsiphon(config)
             ?: normalizeTor(config)
             ?: normalizeListenPort(config, takenPorts)
             ?: normalizeCommand(config, takenPorts)
 
+    /**
+     * The core of a profile built from its settings listens on the Aether listen port of the settings,
+     * the one port of every such core, which the local proxy may have been moved onto. A command
+     * written by hand names its own ports, which [normalizeCommand] checks.
+     */
     private fun normalizeListenPort(config: ProfileItem, takenPorts: Set<Int>): Problem? {
-        val text = config.aetherListenPort?.trim().orEmpty()
-        val port = listenPortOf(text)
-        if (text.isNotEmpty() && port == null) return Problem.INVALID_LISTEN_PORT
-        // The default port can be taken too, once the local proxy has been moved onto it.
-        val listen = port ?: AppConfig.PORT_AETHER_SOCKS.toInt()
+        if (!config.aetherCommand.isNullOrBlank()) return null
+        val listen = AetherCoreManager.socksPort
         if (listen in takenPorts) return Problem.LISTEN_PORT_TAKEN
         // Psiphon inside the tunnel, Tor inside it and Tor around it each take one more port after the
         // one the app dials, as AetherCoreManager.buildArguments hands them out.
@@ -176,9 +183,7 @@ object AetherFmt : FmtBase() {
             tor == AetherTor.CHAIN,
             tor == AetherTor.REVERSE,
         ).count { it }
-        if (listen + more > 65535) return Problem.INVALID_LISTEN_PORT
         if ((1..more).any { listen + it in takenPorts }) return Problem.NEXT_PORT_TAKEN
-        config.aetherListenPort = port?.let(::storedListenPort)
         return null
     }
 
@@ -203,6 +208,60 @@ object AetherFmt : FmtBase() {
     }
 
     private val exitRule = Regex("!?[A-Z]{2}(,[A-Z]{2})*")
+
+    /**
+     * Where the ECH key comes from, as the core reads it: the resolver and the domain, kept while ECH is on and
+     * left out when they are the defaults, so that a profile follows the defaults. They are refused only where the
+     * editor shows them, over MASQUE with a WARP tunnel; elsewhere one the core would not take is dropped, as
+     * nothing on screen could put it right.
+     */
+    private fun normalizeEch(config: ProfileItem): Problem? {
+        val dns = config.aetherEchDns?.trim().orEmpty()
+        val domain = config.aetherEchDomain?.trim().orEmpty()
+        val ech = config.aetherEch == true
+        val inUse = ech &&
+            AetherProtocol.fromString(config.aetherProtocol).overMasque &&
+            AetherPsiphon.fromString(config.aetherPsiphon) != AetherPsiphon.ONLY &&
+            AetherTor.fromString(config.aetherTor) != AetherTor.ONLY
+        if (inUse && dns.isNotEmpty() && !isEchDns(dns)) return Problem.INVALID_ECH_DNS
+        if (inUse && domain.isNotEmpty() && !isEchDomain(domain)) return Problem.INVALID_ECH_DOMAIN
+        config.aetherEchDns = dns.takeIf { ech && it != AppConfig.AETHER_ECH_DNS && isEchDns(it) }
+        config.aetherEchDomain = domain.takeIf { ech && it != AppConfig.AETHER_ECH_DOMAIN && isEchDomain(it) }
+        return null
+    }
+
+    /**
+     * Whether [value] names a resolver the core asks for the ECH key, as its --ech-dns takes it: udp:// or tcp:// and
+     * an IP address, on port 53 unless one is given, or the https:// URL of a DNS-over-HTTPS server, on port 443
+     * unless it names one.
+     */
+    internal fun isEchDns(value: String): Boolean {
+        // Quotes would not come back from the command line the editor shows, which is split into words.
+        if (value.any { it.isWhitespace() || it == '"' || it == '\'' }) return false
+        val scheme = value.substringBefore("://", "").lowercase(Locale.ROOT)
+        val rest = value.substringAfter("://", "")
+        return when (scheme) {
+            "https" -> rest.takeWhile { it !in "/?#" }.isNotEmpty()
+            "udp", "tcp" -> rest.trimEnd('/').let { address ->
+                // As the core reads an address: ASCII digits only, and brackets around an IPv6 address alone.
+                address.all { it.code < 0x80 } &&
+                    !(address.startsWith('[') && ':' !in address.substringBefore(']')) &&
+                    (AetherEndpoint.parse(address) ?: AetherEndpoint.of(address, "53")) != null
+            }
+            else -> false
+        }
+    }
+
+    /**
+     * Whether [value] is a domain whose HTTPS record can be asked for, as the core's --ech-domain takes it. A label
+     * cannot start or end with '-' either, so that no value reads as an option of the core's command line.
+     */
+    internal fun isEchDomain(value: String): Boolean {
+        val name = value.removeSuffix(".")
+        return name.isNotEmpty() && name.length <= 253 && name.split('.').all { echDomainLabel.matches(it) }
+    }
+
+    private val echDomainLabel = Regex("[A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?")
 
     private fun normalizePsiphon(config: ProfileItem): Problem? {
         val psiphon = AetherPsiphon.fromString(config.aetherPsiphon)

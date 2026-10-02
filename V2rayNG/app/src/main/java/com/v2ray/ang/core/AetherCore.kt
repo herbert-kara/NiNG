@@ -1,7 +1,11 @@
 package com.v2ray.ang.core
 
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherProtocol
+import com.v2ray.ang.extension.nullIfBlank
+import com.v2ray.ang.util.JsonUtil
+import java.security.MessageDigest
 
 /**
  * The Aether core a configuration runs on, as the arguments its process is started with, the
@@ -9,9 +13,10 @@ import com.v2ray.ang.enums.AetherProtocol
  * command line the profile carries in their place; the core of a custom configuration is the
  * command line it carries as aetherCommand. A command line is read as written and run as written,
  * so that what the profile or the configuration says is what runs. Two cores with the same
- * arguments are one core, which is how one process comes to serve several outbounds.
+ * arguments are one core, which is how one process comes to serve several outbounds, as long as
+ * they dial out through the same [exit] as well: a process dials out through one.
  */
-data class AetherCore(val arguments: List<String>) {
+data class AetherCore(val arguments: List<String>, val exit: AetherExit = AetherExit.PLAIN) {
 
     /**
      * The loopback port the app dials: Psiphon's or Tor's listener when one of them runs inside the
@@ -35,49 +40,45 @@ data class AetherCore(val arguments: List<String>) {
     /** The command line a profile or a custom configuration carries for this core; [ofCommand] reads it back. */
     val command: String get() = (listOf(COMMAND_NAME) + arguments).joinToString(" ", transform = ::quoted)
 
-    /**
-     * This core dialled on [port] instead, as a latency test opens it on a port of its own. The other
-     * listeners it names move to the ports after it, in the order of [LISTENERS], where
-     * [AetherCoreManager.buildArguments] puts them; one on an ephemeral port stays there.
-     */
-    fun on(port: Int): AetherCore {
-        val dialed = AetherCoreManager.listenerFlagOf(arguments)
-        var moved = AetherCoreManager.withListener(arguments, dialed, port)
-        var next = port + 1
-        for (listener in LISTENERS) {
-            if (listener == dialed) continue
-            val current = AetherCoreManager.portAfter(arguments, listener) ?: continue
-            if (current == 0) continue
-            moved = AetherCoreManager.withListener(moved, listener, next++)
-        }
-        return AetherCore(moved)
-    }
-
     /** True when a process started with [processArguments] runs this core, on whatever ports and at whatever log level. */
     fun runsAs(processArguments: List<String>): Boolean =
         AetherCoreManager.tunnelArguments(processArguments) == AetherCoreManager.tunnelArguments(arguments)
+
+    /** True when the core is told which proxy to dial out through, as a command written by hand may be. */
+    val hasUpstream: Boolean get() = AetherCoreManager.UPSTREAM in arguments
+
+    /**
+     * This core dialling out through the SOCKS inbound on [port] of the loopback address, which Xray
+     * serves so that what the core sends leaves through Xray. A core told an upstream of its own keeps it.
+     */
+    fun through(port: Int): AetherCore =
+        if (hasUpstream) this else copy(arguments = arguments + listOf(AetherCoreManager.UPSTREAM, "socks5://${AppConfig.LOOPBACK}:$port"))
 
     companion object {
 
         /** The name a command line starts with; the app runs its own copy of the core whatever the name says. */
         const val COMMAND_NAME = "aether"
 
-        /** The listeners a core may be told to bind, in the order [on] hands ports out: the core's own, Tor's, Psiphon's. */
+        /** The listeners a core may be told to bind: the core's own, Tor's, Psiphon's. */
         private val LISTENERS = listOf("--bind", AetherCoreManager.TOR_BIND, AetherCoreManager.PSIPHON_BIND)
 
         /**
-         * The core of [profile]: the command line it carries, or its settings as arguments on its
-         * listen port. The log level is the session's to add. A command the app cannot read is
-         * left aside for the settings; the profile editor refuses to store one.
+         * The core of [profile]: the command line it carries, or its settings as arguments on
+         * [listenPort], the Aether listen port of the app, dialling out through the exit-node of its
+         * settings. The log level is the session's to add. A command the app cannot read is left aside
+         * for the settings; the profile editor refuses to store one. A screen passes the port it holds,
+         * since the setting is read from storage.
          */
-        fun of(profile: ProfileItem): AetherCore =
-            profile.aetherCommand?.takeIf { it.isNotBlank() }?.let(::ofCommand)
+        fun of(profile: ProfileItem, listenPort: Int = AetherCoreManager.socksPort): AetherCore {
+            val core = profile.aetherCommand?.takeIf { it.isNotBlank() }?.let(::ofCommand)
                 ?: AetherCore(
                     AetherCoreManager.withoutOption(
-                        AetherCoreManager.buildArguments(profile, AetherCoreManager.listenPort(profile)),
+                        AetherCoreManager.buildArguments(profile, listenPort),
                         "--log-level",
                     )
                 )
+            return core.copy(exit = AetherExit.of(profile))
+        }
 
         /**
          * The core [command] describes, or null when it names nothing the app can run: no argument
@@ -128,5 +129,45 @@ data class AetherCore(val arguments: List<String>) {
 
         /** [word] as a command line carries it: quoted when whitespace would split it. */
         private fun quoted(word: String): String = if (word.isEmpty() || word.any(Char::isWhitespace)) "\"$word\"" else word
+    }
+}
+
+/**
+ * PattNG: the exit-node of an Aether core, the outbound that what the core dials out through leaves
+ * Xray by. As a rule it is a plain freedom outbound with the finalMask and the dialMode of the core's
+ * Aether profile, as an ordinary profile sets them on its own outbound: an Aether profile's outbound
+ * only reaches the core on the loopback address, where they would do nothing. See
+ * [CoreOutboundBuilder.toOutboundAetherExit].
+ *
+ * In a proxy chain where the Aether profile is not the entry hop, the one that dials the internet
+ * itself, the core dials out through the hop on its entry side instead: that hop's outbound, as the
+ * chain builds it, is the exit-node, and [hops] tells those hops apart. The profile's finalMask and
+ * dialMode do not count then, nor does anything else of a plain exit-node.
+ */
+data class AetherExit(val finalMask: String? = null, val dialMode: String? = null, val hops: String? = null) {
+
+    /**
+     * What tells this exit-node from another in another process, without what it is made of: a digest
+     * of it, which the session's core carries in its environment, see [AetherCoreManager.EXIT_ENV].
+     */
+    val key: String get() = digest(listOf(finalMask, dialMode, hops).joinToString("\u0000") { it.orEmpty() })
+
+    companion object {
+        /** An exit-node with nothing set, as the core of a custom configuration dials out through. */
+        val PLAIN = AetherExit()
+
+        /** The exit-node of the core of [profile]. */
+        fun of(profile: ProfileItem): AetherExit = AetherExit(profile.finalMask.nullIfBlank(), profile.dialMode.nullIfBlank())
+
+        /**
+         * The exit-node of an Aether hop of a proxy chain that dials out through [hops]: the hops on its
+         * entry side, in the order a chain lists its profiles, from the one it dials out through, which
+         * is the exit-node, to the entry hop. They are told apart by a digest of their profiles, which
+         * hold secrets.
+         */
+        fun through(hops: List<ProfileItem>): AetherExit = AetherExit(hops = digest(JsonUtil.toJson(hops)))
+
+        private fun digest(text: String): String =
+            MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
 }

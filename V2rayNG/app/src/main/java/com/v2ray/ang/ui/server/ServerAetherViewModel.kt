@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.annotation.StringRes
 import androidx.lifecycle.viewModelScope
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.AetherCoreManager
 import com.v2ray.ang.core.AetherIdentity
@@ -12,12 +13,15 @@ import com.v2ray.ang.core.AetherScanResult
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherProtocol
 import com.v2ray.ang.ui.base.BaseViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
 
 sealed interface AetherScanState {
@@ -58,6 +62,10 @@ class ServerAetherViewModel(
     private val _psiphonRegions = MutableStateFlow<List<String>>(emptyList())
     val psiphonRegions: StateFlow<List<String>> = _psiphonRegions.asStateFlow()
 
+    /** The Aether listen port the command of a profile is built on; the default until it is read from the settings. */
+    private val _listenPort = MutableStateFlow(AppConfig.PORT_AETHER_SOCKS.toInt())
+    val listenPort: StateFlow<Int> = _listenPort.asStateFlow()
+
     private val _scanState = MutableStateFlow<AetherScanState>(AetherScanState.Idle)
     val scanState: StateFlow<AetherScanState> = _scanState.asStateFlow()
 
@@ -73,6 +81,7 @@ class ServerAetherViewModel(
 
     private val nextLogId = AtomicLong()
     private var scanJob: Job? = null
+    private var renewJob: Job? = null
     private var reportedIdentity: AetherIdentityStatus? = null
 
     private val isBusy: Boolean
@@ -83,6 +92,7 @@ class ServerAetherViewModel(
         viewModelScope.launch { _isPsiphonAvailable.value = source.isPsiphonAvailable() }
         viewModelScope.launch { _isTorTransportsAvailable.value = source.isTorTransportsAvailable() }
         viewModelScope.launch { _psiphonRegions.value = source.psiphonRegions() }
+        viewModelScope.launch { _listenPort.value = source.listenPort() }
         refreshSession()
     }
 
@@ -94,27 +104,33 @@ class ServerAetherViewModel(
         if (isBusy) return
         _scanState.value = AetherScanState.Scanning
         scanJob = viewModelScope.launch {
-            // Checked at the tap: a second tunnel on the key of a live session would disturb it.
-            val session = source.activeSession()
-            _session.value = session
-            if (session?.disturbedByScanOf(AetherProtocol.fromString(profile.aetherProtocol)) == true) {
-                _scanState.value = AetherScanState.Idle
-                append(Log.WARN, AetherLogText.Resource(R.string.aether_scan_blocked))
-                return@launch
+            try {
+                // Checked at the tap: a second tunnel on the key of a live session would disturb it.
+                val session = source.activeSession()
+                _session.value = session
+                if (session?.disturbedByScanOf(AetherProtocol.fromString(profile.aetherProtocol)) == true) {
+                    _scanState.value = AetherScanState.Idle
+                    append(Log.WARN, AetherLogText.Resource(R.string.aether_scan_blocked))
+                    return@launch
+                }
+                append(Log.INFO, AetherLogText.Resource(R.string.aether_log_scan_started))
+                val result = source.scan(profile, ::appendOutput)
+                _scanState.value = result?.let(AetherScanState::Found) ?: AetherScanState.NotFound
+                append(if (result == null) Log.WARN else Log.INFO, scanOutcome(result))
+                reportIdentity(source.identityStatus(AetherProtocol.fromString(profile.aetherProtocol)), onlyChanges = true)
+            } finally {
+                // A cancelled scan stops being one here, once its core and whatever that started have ended.
+                if (_scanState.value == AetherScanState.Scanning) _scanState.value = AetherScanState.Idle
             }
-            append(Log.INFO, AetherLogText.Resource(R.string.aether_log_scan_started))
-            val result = source.scan(profile, ::appendOutput)
-            _scanState.value = result?.let(AetherScanState::Found) ?: AetherScanState.NotFound
-            append(if (result == null) Log.WARN else Log.INFO, scanOutcome(result))
-            reportIdentity(source.identityStatus(AetherProtocol.fromString(profile.aetherProtocol)), onlyChanges = true)
         }
     }
 
+    /** Stops the scan, which shows as running until its core, with whatever that started, has ended. */
     fun cancelScan() {
-        if (_scanState.value != AetherScanState.Scanning) return
-        scanJob?.cancel()
-        _scanState.value = AetherScanState.Idle
+        val job = scanJob ?: return
+        if (_scanState.value != AetherScanState.Scanning || job.isCancelled) return
         append(Log.WARN, AetherLogText.Resource(R.string.aether_log_scan_cancelled))
+        job.cancel()
     }
 
     fun onScanHandled() {
@@ -130,7 +146,7 @@ class ServerAetherViewModel(
     fun renewIdentity(profile: ProfileItem) {
         if (isBusy) return
         _isRenewingIdentity.value = true
-        viewModelScope.launch {
+        renewJob = viewModelScope.launch {
             try {
                 // Checked again at the tap, the session may have come up after the screen opened.
                 val session = source.activeSession()
@@ -147,10 +163,29 @@ class ServerAetherViewModel(
                     append(Log.INFO, AetherLogText.Resource(R.string.aether_log_key_renewed))
                     reportIdentity(status, onlyChanges = false)
                 }
+            } catch (e: CancellationException) {
+                // By now the core and what it started have ended. A renewal cancelled once every new key
+                // was ready has put them in place all the same, so the keys in use are shown if they changed.
+                withContext(NonCancellable) {
+                    reportIdentity(source.identityStatus(AetherProtocol.fromString(profile.aetherProtocol)), onlyChanges = true)
+                }
+                throw e
             } finally {
                 _isRenewingIdentity.value = false
             }
         }
+    }
+
+    /**
+     * Stops getting new keys: the core that registers them ends, with whatever it started, and until
+     * then the renewal shows as running. The keys in use stay, unless every new key was ready already;
+     * see [com.v2ray.ang.core.AetherIdentityManager.renew].
+     */
+    fun cancelRenewal() {
+        val job = renewJob ?: return
+        if (!_isRenewingIdentity.value || job.isCancelled) return
+        append(Log.WARN, AetherLogText.Resource(R.string.aether_log_key_renew_cancelled))
+        job.cancel()
     }
 
     /** Forgets what Psiphon has learned, unless a session runs on it; the outcome goes to the log. */

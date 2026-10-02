@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = "com.herbertkara.ning"
-        minSdk = 24
+        minSdk = 29
         targetSdk = 37
         versionCode = 749
         // Upstream renamed the property and bumped to 2.3.9. Keep the -ning scheme: the release

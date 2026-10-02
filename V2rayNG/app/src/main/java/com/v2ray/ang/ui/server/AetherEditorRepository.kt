@@ -44,6 +44,9 @@ interface AetherEditorSource {
 
     /** The exit countries on offer, ISO codes sorted: those of the app's Psiphon server list and those Psiphon last reported. */
     suspend fun psiphonRegions(): List<String>
+
+    /** The Aether listen port of the settings, which every core of a profile listens on. */
+    suspend fun listenPort(): Int
 }
 
 class AetherEditorRepository(private val context: Context) : AetherEditorSource {
@@ -58,12 +61,11 @@ class AetherEditorRepository(private val context: Context) : AetherEditorSource 
         withContext(Dispatchers.IO) { AetherCoreManager.isTorTransportsSupported(context) }
 
     // The daemon is the only authority on its state, so this looks for its core process and its
-    // listener instead of a UI-side flag. The process check covers the scanning phase, before the
-    // listener exists, and names the protocol; the listener probe is the fallback when /proc
-    // cannot be read, and then the protocol stays unknown.
+    // listener instead of a UI-side flag; see [sessionOf].
     override suspend fun activeSession(): AetherSession? = withContext(Dispatchers.IO) {
-        AetherCoreManager.sessionProtocol(context)?.let { AetherSession(it) }
-            ?: AetherSession(protocol = null).takeIf { AetherCoreManager.answersSocks(AetherCoreManager.socksPort) }
+        sessionOf(AetherCoreManager.sessionProtocol(context), AetherCoreManager.canListProcesses()) {
+            AetherCoreManager.answersSocks(AetherCoreManager.socksPort)
+        }
     }
 
     override suspend fun scan(profile: ProfileItem, onOutput: (String) -> Unit): AetherScanResult? =
@@ -79,6 +81,19 @@ class AetherEditorRepository(private val context: Context) : AetherEditorSource 
         PsiphonServerList.forgetRemembered()
         AetherCoreManager.clearPsiphonState(context.filesDir, AetherIdentityManager.workDir(context))
     }
+
+    companion object {
+        /**
+         * The live session told by the [protocol] its core process names, which covers the scanning
+         * phase, before the listener exists. Only where the processes cannot be listed does a listener
+         * on the Aether port, which [listenerAnswers] tells, stand in for it, and then the protocol stays
+         * unknown: elsewhere that listener is the core of a latency test, which listens on the same port.
+         */
+        internal fun sessionOf(protocol: AetherProtocol?, processesListed: Boolean, listenerAnswers: () -> Boolean): AetherSession? =
+            protocol?.let(::AetherSession) ?: AetherSession(protocol = null).takeIf { !processesListed && listenerAnswers() }
+    }
+
+    override suspend fun listenPort(): Int = withContext(Dispatchers.IO) { AetherCoreManager.socksPort }
 
     override suspend fun psiphonRegions(): List<String> = withContext(Dispatchers.IO) {
         val entries = PsiphonServerList.entriesFile(File(Utils.userAssetPath(context)), AetherIdentityManager.workDir(context)) { problem ->

@@ -2,6 +2,9 @@ package com.v2ray.ang.core
 
 import android.content.Context
 import android.util.Log
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.AetherEndpoint
 import com.v2ray.ang.dto.AetherRange
@@ -19,9 +22,11 @@ import com.v2ray.ang.enums.AetherTorRelays
 import com.v2ray.ang.enums.AetherTransport
 import com.v2ray.ang.fmt.AetherFmt
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -33,6 +38,8 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -41,6 +48,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
@@ -62,6 +70,13 @@ object AetherCoreManager {
 
     /** The option that names Tor's own listener. */
     internal const val TOR_BIND = "--tor-bind"
+
+    /** The option that names the proxy the core dials out through. */
+    internal const val UPSTREAM = "--upstream"
+
+    /** The option that has the core register identities and end, with the word naming which: here all four. */
+    private const val REGISTER = "--register"
+    private const val REGISTER_EVERY_KEY = "all"
 
     /**
      * The pluggable transport Tor's bridges run through, shipped beside the core as a library. It is
@@ -87,6 +102,13 @@ object AetherCoreManager {
      * alone.
      */
     internal const val SESSION_ENV = "PATTNG_AETHER_SESSION"
+
+    /**
+     * Environment variable on the daemon's session core that tells its exit-node apart, see
+     * [AetherExit.key]. The same tunnel can dial out through a plain exit-node or through a hop of a
+     * proxy chain, so the arguments do not tell whether a latency test measures what the session runs.
+     */
+    internal const val EXIT_ENV = "PATTNG_AETHER_EXIT"
 
     /** Environment variable that tells the core where the Psiphon client is; it looks for it under other names otherwise. */
     internal const val PSIPHON_BIN_ENV = "AETHER_PSIPHON_BIN"
@@ -159,11 +181,54 @@ object AetherCoreManager {
         Thread(task, "aether-core").apply { isDaemon = true }
     }
 
-    /** The port a core listens on unless its profile or its custom configuration names another. */
-    val socksPort: Int get() = AppConfig.PORT_AETHER_SOCKS.toInt()
+    /**
+     * Where the loopback port every Aether core listens on comes from: the setting, see
+     * SettingsManager.getAetherListenPort, which the application points this at as each of its
+     * processes starts. Until then, as in a JVM test, the default port.
+     */
+    @Volatile
+    var listenPortSource: () -> Int = { AppConfig.PORT_AETHER_SOCKS.toInt() }
 
-    /** The loopback port the session core of [profile] listens on, and the one its SOCKS outbound dials. */
-    fun listenPort(profile: ProfileItem): Int = AetherFmt.listenPortOf(profile.aetherListenPort) ?: socksPort
+    /**
+     * The loopback port every Aether core listens on, whatever its profile, and every Aether outbound
+     * dials, unless a command written by hand names another. The app runs one core at a time on it:
+     * a session's, or a latency test's while no session runs on Aether.
+     */
+    val socksPort: Int get() = listenPortSource()
+
+    /**
+     * The port of the secondary-socks inbound, which the core of a session dials out through: three
+     * above [socksPort], past the two after it that Psiphon and Tor may take.
+     */
+    val secondarySocksPort: Int get() = socksPort + SECONDARY_SOCKS_OFFSET
+    private const val SECONDARY_SOCKS_OFFSET = 3
+
+    /** Ports below this one are the system's; an app cannot listen there. */
+    private const val FIRST_LISTEN_PORT = 1024
+
+    /** The highest Aether listen port: the three ports after it are the core's as well. */
+    private const val LAST_LISTEN_PORT = 65535 - SECONDARY_SOCKS_OFFSET
+
+    /**
+     * The Aether listen port the setting [text] names: a port an app can listen on, with the three
+     * ports after it ports as well; the default port for anything else.
+     */
+    internal fun listenPortOf(text: String?): Int =
+        text?.trim()?.toIntOrNull()?.takeIf { it in FIRST_LISTEN_PORT..LAST_LISTEN_PORT } ?: AppConfig.PORT_AETHER_SOCKS.toInt()
+
+    /** Why [text] cannot be the Aether listen port beside a local proxy on [localPorts]; null when it can. */
+    internal fun listenPortProblem(text: String, localPorts: Set<Int>): ListenPortProblem? {
+        val port = text.trim().toIntOrNull()?.takeIf { it in FIRST_LISTEN_PORT..LAST_LISTEN_PORT } ?: return ListenPortProblem.NOT_A_PORT
+        return ListenPortProblem.LOCAL_PROXY.takeIf { (port..port + SECONDARY_SOCKS_OFFSET).any { it in localPorts } }
+    }
+
+    internal enum class ListenPortProblem {
+        /** No port an app can listen on, with the three ports after it ports as well. */
+        NOT_A_PORT,
+
+        /** The port, or one of the three after it, which the core takes as well, is the local proxy's. */
+        LOCAL_PROXY,
+    }
 
     /**
      * The port a scan or a key renewal of [profile] binds: none, since nothing dials it, unless Tor
@@ -190,6 +255,14 @@ object AetherCoreManager {
     /** Whether this build ships the pluggable transport; without it Tor has no bridges where it is blocked. */
     fun isTorTransportsSupported(context: Context): Boolean = transportBinary(context).canExecute()
 
+    /**
+     * The text of a setting as the value of an option of the core: trimmed, and null when it is blank or
+     * starts with '-'. No value of these settings starts so, and one that did would read as an option of its
+     * own wherever the app looks options up word by word: a link carrying dns=--upstream would leave the core
+     * without the upstream the app gives it, so that it dialled out around Xray.
+     */
+    private fun settingValue(value: String?): String? = value?.trim()?.takeUnless { it.isEmpty() || it.startsWith('-') }
+
     fun buildArguments(
         profile: ProfileItem,
         port: Int,
@@ -203,11 +276,11 @@ object AetherCoreManager {
         val psiphon = AetherPsiphon.fromString(profile.aetherPsiphon).takeUnless { scan && it != AetherPsiphon.REVERSE } ?: AetherPsiphon.OFF
         // The listener the app dials takes [port]: Psiphon's or Tor's when one of them runs inside the
         // tunnel and is what the app reaches, the tunnel's own otherwise. Every other listener takes the
-        // ports after it, in the order [AetherCore.on] hands them out: the tunnel's own, then Tor's, then
-        // Psiphon's. Psiphon around the tunnel is the exception: nothing of the app dials its listener
-        // and the core takes the port Psiphon reports, so an ephemeral port keeps a test core from
-        // colliding with the session's. Tor around the tunnel gets a real port, since the core dials
-        // the address Tor was told to listen on.
+        // ports after it, in this order: the tunnel's own, then Tor's, then Psiphon's. Psiphon around the
+        // tunnel is the exception: nothing of the app dials its listener and the core takes the port
+        // Psiphon reports, so an ephemeral port keeps a scan core from colliding with the session's.
+        // Tor around the tunnel gets a real port, since the core dials the address Tor was told to
+        // listen on.
         val dialsPsiphon = psiphon == AetherPsiphon.CHAIN
         val dialsTor = tor == AetherTor.CHAIN && !dialsPsiphon
         var next = port + 1
@@ -231,9 +304,9 @@ object AetherCoreManager {
                 AetherObfuscation.fromString(profile.aetherObfuscation).takeUnless { it == AetherObfuscation.AUTO }
                     ?.let { addAll(listOf("--noize", it.type)) }
                 addAll(listOf("--ip", AetherIpVersion.fromString(profile.aetherIpVersion).type))
-                profile.aetherDns?.takeIf { it.isNotBlank() }?.let { addAll(listOf("--dns", it)) }
+                settingValue(profile.aetherDns)?.let { addAll(listOf("--dns", it)) }
                 // A scan keeps the exit rule as well, so that it ends on an endpoint the session will accept.
-                profile.aetherExitLoc?.takeIf { it.isNotBlank() }?.let { addAll(listOf("--exit-loc", it)) }
+                settingValue(profile.aetherExitLoc)?.let { addAll(listOf("--exit-loc", it)) }
 
                 if (protocol.overMasque &&
                     AetherTransport.fromString(profile.aetherTransport) == AetherTransport.HTTP2
@@ -247,8 +320,13 @@ object AetherCoreManager {
                             ?.let { addAll(listOf("--fragment-delay", it.toString())) }
                     }
                 }
-                // Encrypted Client Hello hides the server name of the MASQUE handshake, on either carrier and both hops.
-                if (protocol.overMasque && profile.aetherEch == true) addAll(listOf("--ech", "auto"))
+                // Encrypted Client Hello hides the server name of the MASQUE handshake, on either carrier and both hops,
+                // with the key of the HTTPS record of the ECH domain, asked of the ECH resolver.
+                if (protocol.overMasque && profile.aetherEch == true) {
+                    addAll(listOf("--ech", "auto"))
+                    addAll(listOf("--ech-dns", settingValue(profile.aetherEchDns) ?: AppConfig.AETHER_ECH_DNS))
+                    addAll(listOf("--ech-domain", settingValue(profile.aetherEchDomain) ?: AppConfig.AETHER_ECH_DOMAIN))
+                }
 
                 if (protocol.twoHops) {
                     val hop = if (protocol == AetherProtocol.MIM) "--mim" else "--wiw"
@@ -278,7 +356,9 @@ object AetherCoreManager {
                     AetherTorBridges.AUTO -> Unit
                     AetherTorBridges.FIRST -> add("--tor-bridges")
                     AetherTorBridges.NEVER -> add("--no-tor-bridges")
-                    AetherTorBridges.OWN -> AetherFmt.bridgeLines(profile.aetherTorBridgeLines).forEach { addAll(listOf("--tor-bridge", it)) }
+                    AetherTorBridges.OWN -> AetherFmt.bridgeLines(profile.aetherTorBridgeLines)
+                        .mapNotNull { settingValue(it) }
+                        .forEach { addAll(listOf("--tor-bridge", it)) }
                 }
                 // Where fetched bridges come from; with the profile's own lines, or none at all, nothing is fetched.
                 if (bridges == AetherTorBridges.AUTO || bridges == AetherTorBridges.FIRST) {
@@ -299,20 +379,31 @@ object AetherCoreManager {
                 addAll(listOf("--psiphon-mode", shape.type))
                 // The CDN lists feed the fronted transports alone, which the direct shape never uses; the
                 // server names count only beside an IP list of one's own, since the built-in list comes whole.
-                val cdnIps = profile.aetherPsiphonCdnIps?.takeIf { it.isNotBlank() && shape != AetherPsiphonMode.DIRECT }
+                val cdnIps = settingValue(profile.aetherPsiphonCdnIps)?.takeIf { shape != AetherPsiphonMode.DIRECT }
                 cdnIps?.let { addAll(listOf("--psiphon-cdn-ips", it)) }
-                if (cdnIps != null) profile.aetherPsiphonCdnSni?.takeIf { it.isNotBlank() }?.let { addAll(listOf("--psiphon-cdn-sni", it)) }
+                if (cdnIps != null) settingValue(profile.aetherPsiphonCdnSni)?.let { addAll(listOf("--psiphon-cdn-sni", it)) }
                 // Which of the edge lists built into Psiphon the fronting scan tries; beside addresses of one's own, after them.
                 if (shape != AetherPsiphonMode.DIRECT) {
                     AetherPsiphonCdnSet.join(AetherPsiphonCdnSet.parse(profile.aetherPsiphonCdnSets))?.let { addAll(listOf("--psiphon-cdn-sets", it)) }
                 }
-                profile.aetherPsiphonRegion?.takeIf { it.isNotBlank() }?.let { addAll(listOf("--psiphon-region", it)) }
+                settingValue(profile.aetherPsiphonRegion)?.let { addAll(listOf("--psiphon-region", it)) }
                 // The bundled list, unless the profile wants Psiphon to fetch a fresh one before it dials anything.
                 if (profile.aetherPsiphonBundledList != false) addAll(listOf(PSIPHON_SERVER_ENTRIES, SHIPPED_LIST))
             }
             addAll(listOf("--log-level", logLevel))
         }
     }
+
+    /**
+     * The run that registers a new key of every kind, both WireGuard keys and both MASQUE keys, and
+     * ends without scanning or opening a tunnel: the core's `--register all`, on the scan
+     * arguments of [profile] for [port], see [scanPort]. It registers the way [profile] reaches
+     * WARP: directly, or through the Tor or Psiphon around its tunnel, the WireGuard keys as well,
+     * since a registration is an HTTPS request, which either carrier carries. The protocol and scan
+     * options go along unused.
+     */
+    internal fun keyRenewalArguments(profile: ProfileItem, port: Int): List<String> =
+        listOf(REGISTER, REGISTER_EVERY_KEY) + buildArguments(profile, port, scan = true)
 
     /**
      * Maps the app's core log level setting onto the levels the core accepts. Only the session
@@ -412,8 +503,24 @@ object AetherCoreManager {
         }
     }
 
-    internal fun startProcess(context: Context, arguments: List<String>, markSession: Boolean = false): Process {
+    /**
+     * Starts a core on [arguments]. It uses, or registers where there are none, the keys in the
+     * identity folder, or in [keysDir] instead, where a renewal gathers new keys apart from the keys
+     * in use.
+     */
+    internal fun startProcess(
+        context: Context,
+        arguments: List<String>,
+        markSession: Boolean = false,
+        keysDir: File? = null,
+        exitKey: String? = null,
+    ): Process {
         val workDir = AetherIdentityManager.workDir(context).apply { mkdirs() }
+        // A renewal stopped while it moved its new keys into place is finished before a core reads them.
+        if (!AetherIdentityManager.settle(context)) {
+            LogUtil.w(AppConfig.TAG, "AetherCore: the renewed keys could not all be moved into place; the keys not moved yet stay in use")
+        }
+        val keys = keysDir ?: workDir
         val shippedList = if (PSIPHON_SERVER_ENTRIES in arguments) {
             PsiphonServerList.entriesFile(File(Utils.userAssetPath(context)), workDir) { problem ->
                 LogUtil.w(AppConfig.TAG, "AetherCore: ${AppConfig.PSIPHON_SERVERS_DAT} is not a usable Psiphon list; the entries kept from before stay", problem)
@@ -427,6 +534,7 @@ object AetherCoreManager {
         builder.environment().apply {
             put(OWNER_ENV, android.os.Process.myPid().toString())
             if (markSession) put(SESSION_ENV, "1")
+            exitKey?.let { put(EXIT_ENV, it) }
             psiphonBinary(context).takeIf { it.canExecute() }?.let { put(PSIPHON_BIN_ENV, it.absolutePath) }
             transportBinary(context).takeIf { it.canExecute() }?.let { transport ->
                 put(TOR_PT_ENV, torTransports.joinToString(";") { "$it=${transport.absolutePath}" })
@@ -437,57 +545,164 @@ object AetherCoreManager {
             put("HOME", workDir.absolutePath)
             put("TMPDIR", context.cacheDir.absolutePath)
             put("AETHER_CONFIG", File(workDir, AetherIdentityManager.BASE_FILE).absolutePath)
-            put("AETHER_MASQUE_CONFIG", File(workDir, AetherIdentityManager.MASQUE_FILE).absolutePath)
-            put("AETHER_WG_CONFIG", File(workDir, AetherIdentityManager.WIREGUARD_FILE).absolutePath)
+            put("AETHER_MASQUE_CONFIG", File(keys, AetherIdentityManager.MASQUE_FILE).absolutePath)
+            put("AETHER_WG_CONFIG", File(keys, AetherIdentityManager.WIREGUARD_FILE).absolutePath)
         }
         return builder.start()
     }
 
+    /**
+     * Runs a core of its own, one that serves no session: a scan, a key renewal, a latency test. It
+     * dials out through the exit of this process's Xray, whose traffic leaves by the exit-node [exit],
+     * as the session's core dials out through the session's, see [CoreNativeManager.openExit]. For a
+     * core that dials out through a hop of a proxy chain, [configuration] is the configuration under
+     * test, whose exit-node that hop is; see [exitConfiguration]. The exit takes one core at a time, so
+     * the cores of a process take turns; it opens before the core starts and closes once the core has
+     * ended.
+     */
     internal suspend fun <T> withProcess(
+        context: Context,
+        arguments: List<String>,
+        exit: AetherExit,
+        source: String,
+        onOutput: (String) -> Unit,
+        keysDir: File? = null,
+        configuration: String? = null,
+        block: suspend (output: ReceiveChannel<String>) -> T?,
+    ): T? = throughExit(
+        turns = exitTurns,
+        open = {
+            val logLevel = MmkvManager.decodeSettingsString(AppConfig.PREF_LOGLEVEL) ?: DEFAULT_XRAY_LOG_LEVEL
+            openExit(context, exitConfiguration(exit, configuration, logLevel), source)
+        },
+        close = { CoreNativeManager.closeExit() },
+    ) { exitPort ->
+        coroutineScope { runCore(context, standaloneArguments(arguments, exitPort), source, onOutput, keysDir, block) }
+    }
+
+    /** One core of its own at a time in this process, as the exit of its Xray takes; see [withProcess]. */
+    private val exitTurns = Mutex()
+
+    /**
+     * [run] with the port of the exit that [open] opens, null when it does not open, in which case
+     * nothing runs. The exit is taken in turns by [turns], and [close] closes it once [run] is over,
+     * however it ends: with a result, with none, with an error, or cancelled.
+     */
+    internal suspend fun <T> throughExit(
+        turns: Mutex,
+        open: () -> Int?,
+        close: () -> Unit,
+        run: suspend (exitPort: Int) -> T?,
+    ): T? = turns.withLock {
+        // A cancellation can land while the exit opens or while its port is on the way back to this
+        // coroutine; whether it opened is kept aside, so that it is closed on that path as well.
+        val opened = AtomicBoolean(false)
+        try {
+            val exitPort = withContext(Dispatchers.IO) { open()?.also { opened.set(true) } } ?: return@withLock null
+            run(exitPort)
+        } finally {
+            if (opened.getAndSet(false)) withContext(NonCancellable + Dispatchers.IO) { close() }
+        }
+    }
+
+    /** A core of its own on [arguments], ended once [block] is over; null when it does not start. See [withProcess]. */
+    private suspend fun <T> CoroutineScope.runCore(
         context: Context,
         arguments: List<String>,
         source: String,
         onOutput: (String) -> Unit,
+        keysDir: File?,
         block: suspend (output: ReceiveChannel<String>) -> T?,
-    ): T? = coroutineScope {
+    ): T? {
         // A cancellation can land while the spawn runs or while its result is on the way back to this
         // coroutine; either way the core would keep running with nobody holding its handle, so the
-        // handle is kept aside and the core is destroyed on that path.
+        // handle is kept aside and the core is ended on that path as on any other, before the exit
+        // closes and the next core may take the port.
         val spawned = AtomicReference<Process?>()
         val process = try {
             withContext(Dispatchers.IO) {
                 try {
                     reapStale(context, null)
-                    startProcess(context, arguments).also(spawned::set)
+                    startProcess(context, arguments, keysDir = keysDir).also(spawned::set)
                 } catch (e: IOException) {
                     LogUtil.e(AppConfig.TAG, "AetherCore: failed to launch $source", e)
                     null
                 }
             }
         } catch (e: CancellationException) {
-            spawned.get()?.destroy()
+            spawned.get()?.let { core -> withContext(NonCancellable + Dispatchers.IO) { end(core, context) } }
             throw e
-        } ?: return@coroutineScope null
+        } ?: return null
 
         val output = Channel<String>(Channel.UNLIMITED)
         launch(Dispatchers.IO) { forward(process, source, onOutput, output) }
         try {
             ensureActive()
-            block(output)
+            return block(output)
         } finally {
             // The ending waits for the core and its helpers to be gone; a scan or a renewal calls from the main thread.
             withContext(NonCancellable + Dispatchers.IO) { end(process, context) }
         }
     }
 
+    /**
+     * The arguments of a core of its own, see [withProcess]: [arguments] dialling out through the exit
+     * on [exitPort]. An upstream they name, as a configuration exported from a session names the
+     * session's Xray, gives way to it.
+     */
+    internal fun standaloneArguments(arguments: List<String>, exitPort: Int): List<String> =
+        AetherCore(withoutOption(arguments, UPSTREAM)).through(exitPort).arguments
+
+    /**
+     * The port of the exit of this process's Xray, opened for [source] with the exit-node of
+     * [configuration], see [CoreNativeManager.openExit]; null, with the reason in the log, when it
+     * does not open.
+     */
+    private fun openExit(context: Context, configuration: String, source: String): Int? = try {
+        CoreNativeManager.openExit(context, configuration)
+    } catch (e: Exception) {
+        LogUtil.e(AppConfig.TAG, "AetherCore: the Xray $source dials out through did not open", e)
+        null
+    }
+
+    /**
+     * The configuration the exit of a core of its own opens with, whose outbound tagged exit-node the
+     * core dials out by: [configuration], the configuration under test, when it has such an outbound,
+     * as that of a core dialling out through a hop of its proxy chain has, or a custom configuration
+     * exported from a session; otherwise one with the plain exit-node of [exit] alone, which logs at
+     * [logLevel], the Xray log level of the app, should it start the shared Xray of the process.
+     */
+    internal fun exitConfiguration(exit: AetherExit, configuration: String?, logLevel: String): String =
+        configuration?.takeIf(::hasExitNode) ?: JsonObject().apply {
+            add("log", JsonObject().apply { addProperty("loglevel", logLevel) })
+            add("outbounds", JsonArray().apply { add(JsonParser.parseString(JsonUtil.toJson(CoreOutboundBuilder.toOutboundAetherExit(exit)))) })
+        }.toString()
+
+    /** Whether the configuration [content] has an outbound tagged exit-node. */
+    private fun hasExitNode(content: String): Boolean = try {
+        JsonParser.parseString(content).takeIf { it.isJsonObject }?.asJsonObject
+            ?.get("outbounds")?.takeIf { it.isJsonArray }?.asJsonArray
+            ?.any { outbound ->
+                val tag = outbound.takeIf { it.isJsonObject }?.asJsonObject?.get("tag")
+                tag != null && tag.isJsonPrimitive && tag.asString == AppConfig.TAG_EXIT_NODE
+            } == true
+    } catch (_: RuntimeException) {
+        false
+    }
+
+    /** The Xray log level the app uses unless the settings name another. */
+    private const val DEFAULT_XRAY_LOG_LEVEL = "warning"
+
     internal suspend fun <T : Any> runUntil(
         context: Context,
         arguments: List<String>,
+        exit: AetherExit,
         timeoutMs: Long,
         source: String,
         onOutput: (String) -> Unit,
+        keysDir: File? = null,
         match: (String) -> T?,
-    ): T? = withProcess(context, arguments, source, onOutput) { output ->
+    ): T? = withProcess(context, arguments, exit, source, onOutput, keysDir) { output ->
         withTimeoutOrNull(timeoutMs) { output.receiveAsFlow().mapNotNull(match).firstOrNull() }
     }
 
@@ -506,7 +721,7 @@ object AetherCoreManager {
         val arguments = withLogLevel(core.arguments, logLevel)
         val next = Session(core.port, needsWord = readyNeedsWord(arguments) && showsInfo(arguments), context = appContext, onExit = onExit)
         session = next
-        lifecycle.execute { open(next, appContext, arguments, afterProbes) }
+        lifecycle.execute { open(next, appContext, arguments, afterProbes, core.exit.key) }
     }
 
     /**
@@ -564,8 +779,8 @@ object AetherCoreManager {
     }
 
     /**
-     * Decides what the warm-up wait reports. The exit callback cannot stop the service while
-     * Xray is still starting, so a core that died in that window is caught here instead.
+     * Decides what the warm-up wait reports. A core that died before its listener came up is reported
+     * here as well as by its exit callback, and the service stops on whichever comes first.
      */
     internal fun warmUpOutcome(listening: Boolean, active: Boolean, serviceRunning: Boolean): WarmUpOutcome = when {
         !active || !serviceRunning -> WarmUpOutcome.ABANDONED
@@ -655,11 +870,22 @@ object AetherCoreManager {
      * their pipes gone, and a core started meanwhile would fail on them.
      */
     private fun end(process: Process, context: Context) {
-        process.destroy()
-        if (!awaitUntil(EXIT_WAIT_MS, EXIT_POLL_MS) { !isAlive(process) }) {
-            LogUtil.w(AppConfig.TAG, "AetherCore: the core did not end on request; what it started is ended regardless")
+        if (!endProcess(process)) {
+            LogUtil.w(AppConfig.TAG, "AetherCore: the core did not end on request and was killed; what it started is ended regardless")
         }
         reapOrphans(context)
+    }
+
+    /**
+     * Asks [process] to end and, when it has not ended within [waitMs], kills it, which it cannot
+     * refuse; the kill is waited for as long again. True when it ended on request.
+     */
+    internal fun endProcess(process: Process, waitMs: Long = EXIT_WAIT_MS): Boolean {
+        process.destroy()
+        if (awaitUntil(waitMs, EXIT_POLL_MS) { !isAlive(process) }) return true
+        process.destroyForcibly()
+        awaitUntil(waitMs, EXIT_POLL_MS) { !isAlive(process) }
+        return false
     }
 
     private fun isAlive(process: Process): Boolean = try {
@@ -713,8 +939,18 @@ object AetherCoreManager {
      * available during the scanning phase before the listener exists, which is exactly when the
      * shared key files must not be replaced and no second tunnel must be opened on the same key.
      */
-    fun sessionArguments(context: Context): List<String>? =
-        coreProcesses(context).firstOrNull { isSession(it.argv, it.ownerAlive, it.sessionMarked, sessionAddress) }?.argv?.drop(1)
+    fun sessionArguments(context: Context): List<String>? = sessionProcess(context)?.argv?.drop(1)
+
+    /**
+     * Whether this process can list the processes in /proc, where the session's core is told apart from
+     * the cores of tests and scans. Where it cannot, only a listener on the Aether port can stand in for
+     * a session, and a core of a test or a scan listens on that port as well.
+     */
+    internal fun canListProcesses(): Boolean = procDir.listFiles() != null
+
+    /** The daemon's live session core as /proc shows it, or null without one; see [sessionArguments]. */
+    internal fun sessionProcess(context: Context): CoreProcess? =
+        coreProcesses(context).firstOrNull { isSession(it.argv, it.ownerAlive, it.sessionMarked, sessionAddress) }
 
     /** The protocol of the daemon's live session, or null without one; see [sessionArguments]. */
     fun sessionProtocol(context: Context): AetherProtocol? = sessionArguments(context)?.let(::protocolOf)
@@ -728,9 +964,12 @@ object AetherCoreManager {
      */
     fun runsProfile(arguments: List<String>, profile: ProfileItem): Boolean = AetherCore.of(profile).runsAs(arguments)
 
-    /** [arguments] without the listeners and the log level: what tells one tunnel from another. */
+    /**
+     * [arguments] without the listeners, the log level and the upstream proxy: what tells one tunnel
+     * from another. The session's core dials out through Xray and its profile does not say so.
+     */
     internal fun tunnelArguments(arguments: List<String>): List<String> =
-        listOf("--log-level", "--bind", TOR_BIND, PSIPHON_BIND).fold(arguments, ::withoutOption)
+        listOf("--log-level", "--bind", TOR_BIND, PSIPHON_BIND, UPSTREAM).fold(arguments, ::withoutOption)
 
     /** [arguments] without every [flag] and the value after it. */
     internal fun withoutOption(arguments: List<String>, flag: String): List<String> {
@@ -816,9 +1055,16 @@ object AetherCoreManager {
 
     /**
      * A core process of this app found in /proc; [ownerAlive] is null when its owner could not be
-     * read, [sessionMarked] when its environment could not.
+     * read, [sessionMarked] when its environment could not. [exit] is the key of the exit-node of a
+     * session core, see [EXIT_ENV]; null when its environment could not be read or names none.
      */
-    internal class CoreProcess(val pid: Int, val argv: List<String>, val ownerAlive: Boolean?, val sessionMarked: Boolean?)
+    internal class CoreProcess(
+        val pid: Int,
+        val argv: List<String>,
+        val ownerAlive: Boolean?,
+        val sessionMarked: Boolean?,
+        val exit: String? = null,
+    )
 
     private fun coreProcesses(context: Context): List<CoreProcess> {
         val binary = binary(context).absolutePath
@@ -829,7 +1075,7 @@ object AetherCoreManager {
             if (argv.firstOrNull() != binary) return@mapNotNull null
             val environ = readNulSeparated(File(entry, "environ"))
             val ownerAlive = ownerPid(environ)?.let { File(procDir, it.toString()).isDirectory }
-            CoreProcess(pid, argv, ownerAlive, environ?.let(::isSessionMarked))
+            CoreProcess(pid, argv, ownerAlive, environ?.let(::isSessionMarked), environ?.let(::exitKeyOf))
         }
     }
 
@@ -901,6 +1147,9 @@ object AetherCoreManager {
 
     internal fun isSessionMarked(environ: List<String>): Boolean = environ.any { it.startsWith("$SESSION_ENV=") }
 
+    internal fun exitKeyOf(environ: List<String>): String? =
+        environ.firstOrNull { it.startsWith("$EXIT_ENV=") }?.substringAfter('=')?.takeIf { it.isNotEmpty() }
+
     private fun readNulSeparated(file: File): List<String>? = try {
         file.readBytes().toString(Charsets.UTF_8).split('\u0000').filter { it.isNotEmpty() }
     } catch (_: IOException) {
@@ -930,7 +1179,7 @@ object AetherCoreManager {
         null
     }
 
-    private fun open(target: Session, context: Context, arguments: List<String>, afterProbes: Boolean) {
+    private fun open(target: Session, context: Context, arguments: List<String>, afterProbes: Boolean, exitKey: String) {
         if (session !== target) return
         if (afterProbes && !awaitProbeCores(context)) {
             LogUtil.w(AppConfig.TAG, "AetherCore: a core of a test or scan is still up; the session starts beside it")
@@ -938,7 +1187,7 @@ object AetherCoreManager {
         if (session !== target) return
         reapStale(context, listenerAddressOf(arguments))
         val process = try {
-            startProcess(context, arguments, markSession = true)
+            startProcess(context, arguments, markSession = true, exitKey = exitKey)
         } catch (e: IOException) {
             LogUtil.e(AppConfig.TAG, "AetherCore: failed to launch the core", e)
             if (release(target)) target.onExit()

@@ -4,14 +4,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
+import com.v2ray.ang.AppConfig.AETHER_ECH_DNS
+import com.v2ray.ang.AppConfig.AETHER_ECH_DOMAIN
 import com.v2ray.ang.AppConfig.DEFAULT_PORT
-import com.v2ray.ang.AppConfig.PORT_AETHER_SOCKS
 import com.v2ray.ang.AppConfig.REALITY
 import com.v2ray.ang.AppConfig.TARGET_STRATEGY_AS_IS
 import com.v2ray.ang.AppConfig.WIREGUARD_LOCAL_ADDRESS_V4
 import com.v2ray.ang.AppConfig.WIREGUARD_LOCAL_MTU
 import com.v2ray.ang.AppConfig.WIREGUARD_LOCAL_REMOTE_DNS
 import com.v2ray.ang.core.AetherCore
+import com.v2ray.ang.core.AetherCoreManager
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherIpVersion
 import com.v2ray.ang.enums.AetherObfuscation
@@ -93,9 +95,10 @@ class ServerUiState(
     aetherFragmentSize: String = "",
     aetherFragmentDelay: String = "",
     aetherEch: Boolean = false,
+    aetherEchDns: String = AETHER_ECH_DNS,
+    aetherEchDomain: String = AETHER_ECH_DOMAIN,
     aetherDns: String = "",
     aetherExitLoc: String = "",
-    aetherListenPort: String = PORT_AETHER_SOCKS,
     aetherPsiphon: String = AetherPsiphon.OFF.type,
     aetherPsiphonMode: String = AetherPsiphonMode.AUTO.type,
     aetherPsiphonCdnIps: String = "",
@@ -172,9 +175,10 @@ class ServerUiState(
     var aetherFragmentSize by mutableStateOf(aetherFragmentSize)
     var aetherFragmentDelay by mutableStateOf(aetherFragmentDelay)
     var aetherEch by mutableStateOf(aetherEch)
+    var aetherEchDns by mutableStateOf(aetherEchDns)
+    var aetherEchDomain by mutableStateOf(aetherEchDomain)
     var aetherDns by mutableStateOf(aetherDns)
     var aetherExitLoc by mutableStateOf(aetherExitLoc)
-    var aetherListenPort by mutableStateOf(aetherListenPort)
     var aetherPsiphon by mutableStateOf(aetherPsiphon)
     var aetherPsiphonMode by mutableStateOf(aetherPsiphonMode)
     var aetherPsiphonCdnIps by mutableStateOf(aetherPsiphonCdnIps)
@@ -205,15 +209,21 @@ class ServerUiState(
     val hasAdvancedAetherSettings: Boolean
         get() = aetherDns.isNotBlank() ||
             aetherExitLoc.isNotBlank() ||
-            aetherListenPort.trim().let { it.isNotEmpty() && it != PORT_AETHER_SOCKS } ||
-            (targetStrategy.isNotBlank() && targetStrategy != TARGET_STRATEGY_AS_IS)
+            (targetStrategy.isNotBlank() && targetStrategy != TARGET_STRATEGY_AS_IS) ||
+            finalMask.isNotBlank() ||
+            dialMode.isNotBlank()
 
     var isRemarksError by mutableStateOf(false)
     var isAddressError by mutableStateOf(false)
     var isPortError by mutableStateOf(false)
     var isPasswordError by mutableStateOf(false)
 
-    fun toProfileItem(initialConfig: ProfileItem): ProfileItem {
+    /**
+     * The profile the editor holds, built on [initialConfig]. An Aether profile's command line counts
+     * as one of its own only when it says something else than its settings would on [aetherListenPort],
+     * the Aether listen port of the settings when null.
+     */
+    fun toProfileItem(initialConfig: ProfileItem, aetherListenPort: Int? = null): ProfileItem {
         val isVmess = configType == EConfigType.VMESS
         val isVless = configType == EConfigType.VLESS
         val isShadowsocks = configType == EConfigType.SHADOWSOCKS
@@ -297,11 +307,10 @@ class ServerUiState(
             aetherFragmentSize = if (isAether) aetherFragmentSize.nullIfBlank() else null,
             aetherFragmentDelay = if (isAether) aetherFragmentDelay.nullIfBlank() else null,
             aetherEch = if (isAether) aetherEch else null,
+            aetherEchDns = if (isAether && aetherEch) aetherEchDns.nullIfBlank() else null,
+            aetherEchDomain = if (isAether && aetherEch) aetherEchDomain.nullIfBlank() else null,
             aetherDns = if (isAether) aetherDns.nullIfBlank() else null,
             aetherExitLoc = if (isAether) aetherExitLoc.nullIfBlank() else null,
-            // Stored only when it is not the default, the way AetherFmt.normalize stores it; text that is
-            // no port goes through as written, for normalize to refuse.
-            aetherListenPort = if (isAether) aetherListenPort.trim().takeUnless { it.isEmpty() || it == PORT_AETHER_SOCKS } else null,
             aetherPsiphon = if (isPsiphon) aetherPsiphon else null,
             aetherPsiphonMode = if (isPsiphon) aetherPsiphonMode else null,
             aetherPsiphonCdnIps = if (isPsiphon) aetherPsiphonCdnIps.nullIfBlank() else null,
@@ -318,7 +327,7 @@ class ServerUiState(
         if (!isAether) return profile
         // A command that says what the settings say is no command of its own: the profile follows the settings.
         val command = aetherCommand.trim()
-        return if (command.isEmpty() || command == AetherCore.of(profile).command) profile else profile.copy(aetherCommand = command)
+        return if (command.isEmpty() || command == AetherCore.of(profile, aetherListenPort ?: AetherCoreManager.socksPort).command) profile else profile.copy(aetherCommand = command)
     }
 
     companion object {
@@ -390,9 +399,11 @@ class ServerUiState(
                 aetherFragmentSize = initialConfig.aetherFragmentSize ?: "",
                 aetherFragmentDelay = initialConfig.aetherFragmentDelay ?: "",
                 aetherEch = initialConfig.aetherEch == true,
+                // Shown filled in, so that what the core is told is in sight.
+                aetherEchDns = initialConfig.aetherEchDns.nullIfBlank() ?: AETHER_ECH_DNS,
+                aetherEchDomain = initialConfig.aetherEchDomain.nullIfBlank() ?: AETHER_ECH_DOMAIN,
                 aetherDns = initialConfig.aetherDns ?: "",
                 aetherExitLoc = initialConfig.aetherExitLoc ?: "",
-                aetherListenPort = initialConfig.aetherListenPort ?: PORT_AETHER_SOCKS,
                 aetherPsiphon = AetherPsiphon.fromString(initialConfig.aetherPsiphon).type,
                 aetherPsiphonMode = AetherPsiphonMode.fromString(initialConfig.aetherPsiphonMode).type,
                 aetherPsiphonCdnIps = initialConfig.aetherPsiphonCdnIps ?: "",

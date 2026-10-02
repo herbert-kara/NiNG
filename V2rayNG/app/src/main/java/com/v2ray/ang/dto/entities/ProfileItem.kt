@@ -99,13 +99,23 @@ data class ProfileItem(
     /** Whether the MASQUE handshake hides its server name with Encrypted Client Hello; null means it does not. */
     var aetherEch: Boolean? = null,
 
+    /** The resolver the core asks for the ECH key: udp://, tcp:// or https://; null means AppConfig.AETHER_ECH_DNS. */
+    var aetherEchDns: String? = null,
+
+    /** The domain whose HTTPS record gives the ECH key; null means AppConfig.AETHER_ECH_DOMAIN. */
+    var aetherEchDomain: String? = null,
+
     /** The resolvers names are looked up with inside the tunnel, comma-separated; null means the core's own. */
     var aetherDns: String? = null,
 
     /** The exit rule the core holds the tunnel to: country codes to allow, or with a leading ! to refuse; null means any exit. */
     var aetherExitLoc: String? = null,
 
-    /** Loopback port the Aether core of this profile listens on; null means the default, AppConfig.PORT_AETHER_SOCKS. */
+    /**
+     * The loopback port the Aether core of this profile listened on, from before every core came to
+     * listen on the Aether listen port of the settings. Nothing reads it any more; profiles that carry
+     * it keep it as they were stored.
+     */
     var aetherListenPort: String? = null,
 
     /** Where Psiphon stands in the tunnel, an AetherPsiphon type; null means it is not used. */
