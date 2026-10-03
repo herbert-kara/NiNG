@@ -238,20 +238,23 @@ jobs:
           cmdline-tools-version: '14742923'
           packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools ndk;29.0.14206865'
       - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
       - name: Exact native cache identity
         id: native
         run: |
           echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
           echo "hev=$(git rev-parse HEAD:hev-socks5-tunnel)" >> "$GITHUB_OUTPUT"
           echo "aether=$(git rev-parse HEAD:aether)" >> "$GITHUB_OUTPUT"
-      - name: Download paired Xray core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag=$(git -C AndroidLibXrayLite describe --tags --abbrev=0)
-          mkdir -p V2rayNG/app/libs
-          gh release download "$tag" --repo patterniha/AndroidLibXrayLite --pattern libv2ray.aar --dir V2rayNG/app/libs
+      - uses: actions/cache@v4
+        id: libv2ray
+        with:
+          path: V2rayNG/app/libs/libv2ray.aar
+          key: libv2ray-${{ runner.os }}-ndk29-${{ hashFiles('.git/modules/AndroidLibXrayLite/HEAD') }}
+      - name: Fetch or build libv2ray
+        if: steps.libv2ray.outputs.cache-hit != 'true'
+        run: bash tools/fetch-libv2ray.sh
       - name: Compile and unit tests before native build
         working-directory: V2rayNG
         run: |
