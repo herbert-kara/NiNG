@@ -108,8 +108,8 @@ for abi in $ABIS; do
   # a crate attribute, not a cfg, so it cannot come in through RUSTFLAGS; it is added to the
   # source here, at build time, and removed afterwards so the submodule stays clean. Drop this
   # when aether itself carries #![recursion_limit].
-  if ! grep -q 'recursion_limit' "$CORE_DIR/aether/src/main.rs"; then
-    sed -i '1i #![recursion_limit = "256"]' "$CORE_DIR/aether/src/main.rs"
+  if ! grep -q 'recursion_limit' "$CORE_DIR/src/main.rs"; then
+    sed -i '1i #![recursion_limit = "256"]' "$CORE_DIR/src/main.rs"
   fi
   env \
     ANDROID_NDK_HOME="$NDK_HOME" \
