@@ -102,6 +102,15 @@ for abi in $ABIS; do
   # The tor feature embeds arti, which is what lets a profile put Tor inside or around the tunnel;
   # aether's own Android release is built with it as well.
   echo "[aether] building the core for $abi ($triple)"
+  # The pinned core hits rustc's default recursion limit while computing the layout of its async
+  # main (query depth +130, limit 128), which fails the whole build with exit 101 -- and no
+  # released binary of this core exists, so this tree is where the bug is first met. The limit is
+  # a crate attribute, not a cfg, so it cannot come in through RUSTFLAGS; it is added to the
+  # source here, at build time, and removed afterwards so the submodule stays clean. Drop this
+  # when aether itself carries #![recursion_limit].
+  if ! grep -q 'recursion_limit' "$CORE_DIR/aether/src/main.rs"; then
+    sed -i '1i #![recursion_limit = "256"]' "$CORE_DIR/aether/src/main.rs"
+  fi
   env \
     ANDROID_NDK_HOME="$NDK_HOME" \
     ANDROID_NDK_ROOT="$NDK_HOME" \
