@@ -59,13 +59,8 @@ class FlagWalkSurvivesItsOwnPublishTest {
             },
         )
 
-        assertEquals(
-            "a walk cancelled by its own publish leaves most of the page unasked, which is the " +
-                "reported symptom: one row answered and the rest blank",
-            listOf("g1", "g2", "g3", "g4", "g5", "g6"),
-            published,
-        )
-        assertEquals("every row should end up with the country", 6, rows.value.count { it.country == "DE" })
+        assertEquals(listOf("g1", "g2", "g3", "g4", "g5", "g6"),published)
+        assertEquals(6,rows.value.count { it.country == "DE" })
     }
 
     @Test
@@ -103,8 +98,8 @@ class FlagWalkSurvivesItsOwnPublishTest {
             )
         }
 
-        assertEquals("the verdict walk was cut short", 4, verdicts.size)
-        assertEquals("the country walk was cut short by the verdict walk", 4, countries.size)
+        assertEquals(4,verdicts.size)
+        assertEquals(4,countries.size)
     }
 
     @Test
@@ -126,7 +121,7 @@ class FlagWalkSurvivesItsOwnPublishTest {
             },
             publish = { _, _, _ -> },
         )
-        assertEquals("only the first row was asked", 4, asked.size)
+        assertEquals(4,asked.size)
         assertEquals(2, asked.count { it == "5.180.82.45" })
     }
 }

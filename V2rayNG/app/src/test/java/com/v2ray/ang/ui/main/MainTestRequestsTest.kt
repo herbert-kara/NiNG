@@ -12,14 +12,14 @@ class MainTestRequestsTest {
     fun onlyTheLatestCurrentRequestCanFinishOnce() {
         val requests = MainTestRequests()
         assertFalse(requests.isTesting)
-        assertFalse(requests.completeCurrent(""))
+        assertNull(requests.completeCurrent(""))
         val first = requests.beginCurrent()
         val second = requests.beginCurrent()
         assertNotEquals(first, second)
-        assertFalse(requests.completeCurrent(first))
+        assertNull(requests.completeCurrent(first))
         assertTrue(requests.isTesting)
-        assertTrue(requests.completeCurrent(second))
-        assertFalse(requests.completeCurrent(second))
+        assertNotNull(requests.completeCurrent(second))
+        assertNull(requests.completeCurrent(second))
         assertFalse(requests.isTesting)
     }
 
@@ -28,10 +28,10 @@ class MainTestRequestsTest {
         val requests = MainTestRequests()
         val stopped = requests.beginCurrent()
         requests.invalidateCurrent()
-        assertFalse(requests.completeCurrent(stopped))
+        assertNull(requests.completeCurrent(stopped))
         val restarted = requests.beginCurrent()
-        assertFalse(requests.completeCurrent(stopped))
-        assertTrue(requests.completeCurrent(restarted))
+        assertNull(requests.completeCurrent(stopped))
+        assertNotNull(requests.completeCurrent(restarted))
     }
 
     @Test

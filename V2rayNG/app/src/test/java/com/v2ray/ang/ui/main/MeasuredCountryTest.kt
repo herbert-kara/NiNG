@@ -24,8 +24,7 @@ class MeasuredCountryTest {
         val id = queue.beginCurrent("guid-1")
         assertEquals("guid-1", queue.currentServerGuid)
         assertEquals("guid-1", queue.completeCurrent(id)?.serverGuid)
-        assertNull("the queue is empty after completing, so nothing is left to attribute",
-            queue.currentServerGuid)
+        assertNull(queue.currentServerGuid)
     }
 
     @Test
@@ -33,8 +32,7 @@ class MeasuredCountryTest {
         val queue = MainTestRequests()
         val stale = queue.beginCurrent("guid-1")
         val fresh = queue.beginCurrent("guid-2")
-        assertNull("a reply for a superseded test must not complete the current one",
-            queue.completeCurrent(stale))
+        assertNull(queue.completeCurrent(stale))
         assertEquals("guid-2", queue.currentServerGuid)
         assertEquals("guid-2", queue.completeCurrent(fresh)?.serverGuid)
     }
@@ -44,8 +42,7 @@ class MeasuredCountryTest {
         val queue = MainTestRequests()
         queue.beginCurrent("guid-1")
         queue.invalidateCurrent()
-        assertNull("a cancelled test leaves nothing to attribute a late reply to",
-            queue.currentServerGuid)
+        assertNull(queue.currentServerGuid)
     }
 
     @Test
@@ -56,13 +53,12 @@ class MeasuredCountryTest {
         // on. That is not the same as a reply that belongs to a test already replaced, which must
         // publish nothing at all -- so the two answers cannot both be null.
         val completed = queue.completeCurrent(id)
-        assertEquals("a completed test is never a dropped reply", true, completed != null)
+        assertEquals(true,completed != null)
         assertNull(completed?.serverGuid)
 
         val other = MainTestRequests()
         val stale = other.beginCurrent("guid-1")
         other.beginCurrent("guid-2")
-        assertNull("a superseded reply is dropped entirely",
-            other.completeCurrent(stale))
+        assertNull(other.completeCurrent(stale))
     }
 }

@@ -44,12 +44,7 @@ class CountryBodyReadTest {
     @Test
     fun `the old call reported a real answer as too large`() {
         for (body in listOf(ipwhois, ipsb)) {
-            assertEquals(
-                "a real country answer is " + body.length + " bytes, well under the 16 KB cap, so "
-                    + "request() must report it unsatisfied -- which is what discarded it",
-                false,
-                Buffer().writeUtf8(body).request(16_385),
-            )
+            assertEquals(false,Buffer().writeUtf8(body).request(16_385))
         }
     }
 

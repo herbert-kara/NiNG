@@ -59,10 +59,7 @@ class CountryRouteTest {
         )
         subject.use { it.resolve("node.example.com") }
         assertEquals(1, asked.size)
-        assertTrue(
-            "the provider must be asked about the resolved address, not left to guess: " + asked[0],
-            asked[0].contains("5.180.82.45"),
-        )
+        assertTrue(asked[0].contains("5.180.82.45"))
     }
 
     /**
@@ -82,12 +79,7 @@ class CountryRouteTest {
             listOf("tunnelPort", "tunnelUser", "tunnelPassword", "proxy", "tunnel")
         for (name in forbidden) {
             val taken = parameters.filter { it.contains(name, ignoreCase = true) }
-            assertTrue(
-                "the lookup must not take a " + name + ": it made every lookup fail while the "
-                    + "service was not listening, which is exactly when a flag is wanted. "
-                    + "Current parameters: " + parameters,
-                taken.isEmpty(),
-            )
+            assertTrue(taken.isEmpty())
         }
     }
 }

@@ -41,10 +41,7 @@ class RealConfigUriProbe {
     @Test
     fun everyAddressTheseRowsCarryIsAcceptedByTheLookupGuard() {
         for (address in realRows.keys) {
-            assertNotNull(
-                "address '$address' is refused by the lookup guard, so the row can never get a flag",
-                ServerCountryLookup.canonicalTarget(address),
-            )
+            assertNotNull(ServerCountryLookup.canonicalTarget(address))
         }
     }
 
@@ -53,11 +50,8 @@ class RealConfigUriProbe {
         for ((address, country) in realRows) {
             val code = ProfileCountry.normalize(country)
             if (country != null) {
-                assertEquals("country '$country' for $address was refused", country, code)
-                assertNotNull(
-                    "no bundled flag image for $country, so the row renders no flag",
-                    ProfileCountry.flagAsset(code),
-                )
+                assertEquals(country,code)
+                assertNotNull(ProfileCountry.flagAsset(code))
             }
         }
     }
@@ -67,11 +61,11 @@ class RealConfigUriProbe {
         // A code that normalises but has no image renders a silently empty badge, which is exactly
         // the reported symptom. Every code ProfileCountry accepts must have a file behind it.
         val assets = java.io.File("src/main/assets/country_flags")
-        assertTrue("the bundled flag directory is missing", assets.isDirectory)
+        assertTrue(assets.isDirectory)
         val missing = mutableListOf<String>()
         for (code in listOf("US", "CA", "GB", "SE", "FR", "DE", "TR", "IR", "NL", "RU", "JP", "FI")) {
             if (!java.io.File(assets, "${code.lowercase()}.png").exists()) missing += code
         }
-        assertTrue("flags missing from the asset set: $missing", missing.isEmpty())
+        assertTrue(missing.isEmpty())
     }
 }

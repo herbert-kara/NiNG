@@ -38,10 +38,7 @@ class FlagBatchConcurrencyTest {
             publish = { _, _, _ -> },
         )
 
-        assertTrue(
-            "the walk is still serial, so a full page of rate-limited lookups takes hours",
-            peak.get() > 1,
-        )
+        assertTrue(peak.get() > 1)
     }
 
     @Test
@@ -60,7 +57,7 @@ class FlagBatchConcurrencyTest {
             },
             publish = { _, _, _ -> },
         )
-        assertTrue("the concurrency bound is ignored", peak.get() <= 4)
+        assertTrue(peak.get() <= 4)
     }
 
     @Test
@@ -73,7 +70,7 @@ class FlagBatchConcurrencyTest {
             lookup = { address, _ -> address },
             publish = { _, address, _ -> seen += address },
         )
-        assertEquals("a target was skipped", 40, seen.size)
+        assertEquals(40,seen.size)
     }
 
     @Test
@@ -89,7 +86,7 @@ class FlagBatchConcurrencyTest {
             publish = { _, _, _ -> },
         )
         // A cached pass would reuse the verdict filled before the measurement.
-        assertEquals("every row of a fresh test has to be re-asked", 2, asked)
+        assertEquals(2,asked)
     }
 
     @Test

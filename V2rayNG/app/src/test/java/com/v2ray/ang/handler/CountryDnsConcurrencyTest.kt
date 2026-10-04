@@ -33,20 +33,10 @@ class CountryDnsConcurrencyTest {
     @Test
     fun `the pool is sized from the batch cap of the walk`() {
         val source = File("src/main/java/com/v2ray/ang/handler/ServerCountryLookup.kt")
-        assertTrue(
-            "the lookup source must be readable from the module the test runs in: " + source,
-            source.exists(),
-        )
+        assertTrue(source.exists())
         val text = source.readText()
-        assertTrue(
-            "the resolver pool must be sized from FLAG_LOOKUP_CONCURRENCY, the number the walk " +
-                "actually issues, and not from a private constant that can drift away from it",
-            text.contains("val workers = FLAG_LOOKUP_CONCURRENCY"),
-        )
-        assertEquals(
-            "the walk runs this many lookups at once, so the pool must be able to serve them all",
-            8, FLAG_LOOKUP_CONCURRENCY,
-        )
+        assertTrue(text.contains("val workers = FLAG_LOOKUP_CONCURRENCY"))
+        assertEquals(8,FLAG_LOOKUP_CONCURRENCY)
     }
 
     /**
@@ -71,16 +61,8 @@ class CountryDnsConcurrencyTest {
                     inFlight.decrementAndGet()
                 }
             }
-            assertTrue(
-                "every lookup in a full batch has to reach the running state, or the batch is " +
-                    "being throttled somewhere it should not be",
-                started.await(3, TimeUnit.SECONDS),
-            )
-            assertEquals(
-                "a pool sized to the batch must have every lookup of the batch running at the " +
-                    "same time; the previous pool reached a peak of one and dropped the rest",
-                batch, peak.get(),
-            )
+            assertTrue(started.await(3, TimeUnit.SECONDS))
+            assertEquals(batch,peak.get())
         } finally {
             release.countDown()
             pool.shutdownNow()

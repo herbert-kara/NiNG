@@ -55,17 +55,14 @@ class RealPingSampleTest {
     @Test
     fun `an even number of samples still reports a real sample as the delay`() {
         val stats = RealPingSample.summarize(listOf(10L, 20L, 30L, 40L))
-        assertTrue("delay must come from a sample, not an average of two", stats.delayMillis in listOf(20L, 30L))
+        assertTrue(stats.delayMillis in listOf(20L, 30L))
     }
 
     @Test
     fun `a stable server outranks a faster but jumpy one`() {
         val stable = RealPingSample.summarize(listOf(150L, 152L, 148L))
         val jumpy = RealPingSample.summarize(listOf(60L, 700L, 60L))
-        assertTrue(
-            "stable 150ms should beat jumpy 60ms, got ${stable.score} vs ${jumpy.score}",
-            stable.score > jumpy.score
-        )
+        assertTrue(stable.score > jumpy.score)
     }
 
     @Test
@@ -78,7 +75,7 @@ class RealPingSampleTest {
     fun `loss outweighs a good delay`() {
         val lossy = RealPingSample.summarize(listOf(100L, -1L, -1L))
         val clean = RealPingSample.summarize(listOf(200L, 210L, 205L))
-        assertTrue("a 33% lossy 100ms should not beat a clean 200ms", clean.score > lossy.score)
+        assertTrue(clean.score > lossy.score)
     }
 
     @Test

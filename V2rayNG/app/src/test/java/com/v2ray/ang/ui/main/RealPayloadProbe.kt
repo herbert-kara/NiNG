@@ -33,9 +33,9 @@ class RealPayloadProbe {
     @Test
     fun theRowGetsACountryCodeFromTheLivePayload() {
         val verdict = ServerFlaggedLookup.parseVerdict(live, "188.114.97.6")
-        assertNotNull("the live payload must parse", verdict)
+        assertNotNull(verdict)
         assertEquals("CA", verdict!!.countryCode)
-        assertNotNull("the row must be able to render a flag", ProfileCountry.flagAsset(verdict.countryCode))
+        assertNotNull(ProfileCountry.flagAsset(verdict.countryCode))
     }
 
     @Test
@@ -74,6 +74,6 @@ class RealPayloadProbe {
             com.v2ray.ang.handler.FlagStatus.CLEAN, "CA")
         assertEquals(1, updated.size)
         assertEquals("CA", updated[0].serverCountryCode)
-        assertTrue("the badge must have an asset to draw", ProfileCountry.flagAsset(updated[0].serverCountryCode) != null)
+        assertTrue(ProfileCountry.flagAsset(updated[0].serverCountryCode) != null)
     }
 }

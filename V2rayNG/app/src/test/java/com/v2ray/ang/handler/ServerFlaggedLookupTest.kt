@@ -180,6 +180,6 @@ class ServerFlaggedLookupTest {
             cacheLimit = 4,
         )
         for (i in 1..12) lookup.resolve("1.2.3.$i")
-        assertTrue("cache must not grow past its limit, was ${lookup.cacheSize}", lookup.cacheSize <= 4)
+        assertTrue(lookup.cacheSize <= 4)
     }
 }

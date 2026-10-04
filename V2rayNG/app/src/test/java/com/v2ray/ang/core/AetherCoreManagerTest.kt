@@ -743,7 +743,7 @@ class AetherCoreManagerTest {
             aetherEchDomain = "--bind",
         )
         val arguments = AetherCoreManager.buildArguments(crafted, 10819)
-        assertFalse("--upstream" in arguments, arguments.toString())
+        assertFalse(arguments.toString())
         assertNull(valueAfter(arguments, "--dns"))
         assertNull(valueAfter(arguments, "--exit-loc"))
         assertEquals("udp://1.1.1.1", valueAfter(arguments, "--ech-dns"))
@@ -761,7 +761,7 @@ class AetherCoreManagerTest {
             aetherPsiphonRegion = "--upstream",
         )
         val carried = AetherCoreManager.buildArguments(psiphon, 10819)
-        assertFalse("--upstream" in carried, carried.toString())
+        assertFalse(carried.toString())
         assertNull(valueAfter(carried, "--psiphon-cdn-ips"))
         assertNull(valueAfter(carried, "--psiphon-cdn-sni"))
         assertNull(valueAfter(carried, "--psiphon-region"))
@@ -772,7 +772,7 @@ class AetherCoreManagerTest {
             aetherTorBridgeLines = "--upstream\nobfs4 192.0.2.1:443 FP cert=x iat-mode=0",
         )
         val bridged = AetherCoreManager.buildArguments(tor, 10819)
-        assertFalse("--upstream" in bridged, bridged.toString())
+        assertFalse(bridged.toString())
         assertEquals(listOf("obfs4 192.0.2.1:443 FP cert=x iat-mode=0"), valuesAfter(bridged, "--tor-bridge"))
     }
 

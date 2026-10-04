@@ -36,7 +36,7 @@ class ServerFlagSlotCountryTest {
     @Test
     fun theProviderPayloadIsTurnedIntoAVerdictThatCarriesTheCountry() {
         val verdict = ServerFlaggedLookup.parseVerdict(realResponse, "5.180.82.45")
-        assertNotNull("a real provider response must parse", verdict)
+        assertNotNull(verdict)
         assertEquals("DE", verdict!!.countryCode)
         assertEquals(FlagStatus.FLAGGED, verdict.status)
     }
@@ -46,7 +46,7 @@ class ServerFlagSlotCountryTest {
         val verdict = ServerFlaggedLookup.parseVerdict(
             realResponse.replace("\"DE\"", "\"de\""), "5.180.82.45",
         )
-        assertEquals("a lowercase code must normalise to the same flag", "DE", verdict?.countryCode)
+        assertEquals("DE",verdict?.countryCode)
     }
 
     @Test
@@ -54,10 +54,7 @@ class ServerFlagSlotCountryTest {
         val verdict = ServerFlaggedLookup.parseVerdict(realResponse, "5.180.82.45")
         // The slot renders nothing when there is no asset, so a missing asset is a blank flag
         // even though the lookup succeeded. This is the step that turns a country into a picture.
-        assertNotNull(
-            "the country resolved but has no flag asset, so the slot renders empty",
-            com.v2ray.ang.handler.ProfileCountry.flagAsset(verdict?.countryCode),
-        )
+        assertNotNull(com.v2ray.ang.handler.ProfileCountry.flagAsset(verdict?.countryCode))
     }
 
     @Test

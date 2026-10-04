@@ -43,11 +43,7 @@ class ProfileRiskTest {
             ProfileRisk.evaluate(vless(cipherSuites = "ECDHE-RSA-AES256-GCM-SHA384,3DES-CBC-SHA")).level,
         )
         for (suite in listOf("3DES-CBC-SHA", "RC4-SHA", "DES-CBC-SHA", "EXP-RC2-CBC-SHA", "NULL-MD5")) {
-            assertEquals(
-                "$suite must be unsafe",
-                RiskLevel.UNSAFE,
-                ProfileRisk.evaluate(vless(cipherSuites = suite)).level,
-            )
+            assertEquals(RiskLevel.UNSAFE,ProfileRisk.evaluate(vless(cipherSuites = suite)).level)
         }
         assertEquals(
             RiskReason.WEAK_CIPHER,
@@ -55,11 +51,7 @@ class ProfileRiskTest {
         )
         // A SHA-1 MAC suite still negotiates, so it is a caution rather than a break.
         for (suite in listOf("ECDHE-RSA-AES128-SHA", "AES256-SHA", "CAMELLIA128-SHA")) {
-            assertEquals(
-                "$suite must be a caution",
-                RiskLevel.CAUTION,
-                ProfileRisk.evaluate(vless(cipherSuites = suite)).level,
-            )
+            assertEquals(RiskLevel.CAUTION,ProfileRisk.evaluate(vless(cipherSuites = suite)).level)
         }
     }
 
@@ -114,11 +106,7 @@ class ProfileRiskTest {
 
     @Test fun selfEncryptingProtocolsAreNotFlagged() {
         for (type in listOf(EConfigType.SHADOWSOCKS, EConfigType.WIREGUARD, EConfigType.HYSTERIA, EConfigType.HYSTERIA2)) {
-            assertEquals(
-                "$type must not be flagged for a missing TLS layer",
-                RiskLevel.SAFE,
-                ProfileRisk.evaluate(ProfileItem(configType = type, server = "node.example.com")).level,
-            )
+            assertEquals(RiskLevel.SAFE,ProfileRisk.evaluate(ProfileItem(configType = type, server = "node.example.com")).level)
         }
     }
 
@@ -126,7 +114,7 @@ class ProfileRiskTest {
         for (type in listOf(EConfigType.CUSTOM, EConfigType.POLICYGROUP, EConfigType.PROXYCHAIN)) {
             val report = ProfileRisk.evaluate(ProfileItem(configType = type, insecure = true, security = null))
             assertEquals(RiskLevel.UNKNOWN, report.level)
-            assertTrue("$type must produce no findings", report.findings.isEmpty())
+            assertTrue(report.findings.isEmpty())
         }
     }
 

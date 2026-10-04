@@ -47,10 +47,7 @@ class LookupConcurrencyTest {
             (1..8).map { i -> async { lookup.resolve("1.1.1.$i") } }.awaitAll()
         }
         lookup.close()
-        assertTrue(
-            "the lookup is still serialised, so a page of rate-limited lookups takes minutes",
-            peak.get() > 1,
-        )
+        assertTrue(peak.get() > 1)
     }
 
     @Test
@@ -67,11 +64,11 @@ class LookupConcurrencyTest {
 
         // The second pass without force is served from the cache.
         lookup.resolve("1.1.1.1")
-        assertEquals("the cache was bypassed by a plain pass", 1, asked)
+        assertEquals(1,asked)
 
         // A latency test re-asks, because a cached verdict can predate the measurement.
         lookup.resolve("1.1.1.1", forceRefresh = true)
-        assertEquals("a forced pass must reach the provider again", 2, asked)
+        assertEquals(2,asked)
         lookup.close()
     }
 
@@ -105,12 +102,7 @@ class LookupConcurrencyTest {
             }.awaitAll()
         }
         lookup.close()
-        assertTrue(
-            "the country fallback is still serialised, so a failed verdict costs a second wait. "
-                + "peak in flight was " + peak.get() + "; the batch finished at "
-                + testScheduler.currentTime + "ms and the row order was " + timeline,
-            peak.get() > 1,
-        )
+        assertTrue(peak.get() > 1)
     }
 
     @Test
@@ -125,6 +117,6 @@ class LookupConcurrencyTest {
             (1..6).map { async { lookup.resolve("9.9.9.9")?.countryCode } }.awaitAll()
         }
         lookup.close()
-        assertTrue("concurrent lookups of one address disagreed: $answers", answers.all { it == "DE" })
+        assertTrue(answers.all { it == "DE" })
     }
 }
