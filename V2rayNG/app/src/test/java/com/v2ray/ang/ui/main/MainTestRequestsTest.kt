@@ -3,6 +3,7 @@ package com.v2ray.ang.ui.main
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -54,7 +55,7 @@ class MainTestRequestsTest {
         val requests = MainTestRequests()
         val bulk = requests.beginBulk("") // All servers is a valid group ID.
         val current = requests.beginCurrent()
-        assertTrue(requests.completeCurrent(current))
+        assertNotNull(requests.completeCurrent(current))
         assertTrue(requests.isTesting)
         assertEquals(bulk, requests.completeBulk(bulk.id))
         assertFalse(requests.isTesting)
