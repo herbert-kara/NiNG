@@ -38,7 +38,7 @@ class FieldPresetsTest {
         assertEquals(-1, masks.indexOf(""))
         assertEquals(-1, masks.indexOf(" \n "))
         assertEquals(-1, masks.indexOf(fragment.replace("tlshello", "1-3")))
-        assertEquals(-1, masks.indexOf("""{"tcp": [{"type": "fragment""""))
+        assertEquals(-1, masks.indexOf("{\"tcp\": [{\"type\": \"fragment\"}"))
         assertEquals(-1, masks.indexOf("[]"))
         // The masks run in the order they are written, so the same two in the other order are another finalMask.
         val both = FieldPresets(listOf("""{"tcp": [{"type": "a"}, {"type": "b"}]}"""), Match.JSON)

@@ -373,7 +373,12 @@ def verify():
     assert icon.exists(), 'NiNG monochrome icon missing'
     ET.parse(icon)
     for name in ('ic_launcher.xml', 'ic_launcher_round.xml'):
-        text = (APP / 'src/main/res/mipmap-anydpi-v26' / name).read_text(encoding='utf-8')
+        # Upstream moved the adaptive icons out of the -v26 folder on 2026-10-04; check whichever
+        # of the two the tree carries so a branding change still trips the guard.
+        candidates = [APP / f'src/main/res/mipmap-anydpi-v26/{name}',
+                      APP / f'src/main/res/mipmap-anydpi/{name}']
+        text = next((c.read_text(encoding='utf-8') for c in candidates if c.exists()), None)
+        assert text is not None, f'adaptive icon {name} missing'
         assert '@drawable/ic_ning_monochrome' in text
     drawer = (APP / 'src/main/java/com/v2ray/ang/ui/main/MainDrawer.kt').read_text(encoding='utf-8')
     assert 'R.drawable.ic_ning_logo' in drawer
