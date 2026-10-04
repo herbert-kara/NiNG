@@ -1,9 +1,9 @@
 package com.v2ray.ang.handler
 
 import com.v2ray.ang.ui.main.FLAG_LOOKUP_CONCURRENCY
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors

@@ -1,8 +1,8 @@
 package com.v2ray.ang.ui.main
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Test
 
 /**
  * A measured exit country belongs to the row that was tested, and it replaces what DNS said.

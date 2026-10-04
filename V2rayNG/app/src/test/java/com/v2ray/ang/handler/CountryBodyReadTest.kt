@@ -1,9 +1,9 @@
 package com.v2ray.ang.handler
 
 import okio.Buffer
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 
 /**
  * A small answer must be read whole.

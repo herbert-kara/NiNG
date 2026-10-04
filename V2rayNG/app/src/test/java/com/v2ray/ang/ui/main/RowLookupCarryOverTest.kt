@@ -1,8 +1,8 @@
 package com.v2ray.ang.ui.main
 
 import com.v2ray.ang.handler.FlagStatus
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
 
 /**
  * The regression that shipped four releases: a resolved verdict was discarded by the next list

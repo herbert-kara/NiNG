@@ -2,9 +2,9 @@ package com.v2ray.ang.ui.main
 
 import com.v2ray.ang.handler.FlagStatus
 import com.v2ray.ang.handler.ServerFlaggedLookup
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Test
 
 /**
  * The country flag stayed empty on a real page while the address itself was perfectly

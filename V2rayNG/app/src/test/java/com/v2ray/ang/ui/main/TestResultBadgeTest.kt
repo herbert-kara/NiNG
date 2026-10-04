@@ -1,7 +1,7 @@
 package com.v2ray.ang.ui.main
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
 
 /**
  * The row used to show one number, the delay. That number cannot distinguish a server that answers

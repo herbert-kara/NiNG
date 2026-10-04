@@ -1,7 +1,7 @@
 package com.v2ray.ang.handler
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
 
 /**
  * The sort used to order a subscription by a single delay measurement, which put a server that

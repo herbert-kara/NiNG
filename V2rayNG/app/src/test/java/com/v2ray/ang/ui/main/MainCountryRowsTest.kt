@@ -5,8 +5,8 @@ import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.handler.FlagStatus
 import com.v2ray.ang.handler.ProfileCountry
-import org.junit.Assert.*
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Test
 
 class MainCountryRowsTest {
     private fun row(guid: String = "a", server: String = "8.8.8.8") = ServerRowUiModel(

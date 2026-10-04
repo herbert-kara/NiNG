@@ -1,9 +1,9 @@
 package com.v2ray.ang.handler
 
 import com.v2ray.ang.dto.RealPingSample
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 
 /**
  * The batch test used to take one sample per server and sort by it. One sample is a coin toss: a

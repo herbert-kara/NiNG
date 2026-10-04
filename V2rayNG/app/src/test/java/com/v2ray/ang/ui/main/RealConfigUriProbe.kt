@@ -2,10 +2,10 @@ package com.v2ray.ang.ui.main
 
 import com.v2ray.ang.handler.ProfileCountry
 import com.v2ray.ang.handler.ServerCountryLookup
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 
 /**
  * The screen showed rows whose address was accepted by the app but produced no flag at all, so
