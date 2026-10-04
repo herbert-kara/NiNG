@@ -1,9 +1,12 @@
 package com.v2ray.ang.ui.server
 
+import com.v2ray.ang.enums.AetherKeyKind
 import com.v2ray.ang.enums.AetherProtocol
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 
 class AetherEditorRepositoryTest {
 
@@ -25,5 +28,27 @@ class AetherEditorRepositoryTest {
             AetherSession(AetherProtocol.WIREGUARD),
             AetherEditorRepository.sessionOf(AetherProtocol.WIREGUARD, processesListed = false) { true }
         )
+    }
+
+    @Test
+    fun aSessionKeepsTheKeysItUsesAndNoOthers() {
+        val masque = AetherSession(AetherProtocol.MASQUE)
+        assertTrue(masque.usesKeysOf(AetherKeyKind.ALL))
+        assertTrue(masque.usesKeysOf(AetherKeyKind.MASQUE))
+        // Masque-in-masque replaces the MASQUE key as its outer hop key.
+        assertTrue(masque.usesKeysOf(AetherKeyKind.MIM))
+        assertFalse(masque.usesKeysOf(AetherKeyKind.WIREGUARD))
+        assertFalse(masque.usesKeysOf(AetherKeyKind.GOOL))
+
+        // Warp-in-warp uses the WireGuard key as its outer hop key, and an inner one of its own.
+        val gool = AetherSession(AetherProtocol.GOOL)
+        assertTrue(gool.usesKeysOf(AetherKeyKind.WIREGUARD))
+        assertTrue(gool.usesKeysOf(AetherKeyKind.GOOL))
+        assertFalse(gool.usesKeysOf(AetherKeyKind.MASQUE))
+        assertFalse(gool.usesKeysOf(AetherKeyKind.MIM))
+
+        // Only the listener was seen, so the session may use any key.
+        val unknown = AetherSession(protocol = null)
+        AetherKeyKind.entries.forEach { assertTrue(unknown.usesKeysOf(it), it.type) }
     }
 }

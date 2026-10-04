@@ -1,5 +1,7 @@
 package com.v2ray.ang.enums
 
+import java.util.Locale
+
 enum class AetherProtocol(val type: String) {
     MASQUE("masque"),
     WIREGUARD("wg"),
@@ -180,5 +182,91 @@ enum class AetherTorRelays(val type: String) {
 
     companion object {
         fun fromString(type: String?) = entries.find { it.type == type } ?: AUTO
+    }
+}
+
+/**
+ * Which WARP keys a registration gets, named the way the core's --register names them: every key, or the keys of one
+ * protocol, both hops' keys for a two-hop one.
+ */
+enum class AetherKeyKind(val type: String) {
+    ALL("all"),
+    WIREGUARD("wg"),
+    MASQUE("masque"),
+    GOOL("gool"),
+    MIM("mim");
+
+    companion object {
+        fun fromString(type: String?) = entries.find { it.type == type } ?: ALL
+
+        /** The kind the core reads [word] after --register as, under any of the names it accepts; null for none. */
+        fun ofRegister(word: String?): AetherKeyKind? = when (word?.trim()?.lowercase(Locale.ROOT)) {
+            "all" -> ALL
+            "wg", "wireguard", "warp" -> WIREGUARD
+            "masque" -> MASQUE
+            "gool", "wiw", "warp-in-warp" -> GOOL
+            "mim", "masque-in-masque" -> MIM
+            else -> null
+        }
+    }
+}
+
+/**
+ * The cipher suites the TLS handshakes of the core offer, after a client whose ClientHello was captured: its TLS 1.2
+ * suites as BoringSSL names them, in its order, or Chrome's own rule, and whether it sends GREASE values. BoringSSL
+ * writes its TLS 1.3 suites first, in an order of its own, so only the TLS 1.2 part follows the client.
+ */
+enum class AetherFingerprint(val type: String, val ciphers: String, val grease: Boolean) {
+    /**
+     * Chrome's own rule rather than a list, which BoringSSL orders as it does for Chrome, by the phone's AES
+     * instructions as the TLS 1.3 suites: c02b c02f c02c c030 cca9 cca8 c013 c014 009c 009d 002f 0035 with them,
+     * ChaCha20 first without. A fixed list would keep AES-GCM first there while the TLS 1.3 suites go ChaCha20 first, a
+     * ClientHello no Chrome sends. Named, though it is the core's default as well, so that it stays Chrome's whatever
+     * the core's default becomes. After a GREASE value.
+     */
+    CHROME(
+        "chrome",
+        "ALL:!aPSK:!ECDSA+SHA1:!3DES",
+        true,
+    ),
+
+    /** c02b c02f cca9 cca8 c02c c030 c013 c014 009c 009d 002f 0035. */
+    FIREFOX(
+        "firefox",
+        "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:" +
+            "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES256-SHA:" +
+            "AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA:AES256-SHA",
+        false,
+    ),
+
+    /**
+     * c02c c030 c02b c02f cca9 cca8 c00a c014 c023 c027: Python's first ten TLS 1.2 suites, with c00a and c014
+     * (AES-256-CBC with SHA-1) in place of c024 and c028 (with SHA-384), the nearest ones BoringSSL has; Python's
+     * four DHE suites after them are left out, as BoringSSL has none. Hence semi-python: not Python's list as it is,
+     * but every suite of it a core on boring 5.2 or newer takes; an older one refuses c023.
+     */
+    SEMI_PYTHON(
+        "semi-python",
+        "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:" +
+            "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:" +
+            "ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256",
+        false,
+    ),
+
+    /** c02b c02f c02c c030 cca9 cca8 c009 c013 c00a c014; Go lists its TLS 1.3 suites after them. */
+    GO(
+        "go",
+        "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:" +
+            "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA:" +
+            "ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA",
+        false,
+    );
+
+    /** The core's options for this fingerprint: its TLS 1.2 suites, and GREASE left out where it sends none. */
+    val arguments: List<String>
+        get() = listOf("--tls-ciphers", ciphers) + if (grease) emptyList() else listOf("--disable-grease")
+
+    companion object {
+        fun fromString(type: String?) = entries.find { it.type == type } ?: CHROME
     }
 }

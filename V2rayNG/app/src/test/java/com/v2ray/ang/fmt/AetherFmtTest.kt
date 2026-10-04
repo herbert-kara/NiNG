@@ -10,12 +10,12 @@ import com.v2ray.ang.enums.AetherProtocol
 import com.v2ray.ang.enums.AetherScanMode
 import com.v2ray.ang.enums.AetherTransport
 import com.v2ray.ang.enums.EConfigType
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 
 class AetherFmtTest {
 
@@ -66,7 +66,8 @@ class AetherFmtTest {
         assertEquals("masque", parsed?.aetherProtocol)
         assertEquals("h2", parsed?.aetherTransport)
         assertEquals("verified", parsed?.aetherScanMode)
-        assertEquals("aggressive", parsed?.aetherObfuscation)
+        // Over HTTP/2 obfuscation does nothing, and the link leaves it out.
+        assertEquals("auto", parsed?.aetherObfuscation)
         assertEquals("both", parsed?.aetherIpVersion)
         assertEquals(true, parsed?.aetherFragment)
     }
@@ -260,9 +261,9 @@ class AetherFmtTest {
         val clashes = listOf("chain" to "chain", "reverse" to "reverse", "only" to "chain", "only" to "only", "chain" to "only", "reverse" to "only")
         for ((tor, psiphon) in clashes) {
             assertEquals(
-                "tor=$tor psiphon=$psiphon",
                 AetherFmt.Problem.TOR_PSIPHON_CONFLICT,
-                AetherFmt.normalize(profile { aetherTor = tor; aetherPsiphon = psiphon })
+                AetherFmt.normalize(profile { aetherTor = tor; aetherPsiphon = psiphon }),
+                "tor=$tor psiphon=$psiphon"
             )
         }
     }
@@ -294,6 +295,33 @@ class AetherFmtTest {
     }
 
     @Test
+    fun theFingerprintRidesWithMasqueAndChromesStaysOutOfALink() {
+        for (fingerprint in listOf("firefox", "semi-python", "go")) {
+            for (transport in AetherTransport.entries) {
+                val text = link(profile { aetherTransport = transport.type; aetherFingerprint = fingerprint })
+                assertTrue(text.contains("fingerprint=$fingerprint"), text)
+                assertEquals(fingerprint, AetherFmt.parse(text)?.aetherFingerprint)
+            }
+        }
+        val chrome = link(profile { aetherFingerprint = "chrome" })
+        assertFalse(chrome.contains("fingerprint="))
+        assertNull(AetherFmt.parse(chrome)?.aetherFingerprint)
+        // WireGuard has no TLS handshake of its own to shape.
+        assertFalse(link(profile { aetherProtocol = AetherProtocol.WIREGUARD.type; aetherFingerprint = "go" }).contains("fingerprint="))
+    }
+
+    @Test
+    fun obfuscationStaysOutOfTheLinkOfMasqueOverHttp2() {
+        assertTrue(link(profile {}).contains("noize=balanced"))
+        assertFalse(link(profile { aetherTransport = AetherTransport.HTTP2.type }).contains("noize="))
+        // Tor or Psiphon around the tunnel carry TCP alone, so the core takes HTTP/2 whatever the transport says.
+        assertFalse(link(profile { aetherPsiphon = "reverse" }).contains("noize="))
+        assertFalse(link(profile { aetherTor = "reverse" }).contains("noize="))
+        // WireGuard keeps it whatever the transport says.
+        assertTrue(link(profile { aetherProtocol = AetherProtocol.WIREGUARD.type; aetherTransport = AetherTransport.HTTP2.type }).contains("noize=balanced"))
+    }
+
+    @Test
     fun automaticObfuscationStaysOutOfALinkAndEveryProfileOfTheCoreRoundTrips() {
         val automatic = link(profile { aetherObfuscation = AetherObfuscation.AUTO.type })
         assertFalse(automatic.contains("noize="))
@@ -320,7 +348,7 @@ class AetherFmtTest {
         assertFalse(off.contains("ech_domain="))
         val plain = link(profile {})
         val strayLink = plain.substringBefore('#') + "&ech_dns=tcp%3A%2F%2F1.1.1.1&ech_domain=ip.gs#" + plain.substringAfter('#')
-        assertTrue(strayLink, strayLink.substringBefore('#').contains("ech_dns="))
+        assertTrue(strayLink.substringBefore('#').contains("ech_dns="), strayLink)
         val stray = AetherFmt.parse(strayLink)
         assertNull(stray?.aetherEchDns)
         assertNull(stray?.aetherEchDomain)
@@ -337,10 +365,17 @@ class AetherFmtTest {
             "udp://2606:4700::1111",
             "https://doq.dns4all.eu/dns-query",
             "https://1.1.1.1:8443/dns-query",
+            // Where the connection goes and what the ClientHello names, each once and in either order.
+            "https://1.1.1.1/dns-query@sni=www.microsoft.com",
+            "https://doq.dns4all.eu/dns-query@address=194.0.5.3",
+            "https://doq.dns4all.eu/dns-query@address=2.2.2.2@sni=google.com",
+            "https://doq.dns4all.eu/dns-query@SNI=google.com@address=[2606:4700::1111]",
+            "https://doq.dns4all.eu/dns-query@address=2606:4700::1111",
+            "https://doq.dns4all.eu/dns-query@address=front.example.net",
         )
         for (dns in good) {
             val config = profile { aetherEch = true; aetherEchDns = " $dns " }
-            assertNull(dns, AetherFmt.normalize(config))
+            assertNull(AetherFmt.normalize(config), dns)
             assertEquals(dns, config.aetherEchDns)
         }
         val bad = listOf(
@@ -362,9 +397,21 @@ class AetherFmtTest {
             "udp://\uff11.\uff11.\uff11.\uff11",
             "https://dns example/dns-query",
             "https://dns.example/dns-query?x='1'",
+            // What the core refuses after a DoH URL: an empty or unusable setting, a port, an IP address as the
+            // server name, a setting named twice or one it does not know.
+            "https://@address=2.2.2.2",
+            "https://doq.dns4all.eu/dns-query@address=",
+            "https://doq.dns4all.eu/dns-query@address=2.2.2.2:443",
+            "https://doq.dns4all.eu/dns-query@sni=",
+            "https://doq.dns4all.eu/dns-query@sni=2.2.2.2",
+            "https://doq.dns4all.eu/dns-query@sni=[::1]",
+            "https://doq.dns4all.eu/dns-query@sni=google.com@sni=bing.com",
+            "https://doq.dns4all.eu/dns-query@address=1.1.1.1@address=2.2.2.2",
+            "https://doq.dns4all.eu/dns-query@port=443",
+            "https://doq.dns4all.eu/dns-query@google.com",
         )
         for (dns in bad) {
-            assertEquals(dns, AetherFmt.Problem.INVALID_ECH_DNS, AetherFmt.normalize(profile { aetherEch = true; aetherEchDns = dns }))
+            assertEquals(AetherFmt.Problem.INVALID_ECH_DNS, AetherFmt.normalize(profile { aetherEch = true; aetherEchDns = dns }), dns)
         }
     }
 
@@ -372,43 +419,54 @@ class AetherFmtTest {
     fun theEchDomainIsADomainName() {
         for (domain in listOf("crypto.cloudflare.com", "ip.gs", "ip.gs.", "_ech.example.com")) {
             val config = profile { aetherEch = true; aetherEchDomain = domain }
-            assertNull(domain, AetherFmt.normalize(config))
+            assertNull(AetherFmt.normalize(config), domain)
             assertEquals(domain, config.aetherEchDomain)
         }
         for (domain in listOf("a..b", "with space.com", "https://ip.gs", "ip.gs/", "${"a".repeat(64)}.com", "--upstream", "-ip.gs", "ip-.gs")) {
-            assertEquals(domain, AetherFmt.Problem.INVALID_ECH_DOMAIN, AetherFmt.normalize(profile { aetherEch = true; aetherEchDomain = domain }))
+            assertEquals(AetherFmt.Problem.INVALID_ECH_DOMAIN, AetherFmt.normalize(profile { aetherEch = true; aetherEchDomain = domain }), domain)
         }
     }
 
     @Test
-    fun echFieldsTheEditorDoesNotShowNeitherBlockSavingNorKeepAValueTheCoreWouldRefuse() {
+    fun echFieldsOutOfUseNeitherBlockSavingNorLoseWhatWasWritten() {
         val masque = profile { aetherEch = true; aetherEchDns = "udp://dns.google"; aetherEchDomain = "--upstream" }
         assertEquals(AetherFmt.Problem.INVALID_ECH_DNS, AetherFmt.normalize(masque))
 
         val shapes = listOf<ProfileItem.() -> Unit>(
+            { aetherEch = false },
             { aetherProtocol = AetherProtocol.WIREGUARD.type },
             { aetherPsiphon = "only" },
             { aetherTor = "only" },
         )
         for (shape in shapes) {
-            val hidden = profile { aetherEch = true; aetherEchDns = "udp://dns.google"; aetherEchDomain = "--upstream"; shape() }
-            assertNull(AetherFmt.normalize(hidden))
-            assertNull(hidden.aetherEchDns)
-            assertNull(hidden.aetherEchDomain)
+            // Kept as written, as the WARP keys page keeps its own, to be put right when ECH is next in use.
+            val waiting = profile { aetherEch = true; aetherEchDns = " udp://dns.google "; aetherEchDomain = "--upstream"; shape() }
+            assertNull(AetherFmt.normalize(waiting))
+            assertEquals("udp://dns.google", waiting.aetherEchDns)
+            assertEquals("--upstream", waiting.aetherEchDomain)
+            // Out of use, neither reaches the core nor a link.
+            val arguments = AetherCoreManager.buildArguments(waiting, 10819)
+            assertFalse(arguments.any { it.startsWith("--ech") || it == "--upstream" }, arguments.toString())
+            assertFalse(link(waiting).contains("ech"))
 
-            // A value the core would take stays, for when the profile is back over MASQUE.
             val kept = profile { aetherEch = true; aetherEchDns = "tcp://8.8.8.8"; aetherEchDomain = "ip.gs"; shape() }
             assertNull(AetherFmt.normalize(kept))
             assertEquals("tcp://8.8.8.8", kept.aetherEchDns)
             assertEquals("ip.gs", kept.aetherEchDomain)
         }
+
+        // In use, a link carries ECH, but never a value the core would refuse.
+        val unchecked = link(profile { aetherEch = true; aetherEchDns = "udp://dns.google"; aetherEchDomain = "ip.gs" })
+        assertTrue(unchecked.contains("ech=1"))
+        assertFalse(unchecked.contains("ech_dns="))
+        assertTrue(unchecked.contains("ech_domain=ip.gs"))
     }
 
     @Test
     fun aLinkGivesNoEchResolverOrDomainTheCoreWouldRefuse() {
         val plain = link(profile { aetherEch = true })
         val crafted = plain.substringBefore('#') + "&ech_dns=udp%3A%2F%2F%5B1.1.1.1%5D&ech_domain=--upstream#" + plain.substringAfter('#')
-        assertTrue(crafted, crafted.substringBefore('#').contains("ech_domain="))
+        assertTrue(crafted.substringBefore('#').contains("ech_domain="), crafted)
         val parsed = AetherFmt.parse(crafted)
         assertEquals(true, parsed?.aetherEch)
         assertNull(parsed?.aetherEchDns)
@@ -421,11 +479,11 @@ class AetherFmtTest {
         assertNull(AetherFmt.normalize(config))
         assertNull(config.aetherEchDns)
         assertNull(config.aetherEchDomain)
-        // Nor are others kept once ECH is off.
+        // Others are kept with ECH off as well.
         val off = profile { aetherEchDns = "tcp://1.1.1.1"; aetherEchDomain = "ip.gs" }
         assertNull(AetherFmt.normalize(off))
-        assertNull(off.aetherEchDns)
-        assertNull(off.aetherEchDomain)
+        assertEquals("tcp://1.1.1.1", off.aetherEchDns)
+        assertEquals("ip.gs", off.aetherEchDomain)
     }
 
     @Test
@@ -593,7 +651,7 @@ class AetherFmtTest {
     fun aNodeLeftToTheScannerCarriesNoEndpoint() {
         val uri = link(profile {})
 
-        assertTrue("uri should hold only a query: $uri", uri.startsWith("aether://?"))
+        assertTrue(uri.startsWith("aether://?"), "uri should hold only a query: $uri")
 
         val parsed = AetherFmt.parse(uri)
         assertNull(parsed?.server)
@@ -607,7 +665,7 @@ class AetherFmtTest {
             server = "2606:4700:d0::a29f:c001"
             serverPort = "443"
         })
-        assertTrue("uri should bracket the address: $uri", uri.startsWith("aether://[2606:4700:d0::a29f:c001]:443?"))
+        assertTrue(uri.startsWith("aether://[2606:4700:d0::a29f:c001]:443?"), "uri should bracket the address: $uri")
 
         val parsed = AetherFmt.parse(uri)
         assertEquals("2606:4700:d0::a29f:c001", parsed?.server)
@@ -655,7 +713,7 @@ class AetherFmtTest {
             serverPort = "443"
         })
 
-        assertTrue("uri should hold only a query: $uri", uri.startsWith("aether://?"))
+        assertTrue(uri.startsWith("aether://?"), "uri should hold only a query: $uri")
         assertNull(AetherFmt.parse("aether://162.159.198.1:443?protocol=gool#X")?.server)
     }
 

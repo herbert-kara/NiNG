@@ -2,7 +2,9 @@ package com.v2ray.ang.core
 
 import android.util.Log
 import com.google.gson.JsonParser
+import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.ProfileItem
+import com.v2ray.ang.enums.AetherFingerprint
 import com.v2ray.ang.enums.AetherIpVersion
 import com.v2ray.ang.enums.AetherObfuscation
 import com.v2ray.ang.enums.AetherProtocol
@@ -20,13 +22,13 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertThrows
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
@@ -673,6 +675,55 @@ class AetherCoreManagerTest {
     }
 
     @Test
+    fun masqueOverHttp2TakesNoObfuscation() {
+        assertNull(valueAfter(AetherCoreManager.buildArguments(profile(transport = AetherTransport.HTTP2), 10819), "--noize"))
+        assertNull(valueAfter(AetherCoreManager.buildArguments(profile(AetherProtocol.MIM, AetherTransport.HTTP2), 10819), "--noize"))
+        assertNull(valueAfter(AetherCoreManager.buildArguments(profile(transport = AetherTransport.HTTP2), 0, scan = true), "--noize"))
+        // Tor or Psiphon around the tunnel carry TCP alone, so the core takes HTTP/2 whatever the transport says.
+        assertNull(valueAfter(AetherCoreManager.buildArguments(profile().copy(aetherTor = "reverse"), 10819), "--noize"))
+        assertNull(valueAfter(AetherCoreManager.buildArguments(profile().copy(aetherPsiphon = "reverse"), 10819), "--noize"))
+        // Over HTTP/3, with a carrier inside the tunnel, and on WireGuard whatever the transport says, it stays.
+        assertEquals("aggressive", valueAfter(AetherCoreManager.buildArguments(profile(), 10819), "--noize"))
+        assertEquals("aggressive", valueAfter(AetherCoreManager.buildArguments(profile().copy(aetherTor = "chain"), 10819), "--noize"))
+        assertEquals("aggressive", valueAfter(AetherCoreManager.buildArguments(profile(AetherProtocol.WIREGUARD, AetherTransport.HTTP2), 10819), "--noize"))
+
+        assertTrue(AetherCoreManager.masqueOverHttp2(AetherProtocol.MIM, AetherTransport.HTTP2, AetherTor.OFF, AetherPsiphon.OFF))
+        assertTrue(AetherCoreManager.masqueOverHttp2(AetherProtocol.MASQUE, AetherTransport.HTTP3, AetherTor.REVERSE, AetherPsiphon.OFF))
+        assertFalse(AetherCoreManager.masqueOverHttp2(AetherProtocol.MASQUE, AetherTransport.HTTP3, AetherTor.CHAIN, AetherPsiphon.CHAIN))
+        assertFalse(AetherCoreManager.masqueOverHttp2(AetherProtocol.GOOL, AetherTransport.HTTP2, AetherTor.OFF, AetherPsiphon.OFF))
+    }
+
+    @Test
+    fun theFingerprintShapesEveryMasqueTunnelAndNoOther() {
+        for (protocol in listOf(AetherProtocol.MASQUE, AetherProtocol.MIM)) {
+            for (transport in AetherTransport.entries) {
+                // Chrome's rule is named, whatever the core's default; BoringSSL orders it by the phone's AES
+                // instructions as it does the TLS 1.3 suites. Chrome sends GREASE.
+                val chrome = AetherCoreManager.buildArguments(profile(protocol, transport), 10819)
+                assertEquals("ALL:!aPSK:!ECDSA+SHA1:!3DES", valueAfter(chrome, "--tls-ciphers"))
+                assertFalse("--disable-grease" in chrome)
+                for (fingerprint in listOf(AetherFingerprint.FIREFOX, AetherFingerprint.SEMI_PYTHON, AetherFingerprint.GO)) {
+                    val arguments = AetherCoreManager.buildArguments(profile(protocol, transport).copy(aetherFingerprint = fingerprint.type), 10819)
+                    assertEquals(fingerprint.ciphers, valueAfter(arguments, "--tls-ciphers"))
+                    assertTrue("--disable-grease" in arguments)
+                }
+            }
+        }
+        // A profile from before the setting is Chrome's.
+        val older = AetherCoreManager.buildArguments(profile().copy(aetherFingerprint = null), 10819)
+        assertEquals(AetherCoreManager.buildArguments(profile().copy(aetherFingerprint = "chrome"), 10819), older)
+        assertEquals(AetherFingerprint.CHROME.ciphers, valueAfter(older, "--tls-ciphers"))
+        // WireGuard has no TLS handshake of its own to shape.
+        for (protocol in listOf(AetherProtocol.WIREGUARD, AetherProtocol.GOOL)) {
+            val arguments = AetherCoreManager.buildArguments(profile(protocol, AetherTransport.HTTP2).copy(aetherFingerprint = "go"), 10819)
+            assertFalse("--tls-ciphers" in arguments)
+            assertFalse("--disable-grease" in arguments)
+        }
+        // A scan's probes send the ClientHello the tunnel will.
+        assertTrue("--disable-grease" in AetherCoreManager.buildArguments(profile().copy(aetherFingerprint = "firefox"), 0, scan = true))
+    }
+
+    @Test
     fun obfuscationIsTheCoresOwnChoiceUnlessAProfileNamesIt() {
         // The core takes firewall for MASQUE and balanced for WireGuard and gool; automatic says nothing.
         assertNull(valueAfter(AetherCoreManager.buildArguments(profile().copy(aetherObfuscation = "auto"), 10819), "--noize"))
@@ -692,7 +743,7 @@ class AetherCoreManagerTest {
             aetherEchDomain = "--bind",
         )
         val arguments = AetherCoreManager.buildArguments(crafted, 10819)
-        assertFalse(arguments.toString(), "--upstream" in arguments)
+        assertFalse("--upstream" in arguments, arguments.toString())
         assertNull(valueAfter(arguments, "--dns"))
         assertNull(valueAfter(arguments, "--exit-loc"))
         assertEquals("udp://1.1.1.1", valueAfter(arguments, "--ech-dns"))
@@ -710,7 +761,7 @@ class AetherCoreManagerTest {
             aetherPsiphonRegion = "--upstream",
         )
         val carried = AetherCoreManager.buildArguments(psiphon, 10819)
-        assertFalse(carried.toString(), "--upstream" in carried)
+        assertFalse("--upstream" in carried, carried.toString())
         assertNull(valueAfter(carried, "--psiphon-cdn-ips"))
         assertNull(valueAfter(carried, "--psiphon-cdn-sni"))
         assertNull(valueAfter(carried, "--psiphon-region"))
@@ -721,7 +772,7 @@ class AetherCoreManagerTest {
             aetherTorBridgeLines = "--upstream\nobfs4 192.0.2.1:443 FP cert=x iat-mode=0",
         )
         val bridged = AetherCoreManager.buildArguments(tor, 10819)
-        assertFalse(bridged.toString(), "--upstream" in bridged)
+        assertFalse("--upstream" in bridged, bridged.toString())
         assertEquals(listOf("obfs4 192.0.2.1:443 FP cert=x iat-mode=0"), valuesAfter(bridged, "--tor-bridge"))
     }
 
@@ -827,6 +878,21 @@ class AetherCoreManagerTest {
         assertTrue(AetherCoreManager.showsInfo(listOf("--psiphon", "--verbose")))
         assertFalse(AetherCoreManager.showsInfo(listOf("--psiphon", "--log-level", "warn")))
         assertFalse(AetherCoreManager.showsInfo(listOf("--psiphon", "--log-level", "error")))
+    }
+
+    @Test
+    fun aCoreThatStoppedForWantOfAnEchKeyIsReportedSo() {
+        // The core's last line as its main prints the error it ends with (fork aether/src/lib.rs, session_ech_key).
+        val stopped = "Error: Ech(\"ECH is on but there is no ECH key to offer (udp://1.1.1.1:53 did not answer for " +
+            "cloudflare-ech.com); stopping rather than send the server name in the clear\")"
+        assertTrue(AetherCoreManager.isNoEchKeyWord(stopped))
+        assertEquals(Log.ERROR, AetherCoreManager.outputPriority(stopped))
+        assertFalse(AetherCoreManager.isNoEchKeyWord("[2026-10-01T10:00:00.000Z INFO  aether] [+] fetched ECHConfigList automatically (71 bytes)"))
+        assertFalse(AetherCoreManager.isNoEchKeyWord("[2026-10-01T10:00:00.000Z INFO  aether] [+] ECH off; the server name goes out in cleartext"))
+        assertFalse(AetherCoreManager.isNoEchKeyWord("Error: Api(\"too many registrations\")"))
+
+        assertEquals(R.string.aether_core_stopped_no_ech_key, AetherCoreManager.stoppedMessage(noEchKey = true))
+        assertEquals(R.string.aether_core_stopped, AetherCoreManager.stoppedMessage(noEchKey = false))
     }
 
     @Test
@@ -1005,42 +1071,32 @@ class AetherCoreManagerTest {
         assertEquals(0, AetherCoreManager.scanPort(profile().copy(aetherPsiphon = "reverse")))
         assertEquals(0, AetherCoreManager.scanPort(profile().copy(aetherTor = "chain")))
         assertTrue(AetherCoreManager.scanPort(profile().copy(aetherTor = "reverse")) > 0)
-
-        assertFalse(AetherCoreManager.reachesWarpThroughCarrier(profile()))
-        assertFalse(AetherCoreManager.reachesWarpThroughCarrier(profile().copy(aetherPsiphon = "chain", aetherTor = "chain")))
-        assertTrue(AetherCoreManager.reachesWarpThroughCarrier(profile().copy(aetherPsiphon = "reverse")))
-        assertTrue(AetherCoreManager.reachesWarpThroughCarrier(profile().copy(aetherTor = "reverse")))
     }
 
     @Test
-    fun aKeyRenewalRegistersEveryKeyInOneRunThatEnds() {
-        // Whatever the profile's own protocol, every key is renewed.
-        for (protocol in AetherProtocol.entries) {
-            val run = AetherCoreManager.keyRenewalArguments(profile(protocol), 0)
-            assertEquals("all", valueAfter(run, "--register"))
-            assertFalse("--peer" in run)
-            assertFalse("--upstream" in run)
-            // The run is stopped at a line written at the info level.
-            assertEquals("info", valueAfter(run, "--log-level"))
-        }
+    fun aCoreReachesWarpThroughACarrierAroundTheTunnelOnly() {
+        fun scanOf(profile: ProfileItem) = AetherCoreManager.buildArguments(profile, 0, scan = true)
+        assertFalse(AetherCoreManager.reachesWarpThroughCarrier(scanOf(profile())))
+        assertFalse(AetherCoreManager.reachesWarpThroughCarrier(scanOf(profile().copy(aetherPsiphon = "chain", aetherTor = "chain"))))
+        assertTrue(AetherCoreManager.reachesWarpThroughCarrier(scanOf(profile().copy(aetherPsiphon = "reverse"))))
+        assertTrue(AetherCoreManager.reachesWarpThroughCarrier(scanOf(profile().copy(aetherTor = "reverse"))))
+
+        // A command written by hand, as the WARP keys page may run, is read the way the core reads it.
+        assertTrue(AetherCoreManager.reachesWarpThroughCarrier(listOf("--register", "all", "--tor-reverse")))
+        assertFalse(AetherCoreManager.reachesWarpThroughCarrier(listOf("--register", "all", "--psiphon-reverse", "--psiphon")))
+        assertFalse(AetherCoreManager.reachesWarpThroughCarrier(listOf("--register", "all")))
     }
 
     @Test
-    fun aKeyRenewalGoesThroughTheCarrierAroundTheTunnelOnly() {
-        // The core registers through Tor or Psiphon around the tunnel, the WireGuard keys as well.
-        val tor = AetherCoreManager.keyRenewalArguments(profile().copy(aetherTor = "reverse", aetherTorBridges = "first"), 41234)
-        assertEquals("all", valueAfter(tor, "--register"))
-        assertTrue("--tor-reverse" in tor)
-        assertTrue("--tor-bridges" in tor)
-        assertEquals("127.0.0.1:41235", valueAfter(tor, "--tor-bind"))
-
-        val psiphon = AetherCoreManager.keyRenewalArguments(profile().copy(aetherPsiphon = "reverse", aetherPsiphonMode = "cdn"), 0)
-        assertTrue("--psiphon-reverse" in psiphon)
-        assertEquals("cdn", valueAfter(psiphon, "--psiphon-mode"))
-
-        // A carrier inside the tunnel carries nothing of a registration.
-        val inside = AetherCoreManager.keyRenewalArguments(profile().copy(aetherTor = "chain", aetherPsiphon = "chain"), 0)
-        assertFalse(inside.any { it.startsWith("--tor") || it.startsWith("--psiphon") })
+    fun aRunThatWaitsForAnInfoLineIsNeverQuieterThanInfo() {
+        val run = listOf("--register", "all")
+        // The core writes its info lines unless told otherwise.
+        assertEquals(run, AetherCoreManager.withInfoLines(run))
+        assertEquals(run + listOf("--log-level", "debug"), AetherCoreManager.withInfoLines(run + listOf("--log-level", "debug")))
+        assertEquals(run + "--verbose", AetherCoreManager.withInfoLines(run + "--verbose"))
+        // A quieter level gives way, wherever it stands.
+        assertEquals(run + listOf("--log-level", "info"), AetherCoreManager.withInfoLines(listOf("--log-level", "warn") + run))
+        assertEquals(run + listOf("--log-level", "info"), AetherCoreManager.withInfoLines(run + listOf("--log-level", "error")))
     }
 
     @Test
@@ -1081,7 +1137,7 @@ class AetherCoreManagerTest {
         assertEquals(1024, AetherCoreManager.listenPortOf("1024"))
         assertEquals(65532, AetherCoreManager.listenPortOf("65532"))
         for (text in listOf(null, "", "socks", "0", "80", "1023", "65533", "70000", "-1", "10819.5")) {
-            assertEquals(text.toString(), 10819, AetherCoreManager.listenPortOf(text))
+            assertEquals(10819, AetherCoreManager.listenPortOf(text), text.toString())
         }
     }
 
@@ -1092,10 +1148,10 @@ class AetherCoreManagerTest {
         assertNull(AetherCoreManager.listenPortProblem(" 10810 ", local))
         assertNull(AetherCoreManager.listenPortProblem("10804", local))
         for (text in listOf("10805", "10806", "10808", "10809")) {
-            assertEquals(text, AetherCoreManager.ListenPortProblem.LOCAL_PROXY, AetherCoreManager.listenPortProblem(text, local))
+            assertEquals(AetherCoreManager.ListenPortProblem.LOCAL_PROXY, AetherCoreManager.listenPortProblem(text, local), text)
         }
         for (text in listOf("", "socks", "1023", "65533")) {
-            assertEquals(text, AetherCoreManager.ListenPortProblem.NOT_A_PORT, AetherCoreManager.listenPortProblem(text, local))
+            assertEquals(AetherCoreManager.ListenPortProblem.NOT_A_PORT, AetherCoreManager.listenPortProblem(text, local), text)
         }
         // A local proxy on a port picked anew at every start is no matter here.
         assertNull(AetherCoreManager.listenPortProblem("10808", emptySet()))

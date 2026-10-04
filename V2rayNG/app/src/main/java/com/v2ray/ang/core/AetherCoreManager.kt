@@ -2,13 +2,16 @@ package com.v2ray.ang.core
 
 import android.content.Context
 import android.util.Log
+import androidx.annotation.StringRes
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.R
 import com.v2ray.ang.dto.AetherEndpoint
 import com.v2ray.ang.dto.AetherRange
 import com.v2ray.ang.dto.entities.ProfileItem
+import com.v2ray.ang.enums.AetherFingerprint
 import com.v2ray.ang.enums.AetherIpVersion
 import com.v2ray.ang.enums.AetherObfuscation
 import com.v2ray.ang.enums.AetherProtocol
@@ -73,10 +76,6 @@ object AetherCoreManager {
 
     /** The option that names the proxy the core dials out through. */
     internal const val UPSTREAM = "--upstream"
-
-    /** The option that has the core register identities and end, with the word naming which: here all four. */
-    private const val REGISTER = "--register"
-    private const val REGISTER_EVERY_KEY = "all"
 
     /**
      * The pluggable transport Tor's bridges run through, shipped beside the core as a library. It is
@@ -171,6 +170,12 @@ object AetherCoreManager {
      */
     private val psiphonReady = Regex("""psiphon is ready""")
 
+    /**
+     * The core's word that it did not start the session for want of an ECH key: ECH is on, and it had no key it
+     * could offer, so it stopped rather than send the server name in the clear.
+     */
+    private val noEchKey = Regex("""ECH is on but there is no ECH key to offer""")
+
     /** The levels at which the core writes its info lines, the ready word among them. */
     private val infoLevels = setOf("info", "debug", "trace")
 
@@ -231,19 +236,30 @@ object AetherCoreManager {
     }
 
     /**
-     * The port a scan or a key renewal of [profile] binds: none, since nothing dials it, unless Tor
-     * around the tunnel comes along, whose own listener follows the tunnel's and needs a real port,
-     * because the core dials the address Tor was told to listen on. Opens a socket to find one.
+     * The port a scan of [profile] binds: none, since nothing dials it, unless Tor around the tunnel
+     * comes along, whose own listener follows the tunnel's and needs a real port, because the core
+     * dials the address Tor was told to listen on. Opens a socket to find one.
      */
     fun scanPort(profile: ProfileItem): Int =
         if (AetherTor.fromString(profile.aetherTor) == AetherTor.REVERSE) Utils.findRandomFreePort() else 0
 
-    /** True when [profile] reaches WARP through Tor or Psiphon, which then has to come up before anything else can. */
-    fun reachesWarpThroughCarrier(profile: ProfileItem): Boolean =
-        AetherTor.fromString(profile.aetherTor) == AetherTor.REVERSE || AetherPsiphon.fromString(profile.aetherPsiphon) == AetherPsiphon.REVERSE
+    /**
+     * Whether a tunnel over MASQUE runs over HTTP/2: chosen so, or dialled through Tor or Psiphon around it, which carry
+     * TCP alone, so that the core takes HTTP/2 whatever [transport] says.
+     */
+    fun masqueOverHttp2(protocol: AetherProtocol, transport: AetherTransport, tor: AetherTor, psiphon: AetherPsiphon): Boolean =
+        protocol.overMasque && (transport == AetherTransport.HTTP2 || tor == AetherTor.REVERSE || psiphon == AetherPsiphon.REVERSE)
+
+    /** True when a core on [arguments] reaches WARP through Tor or Psiphon, which then has to come up before anything else can. */
+    fun reachesWarpThroughCarrier(arguments: List<String>): Boolean =
+        torModeOf(arguments) == AetherTor.REVERSE || psiphonModeOf(arguments) == AetherPsiphon.REVERSE
 
     @Volatile
     private var session: Session? = null
+
+    /** Whether the session core that ended on its own last stopped for want of an ECH key; see [stoppedMessage]. */
+    @Volatile
+    private var stoppedForEchKey = false
 
     val isRunning: Boolean get() = session != null
 
@@ -300,17 +316,18 @@ object AetherCoreManager {
             if (psiphon != AetherPsiphon.ONLY && tor != AetherTor.ONLY) {
                 addAll(listOf("--protocol", protocol.type))
                 addAll(listOf("--scan", AetherScanMode.fromString(profile.aetherScanMode).type))
-                // Automatic obfuscation is the core's own choice per protocol, so nothing is said about it.
-                AetherObfuscation.fromString(profile.aetherObfuscation).takeUnless { it == AetherObfuscation.AUTO }
+                // Automatic obfuscation is the core's own choice per protocol, so nothing is said about it; MASQUE over
+                // HTTP/2 takes none at all, since obfuscation shapes the UDP of WireGuard and HTTP/3 alone.
+                val transport = AetherTransport.fromString(profile.aetherTransport)
+                AetherObfuscation.fromString(profile.aetherObfuscation)
+                    .takeUnless { it == AetherObfuscation.AUTO || masqueOverHttp2(protocol, transport, tor, psiphon) }
                     ?.let { addAll(listOf("--noize", it.type)) }
                 addAll(listOf("--ip", AetherIpVersion.fromString(profile.aetherIpVersion).type))
                 settingValue(profile.aetherDns)?.let { addAll(listOf("--dns", it)) }
                 // A scan keeps the exit rule as well, so that it ends on an endpoint the session will accept.
                 settingValue(profile.aetherExitLoc)?.let { addAll(listOf("--exit-loc", it)) }
 
-                if (protocol.overMasque &&
-                    AetherTransport.fromString(profile.aetherTransport) == AetherTransport.HTTP2
-                ) {
+                if (protocol.overMasque && transport == AetherTransport.HTTP2) {
                     add("--h2")
                     if (profile.aetherFragment == true) {
                         add("--fragment")
@@ -327,6 +344,9 @@ object AetherCoreManager {
                     addAll(listOf("--ech-dns", settingValue(profile.aetherEchDns) ?: AppConfig.AETHER_ECH_DNS))
                     addAll(listOf("--ech-domain", settingValue(profile.aetherEchDomain) ?: AppConfig.AETHER_ECH_DOMAIN))
                 }
+                // The ClientHello of the MASQUE handshakes, and of the WARP API calls and the ECH key lookup the core makes:
+                // over HTTP/3, which carries TLS 1.3 alone, only its GREASE shows.
+                if (protocol.overMasque) addAll(AetherFingerprint.fromString(profile.aetherFingerprint).arguments)
 
                 if (protocol.twoHops) {
                     val hop = if (protocol == AetherProtocol.MIM) "--mim" else "--wiw"
@@ -395,17 +415,6 @@ object AetherCoreManager {
     }
 
     /**
-     * The run that registers a new key of every kind, both WireGuard keys and both MASQUE keys, and
-     * ends without scanning or opening a tunnel: the core's `--register all`, on the scan
-     * arguments of [profile] for [port], see [scanPort]. It registers the way [profile] reaches
-     * WARP: directly, or through the Tor or Psiphon around its tunnel, the WireGuard keys as well,
-     * since a registration is an HTTPS request, which either carrier carries. The protocol and scan
-     * options go along unused.
-     */
-    internal fun keyRenewalArguments(profile: ProfileItem, port: Int): List<String> =
-        listOf(REGISTER, REGISTER_EVERY_KEY) + buildArguments(profile, port, scan = true)
-
-    /**
      * Maps the app's core log level setting onto the levels the core accepts. Only the session
      * follows the setting: scans and key renewals keep the default because they read info lines.
      */
@@ -420,6 +429,13 @@ object AetherCoreManager {
     /** [arguments] at [logLevel], unless they name a level of their own, as a hand-written command may. */
     internal fun withLogLevel(arguments: List<String>, logLevel: String): List<String> =
         if ("--log-level" in arguments || "--verbose" in arguments) arguments else arguments + listOf("--log-level", logLevel)
+
+    /**
+     * [arguments] at a level that writes the core's info lines, which a run that waits for one of
+     * them needs: as they are, unless they name a quieter level, which gives way to the default.
+     */
+    internal fun withInfoLines(arguments: List<String>): List<String> =
+        if (showsInfo(arguments)) arguments else withoutOption(arguments, "--log-level") + listOf("--log-level", DEFAULT_LOG_LEVEL)
 
     /**
      * Where the Psiphon client keeps its datastore: the servers it was given, fetched and discovered.
@@ -721,6 +737,7 @@ object AetherCoreManager {
         val arguments = withLogLevel(core.arguments, logLevel)
         val next = Session(core.port, needsWord = readyNeedsWord(arguments) && showsInfo(arguments), context = appContext, onExit = onExit)
         session = next
+        stoppedForEchKey = false
         lifecycle.execute { open(next, appContext, arguments, afterProbes, core.exit.key) }
     }
 
@@ -733,6 +750,18 @@ object AetherCoreManager {
 
     /** True when [line] is the core's word that the listener the app dials carries traffic now. */
     internal fun isReadyWord(line: String): Boolean = psiphonReady.containsMatchIn(line)
+
+    /** True when [line] is the core's word that it stopped for want of an ECH key; see [noEchKey]. */
+    internal fun isNoEchKeyWord(line: String): Boolean = noEchKey.containsMatchIn(line)
+
+    /** What to tell the user of the session core that ended on its own last, in the words it ended with. */
+    @StringRes
+    fun stoppedMessage(): Int = stoppedMessage(stoppedForEchKey)
+
+    /** What to tell the user of a session core that ended on its own, with [noEchKey] when it ended for want of an ECH key. */
+    @StringRes
+    internal fun stoppedMessage(noEchKey: Boolean): Int =
+        if (noEchKey) R.string.aether_core_stopped_no_ech_key else R.string.aether_core_stopped
 
     /** True when a core started with [arguments] writes its info lines, at the level named or at the default. */
     internal fun showsInfo(arguments: List<String>): Boolean =
@@ -1216,6 +1245,7 @@ object AetherCoreManager {
             process.inputStream.bufferedReader().forEachLine { line ->
                 relay(line, "aether")
                 if (!target.wordSeen && isReadyWord(line)) target.wordSeen = true
+                if (isNoEchKeyWord(line)) target.noEchKey = true
             }
         } catch (e: IOException) {
             LogUtil.d(AppConfig.TAG, "AetherCore: output closed: ${e.message}")
@@ -1231,6 +1261,8 @@ object AetherCoreManager {
     private fun release(target: Session): Boolean {
         if (session !== target) return false
         session = null
+        // Set before the exit is reported, which reads it; the core has written its last line by now.
+        stoppedForEchKey = target.noEchKey
         return true
     }
 
@@ -1240,5 +1272,9 @@ object AetherCoreManager {
 
         @Volatile
         var wordSeen: Boolean = !needsWord
+
+        /** Whether the core said it stopped for want of an ECH key. */
+        @Volatile
+        var noEchKey: Boolean = false
     }
 }

@@ -6,22 +6,21 @@ import androidx.annotation.StringRes
 import androidx.lifecycle.viewModelScope
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
+import com.v2ray.ang.core.AetherCore
 import com.v2ray.ang.core.AetherCoreManager
 import com.v2ray.ang.core.AetherIdentity
+import com.v2ray.ang.core.AetherIdentityManager
 import com.v2ray.ang.core.AetherIdentityStatus
 import com.v2ray.ang.core.AetherScanResult
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherProtocol
 import com.v2ray.ang.ui.base.BaseViewModel
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
 
 sealed interface AetherScanState {
@@ -29,6 +28,15 @@ sealed interface AetherScanState {
     data object Scanning : AetherScanState
     data class Found(val result: AetherScanResult) : AetherScanState
     data object NotFound : AetherScanState
+}
+
+/** What a check of the WARP keys a profile needs ends with, for the screen to act on once. */
+sealed interface AetherKeysCheck {
+    /** Every key the profile needs is there: the save goes on. */
+    data object SaveReady : AetherKeysCheck
+
+    /** A key the profile needs, or its scan when [scan], is missing: the screen asks whether to get it first. */
+    data class Missing(val scan: Boolean) : AetherKeysCheck
 }
 
 sealed interface AetherLogText {
@@ -69,23 +77,22 @@ class ServerAetherViewModel(
     private val _scanState = MutableStateFlow<AetherScanState>(AetherScanState.Idle)
     val scanState: StateFlow<AetherScanState> = _scanState.asStateFlow()
 
-    private val _isRenewingIdentity = MutableStateFlow(false)
-    val isRenewingIdentity: StateFlow<Boolean> = _isRenewingIdentity.asStateFlow()
-
-    /** The daemon's live Aether session, if any; the shared WARP key must not change under it. */
+    /** The daemon's live Aether session, if any; a scan must not open a second tunnel on its key. */
     private val _session = MutableStateFlow<AetherSession?>(null)
     val session: StateFlow<AetherSession?> = _session.asStateFlow()
 
     private val _log = MutableStateFlow<List<AetherLogEntry>>(emptyList())
     val log: StateFlow<List<AetherLogEntry>> = _log.asStateFlow()
 
+    private val _keysCheck = MutableStateFlow<AetherKeysCheck?>(null)
+    val keysCheck: StateFlow<AetherKeysCheck?> = _keysCheck.asStateFlow()
+
     private val nextLogId = AtomicLong()
     private var scanJob: Job? = null
-    private var renewJob: Job? = null
     private var reportedIdentity: AetherIdentityStatus? = null
 
     private val isBusy: Boolean
-        get() = _scanState.value == AetherScanState.Scanning || _isRenewingIdentity.value
+        get() = _scanState.value == AetherScanState.Scanning
 
     init {
         viewModelScope.launch { _isCoreAvailable.value = source.isCoreAvailable() }
@@ -100,7 +107,11 @@ class ServerAetherViewModel(
         viewModelScope.launch { _session.value = source.activeSession() }
     }
 
-    fun scan(profile: ProfileItem) {
+    /**
+     * Scans for an endpoint of [profile]. Unless [anyway], a scan whose protocol lacks a WARP key does not start, and
+     * [keysCheck] asks first whether to get the key; the core would register it on its own.
+     */
+    fun scan(profile: ProfileItem, anyway: Boolean = false) {
         if (isBusy) return
         _scanState.value = AetherScanState.Scanning
         scanJob = viewModelScope.launch {
@@ -112,6 +123,14 @@ class ServerAetherViewModel(
                     _scanState.value = AetherScanState.Idle
                     append(Log.WARN, AetherLogText.Resource(R.string.aether_scan_blocked))
                     return@launch
+                }
+                if (!anyway) {
+                    val needed = AetherIdentityManager.filesNeededBy(AetherCoreManager.buildArguments(profile, 0, scan = true))
+                    if (source.missingKeys(needed).isNotEmpty()) {
+                        _scanState.value = AetherScanState.Idle
+                        _keysCheck.value = AetherKeysCheck.Missing(scan = true)
+                        return@launch
+                    }
                 }
                 append(Log.INFO, AetherLogText.Resource(R.string.aether_log_scan_started))
                 val result = source.scan(profile, ::appendOutput)
@@ -139,53 +158,24 @@ class ServerAetherViewModel(
         }
     }
 
-    fun showIdentity(protocol: AetherProtocol) {
-        viewModelScope.launch { reportIdentity(source.identityStatus(protocol), onlyChanges = true) }
-    }
-
-    fun renewIdentity(profile: ProfileItem) {
-        if (isBusy) return
-        _isRenewingIdentity.value = true
-        renewJob = viewModelScope.launch {
-            try {
-                // Checked again at the tap, the session may have come up after the screen opened.
-                val session = source.activeSession()
-                _session.value = session
-                if (session != null) {
-                    append(Log.WARN, AetherLogText.Resource(R.string.aether_renew_blocked))
-                    return@launch
-                }
-                append(Log.INFO, AetherLogText.Resource(R.string.aether_log_key_renewing))
-                val status = source.renewIdentity(profile, ::appendOutput)
-                if (status == null) {
-                    append(Log.ERROR, AetherLogText.Resource(R.string.aether_log_key_renew_failed))
-                } else {
-                    append(Log.INFO, AetherLogText.Resource(R.string.aether_log_key_renewed))
-                    reportIdentity(status, onlyChanges = false)
-                }
-            } catch (e: CancellationException) {
-                // By now the core and what it started have ended. A renewal cancelled once every new key
-                // was ready has put them in place all the same, so the keys in use are shown if they changed.
-                withContext(NonCancellable) {
-                    reportIdentity(source.identityStatus(AetherProtocol.fromString(profile.aetherProtocol)), onlyChanges = true)
-                }
-                throw e
-            } finally {
-                _isRenewingIdentity.value = false
-            }
+    /**
+     * Looks whether the WARP keys [profile] needs are there before it is saved: [keysCheck] then says
+     * [AetherKeysCheck.SaveReady], or [AetherKeysCheck.Missing] for the screen to ask first. A profile that
+     * runs Psiphon or Tor alone needs none.
+     */
+    fun checkKeysBeforeSave(profile: ProfileItem) {
+        viewModelScope.launch {
+            val needed = AetherIdentityManager.filesNeededBy(AetherCore.of(profile, _listenPort.value).arguments)
+            _keysCheck.value = if (source.missingKeys(needed).isEmpty()) AetherKeysCheck.SaveReady else AetherKeysCheck.Missing(scan = false)
         }
     }
 
-    /**
-     * Stops getting new keys: the core that registers them ends, with whatever it started, and until
-     * then the renewal shows as running. The keys in use stay, unless every new key was ready already;
-     * see [com.v2ray.ang.core.AetherIdentityManager.renew].
-     */
-    fun cancelRenewal() {
-        val job = renewJob ?: return
-        if (!_isRenewingIdentity.value || job.isCancelled) return
-        append(Log.WARN, AetherLogText.Resource(R.string.aether_log_key_renew_cancelled))
-        job.cancel()
+    fun onKeysCheckHandled() {
+        _keysCheck.value = null
+    }
+
+    fun showIdentity(protocol: AetherProtocol) {
+        viewModelScope.launch { reportIdentity(source.identityStatus(protocol), onlyChanges = true) }
     }
 
     /** Forgets what Psiphon has learned, unless a session runs on it; the outcome goes to the log. */
@@ -257,7 +247,8 @@ class ServerAetherViewModel(
             )
         }
 
-        private fun keyLine(identity: AetherIdentity?, @StringRes ready: Int, @StringRes missing: Int): AetherLogText.Resource =
+        /** The log line of a key: [ready] with its device and addresses, or [missing] when there is none. */
+        internal fun keyLine(identity: AetherIdentity?, @StringRes ready: Int, @StringRes missing: Int): AetherLogText.Resource =
             if (identity == null) {
                 AetherLogText.Resource(missing)
             } else {

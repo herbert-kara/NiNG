@@ -85,6 +85,8 @@
     <string name="server_lab_stream_fingerprint">Fingerprint</string>
     <string name="server_lab_stream_alpn" translatable="false">ALPN</string>
     <string name="server_lab_cipher_suites">加密套件 (Cipher Suites)</string>
+    <string name="toast_cipher_suites_need_unsafe">cipherSuites 僅在指紋為 unsafe 時生效。請選擇 unsafe，或清空 cipherSuites。</string>
+    <string name="toast_websocket_alpn_http1_only">WebSocket 和 HTTPUpgrade 僅在 alpn 為 http/1.1 或為空時才能連線。請選擇 http/1.1，或留空 alpn。</string>
     <string name="server_lab_allow_insecure">跳過憑證驗證 (allowInsecure)</string>
     <string name="server_lab_sni" translatable="false">SNI</string>
     <string name="server_lab_address3">伺服器位址</string>
@@ -132,6 +134,11 @@
     <string name="server_lab_xhttp_mode">XHTTP 模式</string>
     <string name="server_lab_xhttp_extra">XHTTP Extra 原始 JSON，格式： { XHTTPObject }</string>
     <string name="server_lab_final_mask">finalMask 原始 JSON，格式：{ FinalMaskObject }</string>
+    <string name="preset_replace_title">取代 %1$s？</string>
+    <string name="preset_replace_message">目前的 %1$s 不在清單中，取代後將遺失。要取代為 %2$s 嗎？</string>
+    <string name="preset_action_replace">取代</string>
+    <string name="preset_default">預設</string>
+    <string name="acc_choose_preset">選擇現成的 %1$s</string>
     <string name="server_lab_dial_mode" translatable="false">dialMode</string>
     <string name="server_lab_ech_config_list" translatable="false">echConfigList</string>
     <string name="server_lab_ech_outbound">echOutbound 原始 JSON，格式：{ OutboundObject }</string>
@@ -621,7 +628,7 @@
     <string name="aether_tor_psiphon_conflict">Tor 與 Psiphon 只能以一個在通道內、一個在通道外的方式搭配使用</string>
     <string name="aether_tor_bridges_missing">請至少填寫一條橋接行，或選擇其他橋接設定</string>
     <string name="aether_lab_ech">加密用戶端問候（ECH）</string>
-    <string name="aether_hint_ech">隱藏 MASQUE 交握中的伺服器名稱（需要能取得其金鑰）</string>
+    <string name="aether_hint_ech">隱藏 MASQUE 交握中的伺服器名稱；沒有可用的金鑰時 Aether 不會連線</string>
     <string name="aether_lab_ech_dns">ECH DNS</string>
     <string name="aether_lab_ech_domain">ECH 網域</string>
     <string name="aether_invalid_ech_dns">ECH DNS 必須是 udp://IP、tcp://IP 或 DNS-over-HTTPS 伺服器的 https:// 位址</string>
@@ -633,26 +640,26 @@
     <string name="aether_hint_exit_loc">DE,SE 表示只允許這些；!IR,RU 表示拒絕這些；留空則接受任意</string>
     <string name="aether_invalid_exit_loc">請填寫以逗號分隔的兩位國家代碼，前加 ! 表示拒絕</string>
     <string name="aether_lab_tor_relays">橋接來源</string>
-    <string name="aether_lab_advanced">進階設定</string>
+    <string name="aether_lab_other_settings">其他設定</string>
     <string name="aether_lab_command">Aether 命令</string>
-    <string name="aether_command_custom">已手動編輯：此命令按原樣執行，上方的設定不再生效</string>
+    <string name="aether_command_custom">已手動編輯：此命令按原樣執行，上方的設定不再生效（Xray-core 的設定除外）</string>
     <string name="aether_action_use_settings">使用上方設定</string>
     <string name="aether_invalid_command">命令必須包含 Aether 核心的參數，並在 --bind 後給出監聽連接埠</string>
     <string name="aether_unsupported_abi">此裝置不支援 Aether 核心</string>
     <string name="aether_core_stopped">Aether 核心已停止執行</string>
+    <string name="aether_core_stopped_no_ech_key">Aether 核心已停止：ECH 已開啟，但找不到可用的 ECH 金鑰。沒有金鑰，伺服器名稱就會以明文傳送。</string>
     <string name="aether_core_connecting">Aether 核心仍在連線中</string>
     <string name="menu_item_import_config_manually_aether">手動新增 Aether 設定</string>
-    <string name="aether_action_renew_key">取得新的 WARP 金鑰</string>
-    <string name="aether_action_renewing_key">正在取得新金鑰…</string>
-    <string name="aether_confirm_renew_key">將為所有協定註冊新的 WARP 金鑰：WireGuard 和 MASQUE，以及各自的內層節點金鑰。在所有新金鑰就緒之前，目前的金鑰保持不變；任何一個註冊失敗，都會保留目前的金鑰。</string>
+    <string name="aether_action_renew_key">取得新的 WARP 金鑰…</string>
+    <string name="aether_action_renewing_key">正在取得新的 WARP 金鑰…</string>
     <string name="aether_log_title">記錄</string>
     <string name="aether_log_empty">掃描結果和 WARP 金鑰狀態會顯示在這裡</string>
     <string name="aether_log_scan_started">正在掃描伺服器…</string>
     <string name="aether_log_scan_found">已找到 %1$s</string>
     <string name="aether_log_scan_found_hops">已找到外層節點 %1$s 和內層節點 %2$s</string>
     <string name="aether_log_scan_cancelled">已取消掃描</string>
-    <string name="aether_log_key_renewing">正在為所有協定註冊新的 WARP 金鑰；在全部就緒之前，目前的金鑰保持不變…</string>
-    <string name="aether_log_key_renewed">所有協定的新 WARP 金鑰已就緒，將在下次連線時使用</string>
+    <string name="aether_log_key_renewing">正在註冊新的 WARP 金鑰；在所有新金鑰就緒之前，使用中的金鑰保持不變…</string>
+    <string name="aether_log_key_renewed">新的 WARP 金鑰已替換就位，將在下次連線時使用</string>
     <string name="aether_log_key_renew_failed">註冊新的 WARP 金鑰失敗，已保留目前的金鑰</string>
     <string name="aether_log_key_renew_cancelled">已取消取得新的 WARP 金鑰</string>
     <string name="aether_log_masque_key_ready">MASQUE 金鑰：裝置 %1$s，IPv4 %2$s，IPv6 %3$s</string>
@@ -663,8 +670,24 @@
     <string name="aether_log_outer_key_missing">外層節點金鑰：尚未註冊，將在首次掃描或連線時註冊</string>
     <string name="aether_log_inner_key_ready">內層節點金鑰：裝置 %1$s，IPv4 %2$s，IPv6 %3$s</string>
     <string name="aether_log_inner_key_missing">內層節點金鑰：尚未註冊，將在首次掃描或連線時註冊</string>
-    <string name="aether_renew_blocked">請先中斷 Aether 連線，再取得新的 WARP 金鑰；目前的連線正在使用現有金鑰</string>
+    <string name="aether_log_wireguard_inner_key_ready">WireGuard 內層節點金鑰：裝置 %1$s，IPv4 %2$s，IPv6 %3$s</string>
+    <string name="aether_log_wireguard_inner_key_missing">WireGuard 內層節點金鑰：尚未註冊，將在首次掃描或連線時註冊</string>
+    <string name="aether_log_masque_inner_key_ready">MASQUE 內層節點金鑰：裝置 %1$s，IPv4 %2$s，IPv6 %3$s</string>
+    <string name="aether_log_masque_inner_key_missing">MASQUE 內層節點金鑰：尚未註冊，將在首次掃描或連線時註冊</string>
+    <string name="aether_renew_blocked">請先中斷 Aether 連線，再取得這些金鑰；目前的連線正在使用它們</string>
+    <string name="aether_action_get_keys">取得新的 WARP 金鑰</string>
+    <string name="aether_keys_lab_kind">要取得新金鑰的協定</string>
+    <string name="aether_keys_kind_all">全部</string>
+    <string name="aether_keys_lab_enroll_address">請求位址</string>
+    <string name="aether_keys_hint_ech">隱藏 WARP API 請求中的伺服器名稱；沒有可用的 ECH 金鑰時不會請求 WARP 金鑰</string>
+    <string name="aether_lab_fingerprint">Fingerprint</string>
+    <string name="aether_keys_invalid_enroll_address">請求位址必須是 IP 位址或網域名稱，可帶連接埠，例如 188.114.97.6:443 或 [2606:4700::1]:8443</string>
+    <string name="aether_keys_invalid_command">命令必須註冊金鑰：--register 後接 all、wg、masque、gool 或 mim</string>
+    <string name="aether_keys_log_empty">核心輸出和 WARP 金鑰會顯示在這裡</string>
     <string name="aether_scan_blocked">請先中斷 Aether 連線，再進行掃描；掃描會使用目前連線的金鑰開啟第二條隧道</string>
+    <string name="aether_keys_missing">缺少所需的 WARP 金鑰，請先取得</string>
+    <string name="aether_action_save_anyway">仍然儲存</string>
+    <string name="aether_action_scan_anyway">仍然掃描</string>
     <string name="aether_chain_one_profile">一個代理鏈只能包含一個 Aether 設定檔</string>
     <string name="aether_exit_node_name_taken">此處路由使用了名為 exit-node 的設定檔，而 exit-node 是 Aether 核心向外連線所經出站的名稱；請重新命名該設定檔</string>
     <string name="aether_chain_hop_missing">無法建立此代理鏈中 Aether 設定檔向外連線所經的那一跳，Aether 核心將會不經它直接連線網際網路</string>

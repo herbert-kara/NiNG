@@ -2,6 +2,7 @@ package com.v2ray.ang.ui.server
 
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.entities.ProfileItem
+import com.v2ray.ang.enums.AetherFingerprint
 import com.v2ray.ang.enums.AetherIpVersion
 import com.v2ray.ang.enums.AetherObfuscation
 import com.v2ray.ang.enums.AetherProtocol
@@ -9,10 +10,10 @@ import com.v2ray.ang.enums.AetherPsiphonCdnSet
 import com.v2ray.ang.enums.AetherScanMode
 import com.v2ray.ang.enums.AetherTransport
 import com.v2ray.ang.enums.EConfigType
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 
 class ServerUiStateTest {
 
@@ -208,33 +209,43 @@ class ServerUiStateTest {
     fun theFoldedSettingsAnnounceThemselvesOnlyWhenOneHoldsAValue() {
         val state = ServerUiState.from(ProfileItem.create(EConfigType.AETHER))
         assertEquals(AetherIpVersion.V4.type, state.aetherIpVersion)
-        assertEquals(false, state.hasAdvancedAetherSettings)
+        assertEquals(false, state.hasOtherAetherSettings)
 
         // The IP version stands outside the fold, so it does not count.
         state.aetherIpVersion = AetherIpVersion.DUAL.type
-        assertEquals(false, state.hasAdvancedAetherSettings)
+        assertEquals(false, state.hasOtherAetherSettings)
 
         state.aetherDns = "1.1.1.1"
-        assertEquals(true, state.hasAdvancedAetherSettings)
+        assertEquals(true, state.hasOtherAetherSettings)
         state.aetherDns = ""
         state.aetherExitLoc = "!IR"
-        assertEquals(true, state.hasAdvancedAetherSettings)
+        assertEquals(true, state.hasOtherAetherSettings)
         state.aetherExitLoc = ""
         state.targetStrategy = "UseIPv4v6"
-        assertEquals(true, state.hasAdvancedAetherSettings)
+        assertEquals(true, state.hasOtherAetherSettings)
         state.targetStrategy = ""
-        // The exit-node's finalMask and dialMode sit in the fold as well.
+        // The exit-node's finalMask and dialMode stand outside the fold, after the fingerprint.
         state.finalMask = """{"tcp": []}"""
-        assertEquals(true, state.hasAdvancedAetherSettings)
-        state.finalMask = " "
         state.dialMode = "custom"
-        assertEquals(true, state.hasAdvancedAetherSettings)
-        state.dialMode = ""
-        assertEquals(false, state.hasAdvancedAetherSettings)
+        assertEquals(false, state.hasOtherAetherSettings)
     }
 
     @Test
-    fun theEchResolverAndDomainStartAtTheirDefaultsAndAreStoredOnlyWhileEchIsOn() {
+    fun theFingerprintStartsAsChromesAndIsStoredAsChosen() {
+        val state = ServerUiState.from(ProfileItem.create(EConfigType.AETHER))
+        assertEquals(AetherFingerprint.CHROME.type, state.aetherFingerprint)
+
+        state.aetherFingerprint = AetherFingerprint.GO.type
+        val stored = state.toProfileItem(ProfileItem.create(EConfigType.AETHER))
+        assertEquals("go", stored.aetherFingerprint)
+        assertEquals("go", ServerUiState.from(stored).aetherFingerprint)
+
+        // A value no build wrote reads as Chrome's.
+        assertEquals("chrome", ServerUiState.from(stored.copy(aetherFingerprint = "lynx")).aetherFingerprint)
+    }
+
+    @Test
+    fun theEchResolverAndDomainStartAtTheirDefaultsAndAreKeptWhetherEchIsOnOrOff() {
         val profile = ProfileItem.create(EConfigType.AETHER)
         val state = ServerUiState.from(profile)
         assertEquals(AppConfig.AETHER_ECH_DNS, state.aetherEchDns)
@@ -242,16 +253,16 @@ class ServerUiStateTest {
 
         state.aetherEchDns = "https://doq.dns4all.eu/dns-query"
         state.aetherEchDomain = "ip.gs"
-        assertNull(state.toProfileItem(profile).aetherEchDns)
-        assertNull(state.toProfileItem(profile).aetherEchDomain)
-
-        state.aetherEch = true
-        val stored = state.toProfileItem(profile)
-        assertEquals("https://doq.dns4all.eu/dns-query", stored.aetherEchDns)
-        assertEquals("ip.gs", stored.aetherEchDomain)
-        val reloaded = ServerUiState.from(stored)
-        assertEquals("https://doq.dns4all.eu/dns-query", reloaded.aetherEchDns)
-        assertEquals("ip.gs", reloaded.aetherEchDomain)
+        for (ech in listOf(true, false)) {
+            state.aetherEch = ech
+            val stored = state.toProfileItem(profile)
+            assertEquals("https://doq.dns4all.eu/dns-query", stored.aetherEchDns)
+            assertEquals("ip.gs", stored.aetherEchDomain)
+            val reloaded = ServerUiState.from(stored)
+            assertEquals(ech, reloaded.aetherEch)
+            assertEquals("https://doq.dns4all.eu/dns-query", reloaded.aetherEchDns)
+            assertEquals("ip.gs", reloaded.aetherEchDomain)
+        }
 
         // A field left empty is the default again.
         state.aetherEchDns = " "
@@ -283,7 +294,7 @@ class ServerUiStateTest {
         val profile = ProfileItem.create(EConfigType.AETHER)
         val state = ServerUiState.from(profile)
         val built = com.v2ray.ang.core.AetherCore.of(state.toProfileItem(profile, 20808), 20808).command
-        assertTrue(built, "127.0.0.1:20808" in built)
+        assertTrue("127.0.0.1:20808" in built, built)
         state.aetherCommand = built
         assertNull(state.toProfileItem(profile, 20808).aetherCommand)
         // On another port the same words say something else than the settings do.

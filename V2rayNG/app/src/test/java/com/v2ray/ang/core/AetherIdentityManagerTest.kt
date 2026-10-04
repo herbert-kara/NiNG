@@ -1,26 +1,27 @@
 package com.v2ray.ang.core
 
+import com.v2ray.ang.enums.AetherKeyKind
 import com.v2ray.ang.enums.AetherProtocol
-import java.io.File
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Rule
-import org.junit.Test
-import org.junit.rules.TemporaryFolder
-
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
+import java.util.concurrent.TimeUnit
 
 class AetherIdentityManagerTest {
 
-    @get:Rule
-    val folder = TemporaryFolder()
+    @TempDir
+    lateinit var folder: File
+
+    private fun newFolder(name: String): File = File(folder, name).apply { check(mkdir()) { "could not create $this" } }
 
     private val quotes = "\"\"\""
 
@@ -40,7 +41,7 @@ class AetherIdentityManagerTest {
         ).joinToString("\n")
 
     private fun workDir(vararg files: Pair<String, String>): File =
-        folder.newFolder("aether").apply {
+        newFolder("aether").apply {
             files.forEach { (name, text) -> File(this, name).writeText(text) }
         }
 
@@ -87,7 +88,7 @@ class AetherIdentityManagerTest {
         assertNull(AetherIdentityManager.status(dir, AetherProtocol.GOOL).secondary)
         assertNull(AetherIdentityManager.status(dir, AetherProtocol.MIM).primary)
         assertNull(AetherIdentityManager.status(dir, AetherProtocol.MIM).secondary)
-        assertNull(AetherIdentityManager.status(File(folder.root, "absent"), AetherProtocol.WIREGUARD).primary)
+        assertNull(AetherIdentityManager.status(File(folder, "absent"), AetherProtocol.WIREGUARD).primary)
     }
 
     @Test
@@ -130,9 +131,9 @@ class AetherIdentityManagerTest {
     @Test
     fun aRenewalReplacesEveryKeyOnceAllTheNewOnesAreThere() = runBlocking {
         val dir = keysInUse()
-        val renewal = File(folder.root, "aether-renewal")
+        val renewal = File(folder, "aether-renewal")
 
-        val renewed = AetherIdentityManager.renewAll(dir, renewal) {
+        val renewed = AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.KEY_FILES) {
             register(renewal)
             true
         }
@@ -145,9 +146,9 @@ class AetherIdentityManagerTest {
     @Test
     fun theKeysInUseAreNotTouchedWhileTheNewOnesAreRegistered() = runBlocking {
         val dir = keysInUse()
-        val renewal = File(folder.root, "aether-renewal")
+        val renewal = File(folder, "aether-renewal")
 
-        AetherIdentityManager.renewAll(dir, renewal) {
+        AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.KEY_FILES) {
             register(renewal, AetherIdentityManager.KEY_FILES.dropLast(1))
             // Three new keys are there and the last one is still being registered.
             assertEquals(every("old"), devices(dir))
@@ -162,9 +163,9 @@ class AetherIdentityManagerTest {
     @Test
     fun aMissingNewKeyKeepsEveryOldKey() = runBlocking {
         val dir = keysInUse()
-        val renewal = File(folder.root, "aether-renewal")
+        val renewal = File(folder, "aether-renewal")
 
-        val renewed = AetherIdentityManager.renewAll(dir, renewal) {
+        val renewed = AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.KEY_FILES) {
             // The runs said they were done, but the inner WireGuard key is not there.
             register(renewal, AetherIdentityManager.KEY_FILES - AetherIdentityManager.WIREGUARD_INNER_FILE)
             true
@@ -178,9 +179,9 @@ class AetherIdentityManagerTest {
     @Test
     fun aNewKeyThatDoesNotReadAsAKeyKeepsEveryOldKey() = runBlocking {
         val dir = keysInUse()
-        val renewal = File(folder.root, "aether-renewal")
+        val renewal = File(folder, "aether-renewal")
 
-        val renewed = AetherIdentityManager.renewAll(dir, renewal) {
+        val renewed = AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.KEY_FILES) {
             register(renewal)
             File(renewal, AetherIdentityManager.MASQUE_INNER_FILE).writeText("device_id = \"\"")
             true
@@ -194,9 +195,9 @@ class AetherIdentityManagerTest {
     @Test
     fun aFailedRegistrationKeepsEveryOldKey() = runBlocking {
         val dir = keysInUse()
-        val renewal = File(folder.root, "aether-renewal")
+        val renewal = File(folder, "aether-renewal")
 
-        val renewed = AetherIdentityManager.renewAll(dir, renewal) {
+        val renewed = AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.KEY_FILES) {
             // The MASQUE keys came, then the WireGuard run failed.
             register(renewal, listOf(AetherIdentityManager.MASQUE_FILE, AetherIdentityManager.MASQUE_INNER_FILE))
             false
@@ -210,11 +211,11 @@ class AetherIdentityManagerTest {
     @Test
     fun aCancelledRenewalKeepsEveryOldKey() = runBlocking {
         val dir = keysInUse()
-        val renewal = File(folder.root, "aether-renewal")
+        val renewal = File(folder, "aether-renewal")
         val registering = CompletableDeferred<Unit>()
 
         val job = launch {
-            AetherIdentityManager.renewAll(dir, renewal) {
+            AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.KEY_FILES) {
                 register(renewal)
                 registering.complete(Unit)
                 awaitCancellation()
@@ -230,11 +231,11 @@ class AetherIdentityManagerTest {
     @Test
     fun aCancellationLandingRightAfterTheNewKeysWereMarkedReadyStillPutsThemInPlace() = runBlocking {
         val dir = keysInUse()
-        val renewal = File(folder.root, "aether-renewal")
+        val renewal = File(folder, "aether-renewal")
         val registered = CompletableDeferred<Unit>()
 
         val job = launch {
-            AetherIdentityManager.renewAll(dir, renewal) {
+            AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.KEY_FILES) {
                 register(renewal)
                 registered.complete(Unit)
                 true
@@ -258,7 +259,7 @@ class AetherIdentityManagerTest {
     @Test
     fun aRenewalStoppedWhileItMovedTheKeysIsFinishedLater() {
         val dir = keysInUse()
-        val renewal = folder.newFolder("aether-renewal")
+        val renewal = newFolder("aether-renewal")
         register(renewal)
         File(renewal, AetherIdentityManager.READY_MARK).createNewFile()
         // The app was killed after the first two new keys were moved.
@@ -271,9 +272,39 @@ class AetherIdentityManagerTest {
     }
 
     @Test
+    fun theKeysARenewalOfAnOlderVersionLeftGoAndTheKeysInUseStay() {
+        // That renewal moved the whole identity folder aside to aether-previous while it registered new keys; an app
+        // killed meanwhile left it there, which nothing reads.
+        val dir = keysInUse()
+        File(dir, "aether-wg-lastconn.toml").writeText("peer = \"162.159.192.1:2408\"")
+        val previous = newFolder("aether-previous")
+        register(previous, deviceId = "older")
+        File(previous, AetherIdentityManager.BASE_FILE).writeText("older")
+
+        assertTrue(AetherIdentityManager.settleIn(folder))
+
+        assertFalse(previous.exists())
+        assertEquals(every("old"), devices(dir))
+        assertEquals("peer = \"162.159.192.1:2408\"", File(dir, "aether-wg-lastconn.toml").readText())
+    }
+
+    @Test
+    fun settlingTheFilesFolderFinishesARenewalWhoseKeysWereAllReady() {
+        val dir = keysInUse()
+        val renewal = newFolder("aether-renewal")
+        register(renewal)
+        File(renewal, AetherIdentityManager.READY_MARK).createNewFile()
+
+        assertTrue(AetherIdentityManager.settleIn(folder))
+
+        assertEquals(every("new"), devices(dir))
+        assertEquals(listOf("aether"), folder.list()?.toList())
+    }
+
+    @Test
     fun newKeysNotMarkedReadyAreNeverMovedIntoPlace() {
         val dir = keysInUse()
-        val renewal = folder.newFolder("aether-renewal")
+        val renewal = newFolder("aether-renewal")
         // A renewal is still at work here, or one was stopped before it had checked its keys.
         register(renewal)
 
@@ -286,10 +317,10 @@ class AetherIdentityManagerTest {
     @Test
     fun whatAnInterruptedRenewalLeftIsNotTakenForNewKeys() = runBlocking {
         val dir = keysInUse()
-        val renewal = folder.newFolder("aether-renewal")
+        val renewal = newFolder("aether-renewal")
         register(renewal, AetherIdentityManager.KEY_FILES.take(3), deviceId = "stale")
 
-        val renewed = AetherIdentityManager.renewAll(dir, renewal) {
+        val renewed = AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.KEY_FILES) {
             // The stale keys are gone before the core runs, which registers all four anew.
             assertEquals(every(null), devices(renewal))
             register(renewal)
@@ -302,10 +333,10 @@ class AetherIdentityManagerTest {
 
     @Test
     fun aFirstRenewalPutsEveryKeyInPlace() = runBlocking {
-        val dir = File(folder.root, "aether")
-        val renewal = File(folder.root, "aether-renewal")
+        val dir = File(folder, "aether")
+        val renewal = File(folder, "aether-renewal")
 
-        val renewed = AetherIdentityManager.renewAll(dir, renewal) {
+        val renewed = AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.KEY_FILES) {
             register(renewal)
             true
         }
@@ -316,10 +347,10 @@ class AetherIdentityManagerTest {
 
     @Test
     fun aFailedFirstRenewalLeavesNoKeyBehind() = runBlocking {
-        val dir = File(folder.root, "aether")
-        val renewal = File(folder.root, "aether-renewal")
+        val dir = File(folder, "aether")
+        val renewal = File(folder, "aether-renewal")
 
-        val renewed = AetherIdentityManager.renewAll(dir, renewal) {
+        val renewed = AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.KEY_FILES) {
             register(renewal, listOf(AetherIdentityManager.MASQUE_FILE))
             false
         }
@@ -330,14 +361,126 @@ class AetherIdentityManagerTest {
     }
 
     @Test
+    fun eachKindRegistersTheKeysOfItsProtocols() {
+        val wireguard = AetherIdentityManager.WIREGUARD_FILE
+        val wireguardInner = AetherIdentityManager.WIREGUARD_INNER_FILE
+        val masque = AetherIdentityManager.MASQUE_FILE
+        val masqueInner = AetherIdentityManager.MASQUE_INNER_FILE
+        assertEquals(AetherIdentityManager.KEY_FILES, AetherIdentityManager.filesOf(AetherKeyKind.ALL))
+        assertEquals(listOf(wireguard), AetherIdentityManager.filesOf(AetherKeyKind.WIREGUARD))
+        assertEquals(listOf(masque), AetherIdentityManager.filesOf(AetherKeyKind.MASQUE))
+        assertEquals(listOf(wireguard, wireguardInner), AetherIdentityManager.filesOf(AetherKeyKind.GOOL))
+        assertEquals(listOf(masque, masqueInner), AetherIdentityManager.filesOf(AetherKeyKind.MIM))
+
+        // A tunnel uses the keys its protocol registers, its outer hop the key of the one-hop protocol.
+        for (protocol in AetherProtocol.entries) {
+            val kind = AetherKeyKind.entries.single { it.type == protocol.type }
+            assertEquals(AetherIdentityManager.filesOf(kind), AetherIdentityManager.filesOf(protocol))
+        }
+    }
+
+    @Test
+    fun theKeysAreReadFileByFile() {
+        val dir = workDir(
+            AetherIdentityManager.WIREGUARD_FILE to keyFile("outer"),
+            AetherIdentityManager.MASQUE_INNER_FILE to keyFile("masque-inner"),
+            AetherIdentityManager.MASQUE_FILE to "device_id = \"\"",
+        )
+
+        assertEquals(listOf("outer", null, null, "masque-inner"), AetherIdentityManager.keys(dir, AetherIdentityManager.KEY_FILES).map { it.identity?.deviceId })
+        assertEquals(AetherIdentityManager.KEY_FILES, AetherIdentityManager.keys(dir, AetherIdentityManager.KEY_FILES).map { it.file })
+    }
+
+    @Test
+    fun aRenewalOfOneKindReplacesItsKeysAndLeavesTheOthersAlone() = runBlocking {
+        for (kind in AetherKeyKind.entries) {
+            val dir = keysInUse()
+            val renewal = File(folder, "aether-renewal")
+            val files = AetherIdentityManager.filesOf(kind)
+
+            val renewed = AetherIdentityManager.renew(dir, renewal, files) {
+                register(renewal, files)
+                true
+            }
+
+            assertTrue(renewed, kind.type)
+            assertEquals(AetherIdentityManager.KEY_FILES.map { if (it in files) "new" else "old" }, devices(dir), kind.type)
+            assertFalse(renewal.exists(), kind.type)
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aKeyOutsideTheKindIsNeverPutInPlace() = runBlocking {
+        val dir = keysInUse()
+        val renewal = File(folder, "aether-renewal")
+
+        val renewed = AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.filesOf(AetherKeyKind.WIREGUARD)) {
+            // The run left a MASQUE key beside the WireGuard key it was asked for.
+            register(renewal, listOf(AetherIdentityManager.WIREGUARD_FILE, AetherIdentityManager.MASQUE_FILE))
+            true
+        }
+
+        assertTrue(renewed)
+        assertEquals(listOf("new", "old", "old", "old"), devices(dir))
+        assertFalse(renewal.exists())
+    }
+
+    @Test
+    fun aMissingNewKeyOfAKindKeepsEveryOldKeyOfIt() = runBlocking {
+        val dir = keysInUse()
+        val renewal = File(folder, "aether-renewal")
+
+        val renewed = AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.filesOf(AetherKeyKind.GOOL)) {
+            // The outer hop key came; the inner one did not.
+            register(renewal, listOf(AetherIdentityManager.WIREGUARD_FILE))
+            true
+        }
+
+        assertFalse(renewed)
+        assertEquals(every("old"), devices(dir))
+        assertFalse(renewal.exists())
+    }
+
+    @Test
+    fun aCoreNeedsTheKeysOfItsProtocolAndNoneWithPsiphonOrTorAlone() {
+        fun needed(vararg arguments: String) = AetherIdentityManager.filesNeededBy(arguments.toList())
+        val masque = AetherIdentityManager.MASQUE_FILE
+        val wireguard = AetherIdentityManager.WIREGUARD_FILE
+        assertEquals(listOf(masque), needed("--protocol", "masque", "--h2"))
+        assertEquals(listOf(wireguard), needed("--protocol", "wg", "--tor"))
+        assertEquals(listOf(wireguard, AetherIdentityManager.WIREGUARD_INNER_FILE), needed("--wiw-outer", "162.159.192.1:2408"))
+        assertEquals(listOf(masque, AetherIdentityManager.MASQUE_INNER_FILE), needed("--protocol", "mim", "--psiphon-reverse"))
+        // With no protocol named the core runs MASQUE.
+        assertEquals(listOf(masque), needed())
+        assertEquals(emptyList<String>(), needed("--protocol", "wg", "--psiphon-only"))
+        assertEquals(emptyList<String>(), needed("--tor-only"))
+    }
+
+    @Test
+    fun aKeyThatIsNotThereOrDoesNotReadAsOneIsMissing() {
+        val dir = workDir(
+            AetherIdentityManager.MASQUE_FILE to keyFile("masque"),
+            AetherIdentityManager.MASQUE_INNER_FILE to "device_id = \"\"",
+        )
+
+        assertEquals(emptyList<String>(), AetherIdentityManager.missing(dir, listOf(AetherIdentityManager.MASQUE_FILE)))
+        assertEquals(
+            listOf(AetherIdentityManager.MASQUE_INNER_FILE, AetherIdentityManager.WIREGUARD_FILE),
+            AetherIdentityManager.missing(dir, AetherIdentityManager.filesOf(AetherKeyKind.MIM) + AetherIdentityManager.WIREGUARD_FILE)
+        )
+        assertEquals(emptyList<String>(), AetherIdentityManager.missing(dir, emptyList()))
+    }
+
+    @Test
     fun aRenewalLeavesEverythingButTheKeysAlone() = runBlocking {
         val dir = keysInUse()
         File(dir, "aether-wg-lastconn.toml").writeText("peer = \"162.159.192.1:2408\"")
         File(dir, "aether-tor").mkdirs()
         File(dir, "aether-tor/state").writeText("guards")
-        val renewal = File(folder.root, "aether-renewal")
+        val renewal = File(folder, "aether-renewal")
 
-        AetherIdentityManager.renewAll(dir, renewal) {
+        AetherIdentityManager.renew(dir, renewal, AetherIdentityManager.KEY_FILES) {
             register(renewal)
             true
         }

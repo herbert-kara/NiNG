@@ -1,6 +1,7 @@
 package com.v2ray.ang.ui.server
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.viewModels
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,6 +57,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.v2ray.ang.R
 import com.v2ray.ang.core.AetherCore
 import com.v2ray.ang.core.AetherCoreManager
+import com.v2ray.ang.core.AetherExit
 import com.v2ray.ang.core.AetherScanResult
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherProtocol
@@ -72,12 +75,10 @@ import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.fmt.AetherFmt
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.ui.compose.CollapsiblePreferenceGroupHeader
-import com.v2ray.ang.ui.compose.ConfirmDialog
 import com.v2ray.ang.ui.compose.FormDropdownField
 import com.v2ray.ang.ui.compose.FormTextField
 import com.v2ray.ang.ui.compose.SettingsSwitchItem
 import com.v2ray.ang.ui.compose.verticalScrollbar
-import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -114,18 +115,17 @@ class ServerAetherActivity : BaseServerActivity() {
         val psiphonRegions by viewModel.psiphonRegions.collectAsStateWithLifecycle()
         val isTorTransportsAvailable by viewModel.isTorTransportsAvailable.collectAsStateWithLifecycle()
         val scanState by viewModel.scanState.collectAsStateWithLifecycle()
-        val isRenewingIdentity by viewModel.isRenewingIdentity.collectAsStateWithLifecycle()
         val session by viewModel.session.collectAsStateWithLifecycle()
         val log by viewModel.log.collectAsStateWithLifecycle()
         val listenPort by viewModel.listenPort.collectAsStateWithLifecycle()
-        var showRenewConfirm by rememberSaveable { mutableStateOf(false) }
+        val keysCheck by viewModel.keysCheck.collectAsStateWithLifecycle()
         // Folded away unless one of its settings holds a value, so a profile that set one shows it at once.
-        var showAdvanced by rememberSaveable { mutableStateOf(uiState.hasAdvancedAetherSettings) }
+        var showOther by rememberSaveable { mutableStateOf(uiState.hasOtherAetherSettings) }
         val isScanning = scanState == AetherScanState.Scanning
-        val isBusy = isScanning || isRenewingIdentity
-        // The key files are shared by every Aether profile, so a live session on any of them blocks renewal.
-        // Only the daemon-side evidence counts: a running non-Aether profile leaves both actions open.
-        val renewBlocked = session != null
+        val isBusy = isScanning
+        // What Psiphon has learned is shared by every Aether profile, so a live session on any of them keeps it.
+        // Only the daemon-side evidence counts: a running non-Aether profile leaves it open.
+        val sessionLive = session != null
 
         val protocol = AetherProtocol.fromString(uiState.aetherProtocol)
         val psiphon = AetherPsiphon.fromString(uiState.aetherPsiphon)
@@ -134,6 +134,9 @@ class ServerAetherActivity : BaseServerActivity() {
         val torBridges = AetherTorBridges.fromString(uiState.aetherTorBridges)
         // With Psiphon or Tor alone there is no WARP tunnel, and nothing about one to set.
         val warpUsed = psiphon != AetherPsiphon.ONLY && tor != AetherTor.ONLY
+        // Obfuscation shapes the UDP of WireGuard and HTTP/3 alone; MASQUE over HTTP/2, chosen or forced by a carrier
+        // around the tunnel, takes none.
+        val overHttp2 = AetherCoreManager.masqueOverHttp2(protocol, AetherTransport.fromString(uiState.aetherTransport), tor, psiphon)
         val usesHttp2 = protocol.overMasque &&
             AetherTransport.fromString(uiState.aetherTransport) == AetherTransport.HTTP2
         // A scan opens a second tunnel on this protocol's key; a live session on that key must not be disturbed.
@@ -160,10 +163,26 @@ class ServerAetherActivity : BaseServerActivity() {
             }
         }
 
+        LaunchedEffect(keysCheck) {
+            if (keysCheck == AetherKeysCheck.SaveReady) {
+                viewModel.onKeysCheckHandled()
+                saveChecked(uiState)
+            }
+        }
+
         ServerEditorScaffold(
             title = serverConfigType.toString(),
-            onSaveClick = { saveServer(uiState) }
+            onSaveClick = { requestSave(uiState, listenPort) }
         ) {
+            // The WARP keys are shared by every Aether profile and got on a page of their own, with settings of its own.
+            // A scan holds the exit a run of that page dials out through, so the page opens once it has ended.
+            OutlinedButton(
+                onClick = { startActivity(Intent(this@ServerAetherActivity, ServerAetherKeysActivity::class.java)) },
+                enabled = !isScanning,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            ) {
+                Text(stringResource(R.string.aether_action_renew_key))
+            }
             FormTextField(
                 stringResource(R.string.server_lab_remarks),
                 uiState.remarks,
@@ -216,17 +235,22 @@ class ServerAetherActivity : BaseServerActivity() {
                         onCheckedChange = { uiState.aetherEch = it }
                     )
                     // Where the key comes from: the HTTPS record of the ECH domain, asked of the ECH DNS.
+                    // Lists to pick from, which take any other value the core does as well.
                     if (uiState.aetherEch) {
-                        FormTextField(
-                            stringResource(R.string.aether_lab_ech_dns),
-                            uiState.aetherEchDns,
-                            { uiState.aetherEchDns = it },
+                        FormDropdownField(
+                            label = stringResource(R.string.aether_lab_ech_dns),
+                            value = uiState.aetherEchDns,
+                            options = stringArrayResource(R.array.aether_ech_dns_options).toList(),
+                            onValueChange = { uiState.aetherEchDns = it },
+                            editable = true,
                             keyboardType = KeyboardType.Uri
                         )
-                        FormTextField(
-                            stringResource(R.string.aether_lab_ech_domain),
-                            uiState.aetherEchDomain,
-                            { uiState.aetherEchDomain = it },
+                        FormDropdownField(
+                            label = stringResource(R.string.aether_lab_ech_domain),
+                            value = uiState.aetherEchDomain,
+                            options = stringArrayResource(R.array.aether_ech_domain_options).toList(),
+                            onValueChange = { uiState.aetherEchDomain = it },
+                            editable = true,
                             keyboardType = KeyboardType.Uri
                         )
                     }
@@ -238,21 +262,37 @@ class ServerAetherActivity : BaseServerActivity() {
                     values = R.array.aether_scan_values,
                     onValueChange = { uiState.aetherScanMode = it }
                 )
-                AetherDropdownField(
-                    label = R.string.aether_lab_obfuscation,
-                    value = uiState.aetherObfuscation,
-                    entries = R.array.aether_obfuscation_entries,
-                    values = R.array.aether_obfuscation_values,
-                    onValueChange = { uiState.aetherObfuscation = it }
-                )
-                AetherDropdownField(
-                    label = R.string.aether_lab_ip_version,
-                    value = uiState.aetherIpVersion,
-                    entries = R.array.aether_ip_entries,
-                    values = R.array.aether_ip_values,
-                    onValueChange = { uiState.aetherIpVersion = it }
-                )
+                if (!overHttp2) {
+                    AetherDropdownField(
+                        label = R.string.aether_lab_obfuscation,
+                        value = uiState.aetherObfuscation,
+                        entries = R.array.aether_obfuscation_entries,
+                        values = R.array.aether_obfuscation_values,
+                        onValueChange = { uiState.aetherObfuscation = it }
+                    )
+                }
+                // The ClientHello of the MASQUE handshakes: over HTTP/3, which carries TLS 1.3 alone, only its GREASE shows.
+                if (protocol.overMasque) {
+                    AetherDropdownField(
+                        label = R.string.aether_lab_fingerprint,
+                        value = uiState.aetherFingerprint,
+                        entries = R.array.aether_fingerprint_entries,
+                        values = R.array.aether_fingerprint_values,
+                        onValueChange = { uiState.aetherFingerprint = it }
+                    )
+                }
             }
+            // Set on the exit-node, where what the core sends leaves Xray, as an ordinary profile sets them on its outbound.
+            FinalMaskField(
+                stringResource(R.string.aether_lab_exit_final_mask),
+                uiState.finalMask,
+                { uiState.finalMask = it }
+            )
+            FormTextField(
+                stringResource(R.string.aether_lab_exit_dial_mode),
+                uiState.dialMode,
+                { uiState.dialMode = it }
+            )
             AetherDropdownField(
                 label = R.string.aether_lab_psiphon,
                 value = uiState.aetherPsiphon,
@@ -352,7 +392,7 @@ class ServerAetherActivity : BaseServerActivity() {
                 // What Psiphon has learned is shared by every profile, like the WARP key, and goes only while no session runs on it.
                 OutlinedButton(
                     onClick = viewModel::clearPsiphonData,
-                    enabled = isCoreAvailable && !isBusy && !renewBlocked,
+                    enabled = isCoreAvailable && !isBusy && !sessionLive,
                     modifier = Modifier.padding(horizontal = 16.dp)
                 ) {
                     Text(stringResource(R.string.aether_action_clear_psiphon))
@@ -438,6 +478,38 @@ class ServerAetherActivity : BaseServerActivity() {
                         keyboardType = KeyboardType.Number
                     )
                 }
+                AetherDropdownField(
+                    label = R.string.aether_lab_ip_version,
+                    value = uiState.aetherIpVersion,
+                    entries = R.array.aether_ip_entries,
+                    values = R.array.aether_ip_values,
+                    onValueChange = { uiState.aetherIpVersion = it }
+                )
+            }
+            CollapsiblePreferenceGroupHeader(
+                title = stringResource(R.string.aether_lab_other_settings),
+                expanded = showOther,
+                onExpandedChange = { showOther = it }
+            )
+            if (showOther) {
+                if (warpUsed) {
+                    FormTextField(
+                        stringResource(R.string.aether_lab_dns),
+                        uiState.aetherDns,
+                        { uiState.aetherDns = it },
+                        placeholder = stringResource(R.string.aether_hint_dns)
+                    )
+                    FormTextField(
+                        stringResource(R.string.aether_lab_exit_loc),
+                        uiState.aetherExitLoc,
+                        { uiState.aetherExitLoc = it },
+                        placeholder = stringResource(R.string.aether_hint_exit_loc)
+                    )
+                }
+                CommonTargetStrategyField(uiState)
+            }
+            // After every setting it runs on, the DNS and the exit rule of Other settings included.
+            if (warpUsed) {
                 Row(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -466,71 +538,6 @@ class ServerAetherActivity : BaseServerActivity() {
                         modifier = Modifier.padding(horizontal = 16.dp)
                     )
                 }
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedButton(
-                        onClick = { showRenewConfirm = true },
-                        enabled = isCoreAvailable && !isBusy && !renewBlocked
-                    ) {
-                        if (isRenewingIdentity) {
-                            ProgressMark()
-                        }
-                        Text(
-                            stringResource(
-                                if (isRenewingIdentity) R.string.aether_action_renewing_key else R.string.aether_action_renew_key
-                            )
-                        )
-                    }
-                    if (isRenewingIdentity) {
-                        TextButton(onClick = viewModel::cancelRenewal) {
-                            Text(stringResource(R.string.action_cancel))
-                        }
-                    }
-                }
-                if (renewBlocked) {
-                    Text(
-                        text = stringResource(R.string.aether_renew_blocked),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                }
-            }
-            CollapsiblePreferenceGroupHeader(
-                title = stringResource(R.string.aether_lab_advanced),
-                expanded = showAdvanced,
-                onExpandedChange = { showAdvanced = it }
-            )
-            if (showAdvanced) {
-                if (warpUsed) {
-                    FormTextField(
-                        stringResource(R.string.aether_lab_dns),
-                        uiState.aetherDns,
-                        { uiState.aetherDns = it },
-                        placeholder = stringResource(R.string.aether_hint_dns)
-                    )
-                    FormTextField(
-                        stringResource(R.string.aether_lab_exit_loc),
-                        uiState.aetherExitLoc,
-                        { uiState.aetherExitLoc = it },
-                        placeholder = stringResource(R.string.aether_hint_exit_loc)
-                    )
-                }
-                CommonTargetStrategyField(uiState)
-                // Set on the exit-node, where what the core sends leaves Xray, as an ordinary profile sets them on its outbound.
-                FormTextField(
-                    stringResource(R.string.aether_lab_exit_final_mask),
-                    uiState.finalMask,
-                    { uiState.finalMask = it }
-                )
-                FormTextField(
-                    stringResource(R.string.aether_lab_exit_dial_mode),
-                    uiState.dialMode,
-                    { uiState.dialMode = it }
-                )
             }
             if (!isCoreAvailable) {
                 Text(
@@ -560,17 +567,45 @@ class ServerAetherActivity : BaseServerActivity() {
             AetherLogPanel(entries = log)
         }
 
-        if (showRenewConfirm) {
-            ConfirmDialog(
-                message = stringResource(R.string.aether_confirm_renew_key),
-                confirmText = stringResource(R.string.aether_action_renew_key),
-                onConfirm = {
-                    showRenewConfirm = false
-                    viewModel.renewIdentity(uiState.toProfileItem(initialConfig, listenPort))
+        // A key the profile, or its scan, needs is missing: get it first on the WARP keys page, or go on, and the core
+        // registers what it lacks on its own.
+        (keysCheck as? AetherKeysCheck.Missing)?.let { missing ->
+            AetherKeysMissingDialog(
+                anywayText = stringResource(if (missing.scan) R.string.aether_action_scan_anyway else R.string.aether_action_save_anyway),
+                onGetKeys = {
+                    viewModel.onKeysCheckHandled()
+                    startActivity(Intent(this@ServerAetherActivity, ServerAetherKeysActivity::class.java))
                 },
-                onDismiss = { showRenewConfirm = false }
+                onAnyway = {
+                    viewModel.onKeysCheckHandled()
+                    if (missing.scan) viewModel.scan(uiState.toProfileItem(initialConfig, listenPort), anyway = true) else saveChecked(uiState)
+                },
+                onDismiss = viewModel::onKeysCheckHandled
             )
         }
+    }
+
+    /**
+     * Saves the profile once it passes the editor's checks and the WARP keys it needs are there: the screen saves on
+     * [AetherKeysCheck.SaveReady], and asks first when a key is missing. Once a save has closed the editor, a tap on
+     * Save it still takes does nothing.
+     */
+    private fun requestSave(state: ServerUiState, listenPort: Int) {
+        if (isFinishing) return
+        if (!validateBasicConfig(state)) return
+        val config = state.toProfileItem(initialConfig, listenPort)
+        if (!validateCommonConfig(state, config)) return
+        if (!validateProtocolConfig(config)) return
+        viewModel.checkKeysBeforeSave(config)
+    }
+
+    /**
+     * Saves the profile after the check of its keys, unless a save has closed the editor already: the check of a
+     * second tap on Save, made while the first one was checked, can end after that save, and would save a new
+     * profile twice.
+     */
+    private fun saveChecked(state: ServerUiState) {
+        if (!isFinishing) saveServer(state)
     }
 
     override fun validateBasicConfig(state: ServerUiState): Boolean {
@@ -581,11 +616,17 @@ class ServerAetherActivity : BaseServerActivity() {
         return true
     }
 
-    override fun validateProtocolConfig(config: ProfileItem): Boolean {
-        if (!config.finalMask.isNullOrBlank() && JsonUtil.parseString(config.finalMask) == null) {
+    // The finalMask of an Aether profile is that of its exit-node: a bad one is named by its own label and checked as
+    // on the WARP keys page, before the check every profile has would name it the outbound's.
+    override fun validateCommonConfig(state: ServerUiState, config: ProfileItem): Boolean {
+        if (!AetherExit.takesFinalMask(config.finalMask)) {
             toast(R.string.aether_lab_exit_final_mask)
             return false
         }
+        return super.validateCommonConfig(state, config)
+    }
+
+    override fun validateProtocolConfig(config: ProfileItem): Boolean {
         // The core cannot listen where the local proxy of the app does, nor where the inbound it dials out
         // through does; Xray would get the port first.
         val takenPorts = SettingsManager.getLocalProxyPorts() + AetherCoreManager.secondarySocksPort
@@ -668,8 +709,36 @@ private fun AetherRegionField(value: String, regions: List<String>, onValueChang
     )
 }
 
+/**
+ * Says that a WARP key is missing and offers to get it first, on the WARP keys page, or to go on as [anywayText] says.
+ * Dismissed, it does neither.
+ */
 @Composable
-private fun ProgressMark() {
+private fun AetherKeysMissingDialog(anywayText: String, onGetKeys: () -> Unit, onAnyway: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        text = {
+            Text(
+                text = stringResource(R.string.aether_keys_missing),
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onAnyway) {
+                Text(anywayText)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onGetKeys) {
+                Text(stringResource(R.string.aether_action_renew_key))
+            }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
+    )
+}
+
+@Composable
+internal fun ProgressMark() {
     CircularProgressIndicator(
         modifier = Modifier
             .padding(end = 8.dp)
@@ -678,8 +747,9 @@ private fun ProgressMark() {
     )
 }
 
+/** The log of an Aether page: [entries], newest last, or [emptyText] while there are none, with a button that copies them. */
 @Composable
-private fun AetherLogPanel(entries: List<AetherLogEntry>) {
+internal fun AetherLogPanel(entries: List<AetherLogEntry>, @StringRes emptyText: Int = R.string.aether_log_empty) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
 
@@ -716,7 +786,7 @@ private fun AetherLogPanel(entries: List<AetherLogEntry>) {
         ) {
             if (entries.isEmpty()) {
                 Text(
-                    text = stringResource(R.string.aether_log_empty),
+                    text = stringResource(emptyText),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(12.dp)

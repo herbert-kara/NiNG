@@ -45,7 +45,7 @@ jobs:
       # The stable release aether's own release workflow built with; pinned so a new stable
       # release cannot change or break the release build on its own. Bump it together with
       # the aether submodule.
-      RUST_TOOLCHAIN: "1.98.1"
+      RUST_TOOLCHAIN: "1.99.0"
       # The Go line the Psiphon client's go.mod asks for, which also covers lyrebird's older one;
       # aether/psiphon-build.sh and aether/pt-build.sh pin the programs themselves. Bump it when a
       # bumped aether submodule pins a program that asks for a newer line.
@@ -70,11 +70,11 @@ jobs:
       run: |
         echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
           --channel=0 \
-          --install "ndk;29.0.14206865"
-        echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
+          --install "ndk;30.0.16248370"
+        echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> $GITHUB_ENV
         sed -i '10i\
         \
-            ndkVersion = "29.0.14206865"' ${{ github.workspace }}/V2rayNG/app/build.gradle.kts
+            ndkVersion = "30.0.16248370"' ${{ github.workspace }}/V2rayNG/app/build.gradle.kts
 
     - name: Restore cached libhevtun
       id: cache-libhevtun-restore

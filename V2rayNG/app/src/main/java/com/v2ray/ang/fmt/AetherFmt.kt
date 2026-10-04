@@ -6,6 +6,7 @@ import com.v2ray.ang.core.AetherCoreManager
 import com.v2ray.ang.dto.AetherEndpoint
 import com.v2ray.ang.dto.AetherRange
 import com.v2ray.ang.dto.entities.ProfileItem
+import com.v2ray.ang.enums.AetherFingerprint
 import com.v2ray.ang.enums.AetherIpVersion
 import com.v2ray.ang.enums.AetherObfuscation
 import com.v2ray.ang.enums.AetherProtocol
@@ -63,6 +64,7 @@ object AetherFmt : FmtBase() {
         // A value the core would not take is left out; the profile then follows the default.
         config.aetherEchDns = queryParam["ech_dns"]?.trim()?.takeIf { config.aetherEch == true && isEchDns(it) }
         config.aetherEchDomain = queryParam["ech_domain"]?.trim()?.takeIf { config.aetherEch == true && isEchDomain(it) }
+        config.aetherFingerprint = queryParam["fingerprint"]?.let { AetherFingerprint.fromString(it).type }
         config.aetherDns = queryParam["dns"]
         config.aetherExitLoc = queryParam["exit_loc"]
         // A link from before the Aether listen port was one setting for every profile may name a port of its own, which counts no more.
@@ -101,8 +103,16 @@ object AetherFmt : FmtBase() {
             "protocol" to protocol.type,
             "scan" to AetherScanMode.fromString(config.aetherScanMode).type,
         )
-        // Automatic obfuscation is the core's own choice per protocol; a link says nothing about it.
-        AetherObfuscation.fromString(config.aetherObfuscation).takeUnless { it == AetherObfuscation.AUTO }?.let { query["noize"] = it.type }
+        // Automatic obfuscation is the core's own choice per protocol, and MASQUE over HTTP/2 takes none; a link says nothing about either.
+        val overHttp2 = AetherCoreManager.masqueOverHttp2(
+            protocol,
+            AetherTransport.fromString(config.aetherTransport),
+            AetherTor.fromString(config.aetherTor),
+            AetherPsiphon.fromString(config.aetherPsiphon),
+        )
+        AetherObfuscation.fromString(config.aetherObfuscation)
+            .takeUnless { it == AetherObfuscation.AUTO || overHttp2 }
+            ?.let { query["noize"] = it.type }
         query["ip"] = AetherIpVersion.fromString(config.aetherIpVersion).type
         config.aetherDns?.takeIf { it.isNotBlank() }?.let { query["dns"] = it }
         config.aetherExitLoc?.takeIf { it.isNotBlank() }?.let { query["exit_loc"] = it }
@@ -115,11 +125,18 @@ object AetherFmt : FmtBase() {
                 AetherRange.parse(config.aetherFragmentDelay, AetherRange.FRAGMENT_DELAY)
                     ?.let { query["fragment_delay"] = it.toString() }
             }
-            if (config.aetherEch == true) {
+            // Only while ECH is in use, with a WARP tunnel, and only what the core would take: the resolver and the
+            // domain are kept while ECH is off, as written, and a link carries what runs.
+            val warpUsed = AetherPsiphon.fromString(config.aetherPsiphon) != AetherPsiphon.ONLY &&
+                AetherTor.fromString(config.aetherTor) != AetherTor.ONLY
+            if (config.aetherEch == true && warpUsed) {
                 query["ech"] = "1"
-                config.aetherEchDns?.takeIf { it.isNotBlank() }?.let { query["ech_dns"] = it }
-                config.aetherEchDomain?.takeIf { it.isNotBlank() }?.let { query["ech_domain"] = it }
+                config.aetherEchDns?.trim()?.takeIf { it.isNotEmpty() && isEchDns(it) }?.let { query["ech_dns"] = it }
+                config.aetherEchDomain?.trim()?.takeIf { it.isNotEmpty() && isEchDomain(it) }?.let { query["ech_domain"] = it }
             }
+            // Chrome's is the default and needs no word.
+            AetherFingerprint.fromString(config.aetherFingerprint).takeUnless { it == AetherFingerprint.CHROME }
+                ?.let { query["fingerprint"] = it.type }
         }
         if (protocol.twoHops) {
             AetherEndpoint.parse(config.aetherWiwOuter)?.let { query["outer"] = it.toString() }
@@ -210,10 +227,11 @@ object AetherFmt : FmtBase() {
     private val exitRule = Regex("!?[A-Z]{2}(,[A-Z]{2})*")
 
     /**
-     * Where the ECH key comes from, as the core reads it: the resolver and the domain, kept while ECH is on and
-     * left out when they are the defaults, so that a profile follows the defaults. They are refused only where the
-     * editor shows them, over MASQUE with a WARP tunnel; elsewhere one the core would not take is dropped, as
-     * nothing on screen could put it right.
+     * Where the ECH key comes from, as the core reads it: the resolver and the domain, kept as written whether ECH is
+     * on or off, as the WARP keys page keeps its own, and left out when they are the defaults, so that a profile
+     * follows the defaults. They are refused only while ECH is in use, over MASQUE with a WARP tunnel; one the core
+     * would not take waits there, out of use, to be put right when ECH is next turned on. None reaches the core
+     * then, nor a link, which carries them only while ECH is on.
      */
     private fun normalizeEch(config: ProfileItem): Problem? {
         val dns = config.aetherEchDns?.trim().orEmpty()
@@ -225,15 +243,15 @@ object AetherFmt : FmtBase() {
             AetherTor.fromString(config.aetherTor) != AetherTor.ONLY
         if (inUse && dns.isNotEmpty() && !isEchDns(dns)) return Problem.INVALID_ECH_DNS
         if (inUse && domain.isNotEmpty() && !isEchDomain(domain)) return Problem.INVALID_ECH_DOMAIN
-        config.aetherEchDns = dns.takeIf { ech && it != AppConfig.AETHER_ECH_DNS && isEchDns(it) }
-        config.aetherEchDomain = domain.takeIf { ech && it != AppConfig.AETHER_ECH_DOMAIN && isEchDomain(it) }
+        config.aetherEchDns = dns.takeUnless { it.isEmpty() || it == AppConfig.AETHER_ECH_DNS }
+        config.aetherEchDomain = domain.takeUnless { it.isEmpty() || it == AppConfig.AETHER_ECH_DOMAIN }
         return null
     }
 
     /**
      * Whether [value] names a resolver the core asks for the ECH key, as its --ech-dns takes it: udp:// or tcp:// and
      * an IP address, on port 53 unless one is given, or the https:// URL of a DNS-over-HTTPS server, on port 443
-     * unless it names one.
+     * unless it names one, with @address= and @sni= after it if need be, see [isDohEndpoint].
      */
     internal fun isEchDns(value: String): Boolean {
         // Quotes would not come back from the command line the editor shows, which is split into words.
@@ -241,7 +259,7 @@ object AetherFmt : FmtBase() {
         val scheme = value.substringBefore("://", "").lowercase(Locale.ROOT)
         val rest = value.substringAfter("://", "")
         return when (scheme) {
-            "https" -> rest.takeWhile { it !in "/?#" }.isNotEmpty()
+            "https" -> isDohEndpoint(rest)
             "udp", "tcp" -> rest.trimEnd('/').let { address ->
                 // As the core reads an address: ASCII digits only, and brackets around an IPv6 address alone.
                 address.all { it.code < 0x80 } &&
@@ -250,6 +268,31 @@ object AetherFmt : FmtBase() {
             }
             else -> false
         }
+    }
+
+    /**
+     * Whether [rest], what follows https://, names a DNS-over-HTTPS server as the core reads one: a URL with a host,
+     * then @address= an IP address or a domain name, where the connection goes on the URL's port, and @sni= a domain
+     * name, which the ClientHello names, each at most once and in either order. Left out, the connection goes to the
+     * URL's host and the ClientHello names it, or names nothing when it is an IP address.
+     */
+    private fun isDohEndpoint(rest: String): Boolean {
+        val pieces = rest.split('@')
+        if (pieces.first().takeWhile { it !in "/?#" }.isEmpty()) return false
+        val named = mutableSetOf<String>()
+        for (piece in pieces.drop(1)) {
+            if ('=' !in piece) return false
+            val name = piece.substringBefore('=').lowercase(Locale.ROOT)
+            val setting = piece.substringAfter('=')
+            val isAddress = AetherEndpoint.of(setting, "443") != null
+            val fits = when (name) {
+                "address" -> isAddress || isEchDomain(setting)
+                "sni" -> !isAddress && isEchDomain(setting)
+                else -> false
+            }
+            if (!fits || !named.add(name)) return false
+        }
+        return true
     }
 
     /**

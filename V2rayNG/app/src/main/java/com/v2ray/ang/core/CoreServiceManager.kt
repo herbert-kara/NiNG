@@ -7,7 +7,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.ConnectivityManager
-import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.system.OsConstants
 import androidx.core.content.ContextCompat
@@ -86,7 +85,7 @@ object CoreServiceManager {
             field = value
             val service = value?.get()?.getService()
             CoreNativeManager.initCoreEnv(service)
-            if (service != null && processFinder == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (service != null && processFinder == null) {
                 processFinder = XrayProcessFinder(service)
                 coreController.registerProcessFinder(processFinder)
             }
@@ -345,7 +344,7 @@ object CoreServiceManager {
                 AppConfig.TAG,
                 "StartCore-Manager: Aether core exited while running, stopping ${service.javaClass.simpleName}, guid=$guid"
             )
-            MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, service.getString(R.string.aether_core_stopped))
+            MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, service.getString(AetherCoreManager.stoppedMessage()))
             control.stopService()
         }
     }
@@ -402,7 +401,6 @@ object CoreServiceManager {
      * and root mode as well, not just behind the VPN interface.
      */
     private fun startNetworkMonitor(service: Service) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
         if (networkMonitor != null) return
 
         val connectivity = service.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
@@ -666,7 +664,6 @@ object CoreServiceManager {
         private val cm: ConnectivityManager? = context.getSystemService(ConnectivityManager::class.java)
 
         override fun findProcessByConnection(network: String, srcIP: String, srcPort: Long, destIP: String, destPort: Long): Long {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return -1L
             if (cm == null) return -1L
             val proto = when (network) {
                 "tcp" -> OsConstants.IPPROTO_TCP

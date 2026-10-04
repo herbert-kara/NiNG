@@ -1,26 +1,25 @@
 package com.v2ray.ang.ui.main
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 
 class MainTestRequestsTest {
     @Test
     fun onlyTheLatestCurrentRequestCanFinishOnce() {
         val requests = MainTestRequests()
         assertFalse(requests.isTesting)
-        assertNull(requests.completeCurrent(""))
+        assertFalse(requests.completeCurrent(""))
         val first = requests.beginCurrent()
         val second = requests.beginCurrent()
         assertNotEquals(first, second)
-        assertNull(requests.completeCurrent(first))
+        assertFalse(requests.completeCurrent(first))
         assertTrue(requests.isTesting)
-        assertNotNull(requests.completeCurrent(second))
-        assertNull(requests.completeCurrent(second))
+        assertTrue(requests.completeCurrent(second))
+        assertFalse(requests.completeCurrent(second))
         assertFalse(requests.isTesting)
     }
 
@@ -29,10 +28,10 @@ class MainTestRequestsTest {
         val requests = MainTestRequests()
         val stopped = requests.beginCurrent()
         requests.invalidateCurrent()
-        assertNull(requests.completeCurrent(stopped))
+        assertFalse(requests.completeCurrent(stopped))
         val restarted = requests.beginCurrent()
-        assertNull(requests.completeCurrent(stopped))
-        assertNotNull(requests.completeCurrent(restarted))
+        assertFalse(requests.completeCurrent(stopped))
+        assertTrue(requests.completeCurrent(restarted))
     }
 
     @Test
@@ -55,7 +54,7 @@ class MainTestRequestsTest {
         val requests = MainTestRequests()
         val bulk = requests.beginBulk("") // All servers is a valid group ID.
         val current = requests.beginCurrent()
-        assertNotNull(requests.completeCurrent(current))
+        assertTrue(requests.completeCurrent(current))
         assertTrue(requests.isTesting)
         assertEquals(bulk, requests.completeBulk(bulk.id))
         assertFalse(requests.isTesting)

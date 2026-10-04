@@ -32,6 +32,7 @@ import com.v2ray.ang.AppConfig.REALITY
 import com.v2ray.ang.AppConfig.TLS
 import com.v2ray.ang.R
 import com.v2ray.ang.core.EchOutbound
+import com.v2ray.ang.core.TlsSettingsCheck
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.enums.NetworkType
@@ -232,7 +233,7 @@ abstract class BaseServerActivity : BaseComponentActivity() {
                     keyboardType = KeyboardType.Number
                 )
             }
-            FormTextField(
+            FinalMaskField(
                 stringResource(R.string.server_lab_final_mask),
                 state.finalMask,
                 { state.finalMask = it }
@@ -314,7 +315,7 @@ abstract class BaseServerActivity : BaseComponentActivity() {
                     options.alpnOptions,
                     { state.alpn = it }
                 )
-                FormTextField(
+                CipherSuitesField(
                     stringResource(R.string.server_lab_cipher_suites),
                     state.cipherSuites,
                     { state.cipherSuites = it }
@@ -457,6 +458,16 @@ abstract class BaseServerActivity : BaseComponentActivity() {
         }
         if (echOutboundError != null) {
             toast(echOutboundError)
+            return false
+        }
+        // PattNG: TLS settings the Xray-core fork would not apply, or with which it would not connect
+        val tlsError = when (TlsSettingsCheck.validate(config)) {
+            null -> null
+            TlsSettingsCheck.Error.CIPHER_SUITES_NEED_UNSAFE -> R.string.toast_cipher_suites_need_unsafe
+            TlsSettingsCheck.Error.WEBSOCKET_ALPN_NOT_HTTP1 -> R.string.toast_websocket_alpn_http1_only
+        }
+        if (tlsError != null) {
+            toast(tlsError, long = true)
             return false
         }
         return true

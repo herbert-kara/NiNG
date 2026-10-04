@@ -5,10 +5,10 @@ import com.v2ray.ang.dto.V2rayConfig.OutboundBean
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.util.JsonUtil
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Test
 
 /**
  * Unit tests for CoreOutboundBuilder.applyDialMode: dialMode must land in
@@ -105,6 +105,29 @@ class CoreOutboundBuilderTest {
         CoreOutboundBuilder.populateTlsSettings(blank, echProfile(AppConfig.TLS, " "), null)
         assertNotNull(blank.tlsSettings)
         assertNull(blank.tlsSettings?.echOutbound)
+    }
+
+    @Test
+    fun test_populateTlsSettings_offersTheAlpnAsWrittenCommaSeparated() {
+        // TlsSettingsCheck reads alpn with alpnProtocols as well, to refuse what WebSocket and HTTPUpgrade cannot use.
+        val offered = mapOf(
+            " h2 , http/1.1," to listOf("h2", "http/1.1"),
+            "http/1.1" to listOf("http/1.1"),
+            "h3,,h2" to listOf("h3", "h2"),
+            // Only a comma parts two; Xray is offered what is between as one name.
+            "h2 http/1.1" to listOf("h2 http/1.1"),
+            " , " to null,
+            "" to null,
+            null to null,
+        )
+        for ((alpn, protocols) in offered) {
+            val streamSettings = OutboundBean.StreamSettingsBean()
+
+            CoreOutboundBuilder.populateTlsSettings(streamSettings, echProfile(AppConfig.TLS, " ").apply { this.alpn = alpn }, null)
+
+            assertEquals(protocols, streamSettings.tlsSettings?.alpn, "$alpn")
+            assertEquals(protocols.orEmpty(), CoreOutboundBuilder.alpnProtocols(alpn), "$alpn")
+        }
     }
 
     @Test

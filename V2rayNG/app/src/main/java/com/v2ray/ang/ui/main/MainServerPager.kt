@@ -462,7 +462,15 @@ private fun ServerListItem(
                 )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(row.typeDescription, style = MaterialTheme.typography.bodySmall, color = colorConfigType, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    row.typeDescription,
+                    modifier = Modifier.weight(1f, fill = false),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorConfigType,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 // One text, one colour, one line: the delay and its two qualifiers belong to the
                 // same measurement, and splitting them across the row would let a reader compare
                 // the delay of one server against the loss of another.
@@ -475,7 +483,7 @@ private fun ServerListItem(
                     style = MaterialTheme.typography.bodySmall,
                     color = if (row.testDelayMillis < 0L) colorPingRed else colorPing,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }

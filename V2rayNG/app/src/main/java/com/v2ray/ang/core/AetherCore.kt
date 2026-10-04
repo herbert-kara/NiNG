@@ -1,5 +1,6 @@
 package com.v2ray.ang.core
 
+import com.google.gson.JsonParser
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.AetherProtocol
@@ -89,12 +90,17 @@ data class AetherCore(val arguments: List<String>, val exit: AetherExit = Aether
          * in the app dials.
          */
         fun ofCommand(command: String): AetherCore? {
-            val words = words(command)
-            val arguments = if (words.firstOrNull()?.startsWith("-") == false) words.drop(1) else words
+            val arguments = argumentsOf(command)
             if (arguments.isEmpty()) return null
             val listener = AetherCoreManager.listenerFlagOf(arguments)
             if (listener !in arguments) return AetherCore(AetherCoreManager.withListener(arguments, listener, AetherCoreManager.socksPort))
             return AetherCore(arguments).takeIf { AetherCoreManager.portAfter(arguments, listener) != null }
+        }
+
+        /** The arguments of [command]: its [words], without a program name in front. */
+        internal fun argumentsOf(command: String): List<String> {
+            val words = words(command)
+            return if (words.firstOrNull()?.startsWith("-") == false) words.drop(1) else words
         }
 
         /** The words of a command line: split on whitespace, with single or double quotes keeping a word together. */
@@ -158,6 +164,17 @@ data class AetherExit(val finalMask: String? = null, val dialMode: String? = nul
 
         /** The exit-node of the core of [profile]. */
         fun of(profile: ProfileItem): AetherExit = AetherExit(profile.finalMask.nullIfBlank(), profile.dialMode.nullIfBlank())
+
+        /**
+         * Whether an exit-node takes [finalMask]: blank, or a JSON object, read by the parser JsonUtil uses but
+         * without the error JsonUtil logs for text that is not one, since a typing mistake is no failure. The Aether
+         * editor and the WARP keys page check theirs alike.
+         */
+        fun takesFinalMask(finalMask: String?): Boolean = finalMask.isNullOrBlank() || try {
+            JsonParser.parseString(finalMask).isJsonObject
+        } catch (_: RuntimeException) {
+            false
+        }
 
         /**
          * The exit-node of an Aether hop of a proxy chain that dials out through [hops]: the hops on its
