@@ -56,7 +56,7 @@ class ServerCountryLookupTest {
             "fe80::1", "ff02::1", "2001:db8::1", "2002::1", "3fff::1", "::ffff:10.0.0.1",
             "999.1.1.1", "127.1", "2130706433", "localhost", "router.local", "x.internal",
             "https://example.com", "user:password@example.com", "host/path", "", "[::1]").forEach {
-            assertNull(it, lookup.resolve(it))
+            assertNull(lookup.resolve(it))
         }
         assertEquals(0, dns)
         assertEquals(0, http)

@@ -96,7 +96,7 @@ class TlsSettingsCheckTest {
                 for (alpn in listOf("h2,http/1.1", "h2", "h3", "h3,h2,http/1.1", "h3,h2", "http/1.1,h2")) {
                     val imported = profile(fingerprint = fingerprint, network = network, alpn = alpn)
                     TlsSettingsCheck.fixImportedAlpn(imported)
-                    assertEquals(imported.alpn,"$network $fingerprint $alpn")
+                    assertEquals("http/1.1", imported.alpn)
                     assertNull(TlsSettingsCheck.validate(imported))
                 }
             }

@@ -14,7 +14,7 @@ class ProfileCountryTest {
         assertEquals("IR", ProfileCountry.fromLabel("ایران 01"))
         assertEquals("GB", ProfileCountry.fromLabel("UK-2"))
         listOf("fast connection", "in the cloud", "node42", "DEsign", "ZZ-1", "", "   ").forEach {
-            assertNull(it, ProfileCountry.fromLabel(it))
+            assertNull(ProfileCountry.fromLabel(it))
         }
     }
 
