@@ -54,15 +54,15 @@ class CountryDnsConcurrencyTest {
             val started = CountDownLatch(batch)
             repeat(batch) {
                 pool.execute {
-                    started.countDown()
                     val now = inFlight.incrementAndGet()
                     peak.updateAndGet { previous -> maxOf(previous, now) }
-                    release.await(3, TimeUnit.SECONDS)
+                    started.countDown()
+                    release.await(10, TimeUnit.SECONDS)
                     inFlight.decrementAndGet()
                 }
             }
-            assertTrue(started.await(3, TimeUnit.SECONDS))
-            assertEquals(batch,peak.get())
+            assertTrue(started.await(10, TimeUnit.SECONDS))
+            assertEquals(batch, peak.get())
         } finally {
             release.countDown()
             pool.shutdownNow()
