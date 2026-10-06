@@ -123,41 +123,48 @@ fun MainBottomBar(
                 )
             }
             FloatingActionButton(
-                onClick = {
-                    if (!isRunning) {
-                        scope.launch {
-                            rotationAnim.animateTo(
-                                targetValue = 720f,
-                                animationSpec = tween(durationMillis = 3000)
-                            )
-                        }
-                    }
-                    onAction(MainAction.ToggleService)
-                },
-                modifier = Modifier
-                    .navigationBarsPadding()
-                    .combinedClickable(
-                        // Tap is handled by the FAB's own onClick: the internal clickable is
-                        // dispatched first and would consume the event before this outer
-                        // handler saw it. Only the long-press lives here.
-                        onClick = {},
-                        onLongClick = { balancerMenu = true }
-                    ),
+                // Tap and long-press are both handled by combinedClickable on the child Box
+                // below; this onClick stays empty so nothing can double-fire.
+                onClick = {},
+                modifier = Modifier.navigationBarsPadding(),
                 containerColor = if (isRunning) colorFabActive
                 else if (isDarkTheme) colorFabInactiveDark
                 else colorFabInactiveLight
             ) {
-                Icon(
-                    painter = if (isRunning) painterResource(R.drawable.ic_stop_24dp)
-                    else painterResource(R.drawable.ic_play_24dp),
-                    contentDescription = stringResource(
-                        if (isRunning) R.string.acc_stop else R.string.acc_start
-                    ),
-                    tint = Color.White,
+                // Long-press lives on this child: hit-testing reaches children before the
+                // FAB's own clickable on the parent node, so a handler on the same node as
+                // that clickable never sees the event. A consumed long-press also cancels
+                // the parent's tap, so the menu opens without toggling.
+                Box(
                     modifier = Modifier
-                        .size(24.dp)
-                        .graphicsLayer { rotationZ = rotationAnim.value }
-                )
+                        .fillMaxSize()
+                        .combinedClickable(
+                            onClick = {
+                                if (!isRunning) {
+                                    scope.launch {
+                                        rotationAnim.animateTo(
+                                            targetValue = 720f,
+                                            animationSpec = tween(durationMillis = 3000)
+                                        )
+                                    }
+                                }
+                                onAction(MainAction.ToggleService)
+                            },
+                            onLongClick = { balancerMenu = true }
+                        )
+                ) {
+                    Icon(
+                        painter = if (isRunning) painterResource(R.drawable.ic_stop_24dp)
+                        else painterResource(R.drawable.ic_play_24dp),
+                        contentDescription = stringResource(
+                            if (isRunning) R.string.acc_stop else R.string.acc_start
+                        ),
+                        tint = Color.White,
+                        modifier = Modifier
+                            .size(24.dp)
+                            .graphicsLayer { rotationZ = rotationAnim.value }
+                    )
+                }
             }
         }
     }
