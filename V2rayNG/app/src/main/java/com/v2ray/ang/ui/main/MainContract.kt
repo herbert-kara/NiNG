@@ -72,5 +72,8 @@ sealed interface MainAction {
 
     data class ImportBatchConfig(val configText: String) : MainAction
 
+    /** Long-press on the connect button: strategy index into R.array.policy_group_type, null = off. */
+    data class SetBalancer(val typeIdx: Int?) : MainAction
+
     data object LocateHandled : MainAction
 }

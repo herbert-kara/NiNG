@@ -14,6 +14,7 @@ import com.v2ray.ang.dto.TestServiceMessage
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.dto.entities.ServersCache
 import com.v2ray.ang.dto.entities.SubscriptionCache
+import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.delay
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.matchesPattern
@@ -716,6 +717,7 @@ class MainViewModel(
             MainAction.ImportConfigLocal,
             is MainAction.ImportManually,
             MainAction.RestartService,
+            is MainAction.SetBalancer,
             MainAction.LocateSelectedServer,
             is MainAction.EditServer,
             is MainAction.ShareClipboard,
@@ -1196,6 +1198,70 @@ class MainViewModel(
 
     fun refreshSelectedGuid() {
         _uiState.update { it.copy(selectedGuid = dataSource.getSelectServer()) }
+    }
+
+    /**
+     * Applies a balancer choice from the connect button's long-press menu for the current
+     * subscription: selects (creating on first use) this subscription's policy-group profile
+     * with the strategy at [typeIdx] (an index into R.array.policy_group_type), or with
+     * [typeIdx] null restores the plain server the balancer profile had replaced.
+     * Returns true when the selection changed.
+     */
+    fun applyBalancer(typeIdx: Int?): Boolean {
+        val subId = uiState.value.selectedGroupId
+        val currentGuid = uiState.value.selectedGuid
+        val current = currentGuid?.let { dataSource.decodeServerConfig(it) }
+
+        if (typeIdx == null) {
+            if (current?.configType != EConfigType.POLICYGROUP) return false
+            val prev = MmkvManager.decodeSettingsString(AppConfig.PREF_BALANCER_PREV)
+                ?.takeIf { g ->
+                    dataSource.decodeServerConfig(g)?.let {
+                        it.configType != EConfigType.POLICYGROUP
+                    } == true
+                }
+                ?: dataSource.getServerGuidList(subId).firstOrNull { g ->
+                    dataSource.decodeServerConfig(g)?.let {
+                        it.configType != EConfigType.POLICYGROUP
+                    } == true
+                } ?: return false
+            updateSelectedGuid(prev)
+            reloadServerList()
+            return true
+        }
+
+        // Remember the plain server so "off" can come back to it.
+        if (currentGuid != null && current?.configType != EConfigType.POLICYGROUP) {
+            MmkvManager.encodeSettings(AppConfig.PREF_BALANCER_PREV, currentGuid)
+        }
+
+        val key = AppConfig.PREF_BALANCER_GUID + subId
+        val guid = MmkvManager.decodeSettingsString(key)?.takeIf { g ->
+            dataSource.decodeServerConfig(g)?.let {
+                it.configType == EConfigType.POLICYGROUP && it.policyGroupSubscriptionId == subId
+            } == true
+        } ?: MmkvManager.encodeServerConfig("", ProfileItem.create(EConfigType.POLICYGROUP).apply {
+            val groupName = uiState.value.groups.firstOrNull { it.id == subId }?.remarks.orEmpty()
+            remarks = if (groupName.isEmpty()) "Balancer" else "$groupName balancer"
+            policyGroupType = typeIdx.toString()
+            policyGroupSubscriptionId = subId
+            policyGroupTestOutbounds = true
+            subscriptionId = subId
+        }).also { MmkvManager.encodeSettings(key, it) }
+
+        var changed = false
+        val profile = dataSource.decodeServerConfig(guid)
+        if (profile != null && profile.policyGroupType != typeIdx.toString()) {
+            profile.policyGroupType = typeIdx.toString()
+            MmkvManager.encodeServerConfig(guid, profile)
+            changed = true
+        }
+        if (guid != currentGuid) {
+            updateSelectedGuid(guid)
+            reloadServerList()
+            changed = true
+        }
+        return changed
     }
 
     fun removeServerAndRefresh(guid: String) {

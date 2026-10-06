@@ -2,13 +2,16 @@ package com.v2ray.ang.ui.main
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -17,19 +20,25 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -41,6 +50,7 @@ import com.v2ray.ang.ui.compose.colorFabInactiveDark
 import com.v2ray.ang.ui.compose.colorFabInactiveLight
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MainBottomBar(
     displayText: String,
@@ -83,38 +93,69 @@ fun MainBottomBar(
                 )
             }
         }
-        FloatingActionButton(
-            onClick = {
-                if (!isRunning) {
-                    scope.launch {
-                        rotationAnim.animateTo(
-                            targetValue = 720f,
-                            animationSpec = tween(durationMillis = 3000)
-                        )
+        var balancerMenu by remember { mutableStateOf(false) }
+        Box(modifier = Modifier.align(Alignment.TopEnd).padding(end = 24.dp).offset(y = (-28).dp)) {
+            DropdownMenu(
+                expanded = balancerMenu,
+                onDismissRequest = { balancerMenu = false },
+            ) {
+                val strategyNames = stringArrayResource(R.array.policy_group_type)
+                DropdownMenuItem(
+                    text = { Text(strategyNames[3]) },
+                    onClick = {
+                        balancerMenu = false
+                        onAction(MainAction.SetBalancer(3))
                     }
-                }
-                onAction(MainAction.ToggleService)
-            },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(end = 24.dp)
-                .offset(y = (-28).dp)
-                .navigationBarsPadding(),
-            containerColor = if (isRunning) colorFabActive
-            else if (isDarkTheme) colorFabInactiveDark
-            else colorFabInactiveLight
-        ) {
-            Icon(
-                painter = if (isRunning) painterResource(R.drawable.ic_stop_24dp)
-                else painterResource(R.drawable.ic_play_24dp),
-                contentDescription = stringResource(
-                    if (isRunning) R.string.acc_stop else R.string.acc_start
-                ),
-                tint = Color.White,
+                )
+                DropdownMenuItem(
+                    text = { Text(strategyNames[0]) },
+                    onClick = {
+                        balancerMenu = false
+                        onAction(MainAction.SetBalancer(0))
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.balancer_off)) },
+                    onClick = {
+                        balancerMenu = false
+                        onAction(MainAction.SetBalancer(null))
+                    }
+                )
+            }
+            FloatingActionButton(
+                onClick = {},
                 modifier = Modifier
-                    .size(24.dp)
-                    .graphicsLayer { rotationZ = rotationAnim.value }
-            )
+                    .navigationBarsPadding()
+                    .combinedClickable(
+                        onClick = {
+                            if (!isRunning) {
+                                scope.launch {
+                                    rotationAnim.animateTo(
+                                        targetValue = 720f,
+                                        animationSpec = tween(durationMillis = 3000)
+                                    )
+                                }
+                            }
+                            onAction(MainAction.ToggleService)
+                        },
+                        onLongClick = { balancerMenu = true }
+                    ),
+                containerColor = if (isRunning) colorFabActive
+                else if (isDarkTheme) colorFabInactiveDark
+                else colorFabInactiveLight
+            ) {
+                Icon(
+                    painter = if (isRunning) painterResource(R.drawable.ic_stop_24dp)
+                    else painterResource(R.drawable.ic_play_24dp),
+                    contentDescription = stringResource(
+                        if (isRunning) R.string.acc_stop else R.string.acc_start
+                    ),
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .graphicsLayer { rotationZ = rotationAnim.value }
+                )
+            }
         }
     }
 }
