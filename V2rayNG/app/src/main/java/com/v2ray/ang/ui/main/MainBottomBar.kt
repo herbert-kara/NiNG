@@ -123,21 +123,24 @@ fun MainBottomBar(
                 )
             }
             FloatingActionButton(
-                onClick = {},
+                onClick = {
+                    if (!isRunning) {
+                        scope.launch {
+                            rotationAnim.animateTo(
+                                targetValue = 720f,
+                                animationSpec = tween(durationMillis = 3000)
+                            )
+                        }
+                    }
+                    onAction(MainAction.ToggleService)
+                },
                 modifier = Modifier
                     .navigationBarsPadding()
                     .combinedClickable(
-                        onClick = {
-                            if (!isRunning) {
-                                scope.launch {
-                                    rotationAnim.animateTo(
-                                        targetValue = 720f,
-                                        animationSpec = tween(durationMillis = 3000)
-                                    )
-                                }
-                            }
-                            onAction(MainAction.ToggleService)
-                        },
+                        // Tap is handled by the FAB's own onClick: the internal clickable is
+                        // dispatched first and would consume the event before this outer
+                        // handler saw it. Only the long-press lives here.
+                        onClick = {},
                         onLongClick = { balancerMenu = true }
                     ),
                 containerColor = if (isRunning) colorFabActive
