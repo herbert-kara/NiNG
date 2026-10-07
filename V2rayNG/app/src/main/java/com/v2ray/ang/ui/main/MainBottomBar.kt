@@ -135,9 +135,12 @@ fun MainBottomBar(
                 // FAB's own clickable on the parent node, so a handler on the same node as
                 // that clickable never sees the event. A consumed long-press also cancels
                 // the parent's tap, so the menu opens without toggling.
+                // Fixed 56dp (the FAB's own size), NOT fillMaxSize: material3 measures FAB
+                // content loosely, so fillMaxSize expands the FAB to the Scaffold's whole
+                // bottom-bar constraint and it paints over the entire screen.
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .size(56.dp)
                         .combinedClickable(
                             onClick = {
                                 if (!isRunning) {
