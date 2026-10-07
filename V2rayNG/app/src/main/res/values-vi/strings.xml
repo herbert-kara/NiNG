@@ -429,12 +429,6 @@
 
     <string name="import_subscription_success">Nhập gói đăng ký thành công!</string>
     <string name="import_subscription_failure">Nhập gói đăng ký không thành công!</string>
-    <string name="title_fragment_settings">Cài đặt phân mảnh (Fragment)</string>
-    <string name="title_pref_fragment_packets">Gói tin cần phân mảnh</string>
-    <string name="title_pref_fragment_length">Độ dài phân mảnh (tối thiểu-tối đa)</string>
-    <string name="title_pref_fragment_interval">Khoảng phân mảnh (tối thiểu-tối đa)</string>
-    <string name="title_pref_fragment_enabled">Bật phân mảnh</string>
-    <string name="title_pref_fragment_maxsplit">Số lần chia nhỏ tối đa</string>
     <string name="title_observatory_settings">Cài đặt giám sát kết nối (Observatory)</string>
     <string name="title_pref_observatory_least_ping_interval">Khoảng thời gian leastPing</string>
     <string name="title_pref_observatory_least_load_interval">Khoảng thời gian leastLoad</string>
@@ -464,7 +458,6 @@
     <string name="server_proxy_chain_member_unselected">Chọn một thành viên</string>
     <string name="server_proxy_chain_members_unselected">Vui lòng chọn thành viên cho từng hàng trong chuỗi</string>
     <string name="server_proxy_chain_members_insufficient">Không đủ thành viên</string>
-    <string name="server_proxy_chain_members_invalid">Thành viên chuỗi không hợp lệ: %1$s</string>
 
     <!-- BackupActivity -->
     <string name="title_configuration_backup_restore">Sao lưu &amp; khôi phục</string>
@@ -586,12 +579,22 @@
     <string name="aether_lab_obfuscation">Làm rối</string>
     <string name="aether_lab_ip_version">Phiên bản IP</string>
     <string name="aether_lab_exit_final_mask">JSON thô của finalMask cho exit-node, định dạng: { FinalMaskObject }</string>
+    <string name="aether_exit_node_freedom">freedom (mặc định)</string>
+    <string name="label_numbered">%1$s (%2$d)</string>
+    <string name="aether_hint_exit_node">Lõi kết nối ra ngoài qua outbound của hồ sơ này, như qua một chặng của chuỗi proxy; finalMask và dialMode bên dưới chỉ dùng cho freedom</string>
+    <string name="aether_exit_node_unusable">Hồ sơ exit-node \"%1$s\" không tạo được outbound; hãy chọn hồ sơ khác, hoặc freedom</string>
+    <string name="aether_exit_node_ech_unusable">Không dùng được echOutbound của hồ sơ exit-node \"%1$s\"; hãy sửa nó trong hồ sơ đó, hoặc chọn hồ sơ khác, hoặc freedom</string>
+    <string name="toast_profile_name_not_found">Không tìm thấy hồ sơ nào tên \"%1$s\"</string>
+    <string name="toast_profile_name_duplicate">Tìm thấy hai hồ sơ cùng tên \"%1$s\"; hãy đổi tên một hồ sơ</string>
+    <string name="toast_profile_no_server">Hồ sơ \"%1$s\" không có địa chỉ máy chủ, nên chuỗi proxy không thể đi qua nó</string>
+    <string name="aether_keys_hint_fragment">Gửi ClientHello của các yêu cầu tới WARP API thành từng mảnh, cho các mạng lọc tên của API</string>
     <string name="aether_lab_fragment">Phân mảnh ClientHello</string>
     <string name="aether_lab_fragment_size">Kích thước mảnh (byte)</string>
     <string name="aether_lab_fragment_delay">Độ trễ giữa các mảnh (ms)</string>
     <string name="aether_lab_wiw_outer">Chặng ngoài</string>
     <string name="aether_lab_wiw_inner">Chặng trong</string>
     <string name="aether_hint_endpoint">Để trống để quét</string>
+    <string name="aether_hint_gool_peer">Để trống để dùng endpoint do WARP cấp</string>
     <string name="aether_action_scan">Tìm máy chủ</string>
     <string name="aether_action_scanning">Đang quét…</string>
     <string name="aether_scan_success">Đã tìm thấy máy chủ</string>
@@ -674,15 +677,17 @@
     <string name="aether_log_wireguard_inner_key_missing">Khóa chặng trong WireGuard: chưa đăng ký; sẽ được đăng ký ở lần quét hoặc kết nối đầu tiên</string>
     <string name="aether_log_masque_inner_key_ready">Khóa chặng trong MASQUE: thiết bị %1$s, IPv4 %2$s, IPv6 %3$s</string>
     <string name="aether_log_masque_inner_key_missing">Khóa chặng trong MASQUE: chưa đăng ký; sẽ được đăng ký ở lần quét hoặc kết nối đầu tiên</string>
+    <string name="aether_log_gool_key_ready">Khóa WireGuard over MASQUE: thiết bị %1$s, IPv4 %2$s, IPv6 %3$s</string>
+    <string name="aether_log_gool_key_missing">Khóa WireGuard over MASQUE: chưa đăng ký; sẽ được đăng ký ở lần quét hoặc kết nối đầu tiên</string>
     <string name="aether_renew_blocked">Hãy ngắt kết nối Aether trước khi lấy các khóa này; kết nối hiện tại đang dùng chúng</string>
     <string name="aether_action_get_keys">Lấy khóa WARP mới</string>
     <string name="aether_keys_lab_kind">Lấy khóa mới cho</string>
     <string name="aether_keys_kind_all">Tất cả</string>
-    <string name="aether_keys_lab_enroll_address">Địa chỉ yêu cầu</string>
+    <string name="aether_keys_lab_enroll_address">Địa chỉ API</string>
     <string name="aether_keys_hint_ech">Ẩn tên máy chủ trong các yêu cầu tới WARP API; không có khóa ECH dùng được thì không yêu cầu khóa WARP nào</string>
     <string name="aether_lab_fingerprint">Fingerprint</string>
-    <string name="aether_keys_invalid_enroll_address">Địa chỉ yêu cầu phải là địa chỉ IP hoặc tên miền, có hoặc không có cổng, ví dụ 188.114.97.6:443 hoặc [2606:4700::1]:8443</string>
-    <string name="aether_keys_invalid_command">Lệnh phải đăng ký khóa: --register theo sau là all, wg, masque, gool hoặc mim</string>
+    <string name="aether_keys_invalid_enroll_address">Địa chỉ API phải là địa chỉ IP hoặc tên miền, có hoặc không có cổng, ví dụ 188.114.97.6:443 hoặc [2606:4700::1]:8443</string>
+    <string name="aether_keys_invalid_command">Lệnh phải đăng ký khóa: --register theo sau là all, wg, masque, mim, gool-classic (WARP-in-WARP) hoặc gool (WireGuard over MASQUE)</string>
     <string name="aether_keys_log_empty">Đầu ra của lõi và các khóa WARP sẽ hiển thị ở đây</string>
     <string name="aether_scan_blocked">Hãy ngắt kết nối Aether trước khi quét; việc quét sẽ mở một đường hầm thứ hai bằng khóa của kết nối hiện tại</string>
     <string name="aether_keys_missing">Bạn chưa có khóa WARP cần thiết; hãy lấy khóa trước</string>

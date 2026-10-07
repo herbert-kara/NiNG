@@ -12,6 +12,7 @@ import com.v2ray.ang.AppConfig.TAG_DIRECT
 import com.v2ray.ang.AppConfig.VPN
 import com.v2ray.ang.core.AetherCoreManager
 import com.v2ray.ang.core.PsiphonServerList
+import com.v2ray.ang.dto.ByName
 import com.v2ray.ang.dto.V2rayConfig
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.dto.entities.RulesetItem
@@ -112,15 +113,18 @@ object SettingsManager {
      * @param rulesetList The list of rulesets.
      */
     private fun resetRoutingRulesetsCommon(rulesetList: MutableList<RulesetItem>) {
-        val rulesetNew: MutableList<RulesetItem> = mutableListOf()
-        MmkvManager.decodeRoutingRulesets()?.forEach { key ->
-            if (key.locked == true) {
-                rulesetNew.add(key)
-            }
-        }
+        MmkvManager.encodeRoutingRulesets(rulesetsAfterImport(MmkvManager.decodeRoutingRulesets(), rulesetList))
+    }
 
-        rulesetNew.addAll(rulesetList)
-        MmkvManager.encodeRoutingRulesets(rulesetNew)
+    /**
+     * The rulesets an import of [imported] leaves: the locked ones of [stored] first, kept as they are, then [imported].
+     * PattNG: but for the copy of a locked one, which an export of it brings back with its id: the routing list tells its
+     * rules apart by their ids, and two with one id would make it fail to show.
+     */
+    internal fun rulesetsAfterImport(stored: List<RulesetItem>?, imported: List<RulesetItem>): MutableList<RulesetItem> {
+        val locked = stored.orEmpty().filter { it.locked == true }
+        val lockedIds = locked.map { it.id }.filterTo(HashSet()) { it.isNotEmpty() }
+        return (locked + imported.filter { it.id !in lockedIds }).toMutableList()
     }
 
     /**
@@ -216,6 +220,14 @@ object SettingsManager {
             .mapNotNull { guid -> decodeServerConfig(guid) }
             .firstOrNull { it.remarks == remarks }
     }
+
+    /**
+     * PattNG: what [remarks] finds among the profiles [takes] accepts, see [ByName]. Unlike [getServerViaRemarks],
+     * which takes the first profile of any kind, it tells a name no profile has from one several have, as the hops
+     * of a proxy chain and the exit-node of an Aether core are named.
+     */
+    fun findServerViaRemarks(remarks: String?, takes: (ProfileItem) -> Boolean): ByName<ProfileItem> =
+        ByName.find(remarks, decodeAllServerList().asSequence().mapNotNull { decodeServerConfig(it) }.filter(takes)) { it.remarks }
 
     /**
      * Collects non-empty profile remarks while excluding specific config types.
@@ -511,9 +523,6 @@ object SettingsManager {
         ensureDefaultValue(AppConfig.PREF_HEV_TUNNEL_RW_TIMEOUT, AppConfig.HEVTUN_RW_TIMEOUT)
         ensureDefaultValue(AppConfig.PREF_MUX_CONCURRENCY, "8")
         ensureDefaultValue(AppConfig.PREF_MUX_XUDP_CONCURRENCY, AppConfig.DEFAULT_MUX_XUDP_CONCURRENCY)
-        ensureDefaultValue(AppConfig.PREF_FRAGMENT_LENGTH, "50-100")
-        ensureDefaultValue(AppConfig.PREF_FRAGMENT_INTERVAL, "10-20")
-        ensureDefaultValue(AppConfig.PREF_FRAGMENT_MAXSPLIT, "10")
         ensureDefaultValue(AppConfig.PREF_OBSERVATORY_LEAST_PING_INTERVAL, AppConfig.OBSERVATORY_LEAST_PING_INTERVAL)
         ensureDefaultValue(AppConfig.PREF_OBSERVATORY_LEAST_LOAD_INTERVAL, AppConfig.OBSERVATORY_LEAST_LOAD_INTERVAL)
         ensureDefaultValue(AppConfig.PREF_OBSERVATORY_LEAST_LOAD_METHOD, AppConfig.OBSERVATORY_LEAST_LOAD_METHOD)
