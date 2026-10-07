@@ -12,6 +12,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.dto.entities.ProfileItem
+import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.delay
 import com.v2ray.ang.extension.toSpeedString
 import com.v2ray.ang.helper.NotificationHelper
@@ -39,6 +40,17 @@ object NotificationManager {
     private var statusLine: String? = null
     private var lastContentText: String? = null
 
+    /** Member outbounds of the main balancer, tagged proxy-proxy-<n>-<remarks>. */
+    private const val MEMBER_TAG_PREFIX = "${AppConfig.TAG_PROXY}-${AppConfig.TAG_PROXY}-"
+
+    private var speedEnabled = false
+
+    /** The running profile balances rather than dials itself, so it earns its own icon and line. */
+    private var isBalancer = false
+
+    /** The member the balancer sent traffic through in the last query window. */
+    private var memberLine: String? = null
+
     /**
      * Shows a line above the traffic text while the running profile cannot carry traffic yet;
      * pass null once it can. The Aether warm-up uses it, since Xray is up before the tunnel
@@ -54,7 +66,7 @@ object NotificationManager {
     }
 
     private fun composeContentText(): String? =
-        listOfNotNull(statusLine, lastContentText?.takeIf { it.isNotEmpty() })
+        listOfNotNull(statusLine, memberLine, lastContentText?.takeIf { it.isNotEmpty() })
             .joinToString("\n")
             .ifEmpty { null }
 
@@ -63,7 +75,9 @@ object NotificationManager {
      * @param currentConfig The current profile configuration.
      */
     fun startSpeedNotification() {
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_SPEED_ENABLED) != true) return
+        speedEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_SPEED_ENABLED) == true
+        // A balancer queries even without the speed display: the counters are what names its member.
+        if (!speedEnabled && !isBalancer) return
         if (speedNotificationJob != null || CoreServiceManager.isRunning() == false) return
 
         var lastZeroSpeed = false
@@ -83,6 +97,8 @@ object NotificationManager {
     fun showNotification(currentConfig: ProfileItem?) {
         val service = getService() ?: return
 
+        isBalancer = currentConfig?.configType == EConfigType.POLICYGROUP
+        memberLine = null
         // Reset last query time to avoid querying stats too soon after showing the notification
         lastQueryTime = System.currentTimeMillis()
         lastContentText = null
@@ -105,7 +121,9 @@ object NotificationManager {
         val channelId = createNotificationChannel()
 
         mBuilder = NotificationCompat.Builder(service, channelId)
-            .setSmallIcon(R.drawable.ic_stat_name)
+            .setSmallIcon(
+                if (isBalancer) R.drawable.ic_routing_24dp else R.drawable.ic_stat_name
+            )
             .setContentTitle(currentConfig?.remarks ?: service.getString(R.string.app_name))
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
@@ -155,6 +173,7 @@ object NotificationManager {
         mBuilder = null
         statusLine = null
         lastContentText = null
+        memberLine = null
         mNotificationManager = null
     }
 
@@ -198,12 +217,13 @@ object NotificationManager {
     private fun updateNotification(contentText: String?, proxyTraffic: Long, directTraffic: Long) {
         // Taken once: the speed job runs on its own thread, and a stop clears the builder meanwhile.
         val builder = mBuilder ?: return
-        if (proxyTraffic < NOTIFICATION_ICON_THRESHOLD && directTraffic < NOTIFICATION_ICON_THRESHOLD) {
-            builder.setSmallIcon(R.drawable.ic_stat_name)
-        } else if (proxyTraffic > directTraffic) {
-            builder.setSmallIcon(R.drawable.ic_stat_proxy)
-        } else {
-            builder.setSmallIcon(R.drawable.ic_stat_direct)
+        when {
+            // A balancer keeps its own icon whatever the byte counts: it says how the exit was chosen.
+            isBalancer -> builder.setSmallIcon(R.drawable.ic_routing_24dp)
+            proxyTraffic < NOTIFICATION_ICON_THRESHOLD && directTraffic < NOTIFICATION_ICON_THRESHOLD ->
+                builder.setSmallIcon(R.drawable.ic_stat_name)
+            proxyTraffic > directTraffic -> builder.setSmallIcon(R.drawable.ic_stat_proxy)
+            else -> builder.setSmallIcon(R.drawable.ic_stat_direct)
         }
         lastContentText = contentText
         val content = composeContentText()
@@ -263,6 +283,7 @@ object NotificationManager {
         var proxyDownlink = 0L
         var directUplink = 0L
         var directDownlink = 0L
+        val memberTraffic = HashMap<String, Long>()
 
         CoreServiceManager.queryAllOutboundTrafficStats().forEach { stat ->
             when {
@@ -278,6 +299,9 @@ object NotificationManager {
 
                 // Accumulate stats for all proxy outbounds (including custom subscription tags)
                 stat.tag != AppConfig.TAG_BLOCKED -> {
+                    if (stat.tag.startsWith(MEMBER_TAG_PREFIX)) {
+                        memberTraffic.merge(stat.tag, stat.value, Long::plus)
+                    }
                     when (stat.direction) {
                         AppConfig.UPLINK -> proxyUplink += stat.value
                         AppConfig.DOWNLINK -> proxyDownlink += stat.value
@@ -289,7 +313,23 @@ object NotificationManager {
         val proxyTotal = proxyUplink + proxyDownlink
         val directTotal = directUplink + directDownlink
         val zeroSpeed = proxyTotal + directTotal == 0L
-        if (!zeroSpeed || !lastZeroSpeed) {
+
+        // The member that carried the traffic since the last query. The last one is kept while the
+        // link is idle, so the line names a server rather than blinking out between requests.
+        var memberChanged = false
+        if (isBalancer) {
+            val active = memberTraffic.maxByOrNull { it.value }?.takeIf { it.value > 0L }?.key
+            if (active != null) {
+                val line = "→ ${memberName(active)}"
+                if (line != memberLine) {
+                    memberLine = line
+                    memberChanged = true
+                }
+            }
+        }
+
+        val wantContent = speedEnabled && (!zeroSpeed || !lastZeroSpeed)
+        if (wantContent) {
             val text = StringBuilder()
             appendSpeedString(
                 text, AppConfig.TAG_PROXY,
@@ -303,10 +343,15 @@ object NotificationManager {
                 directDownlink / sinceLastQueryInSeconds
             )
             updateNotification(text.toString(), proxyTotal, directTotal)
+        } else if (memberChanged) {
+            updateNotification(lastContentText, proxyTotal, directTotal)
         }
         lastQueryTime = queryTime
         return zeroSpeed
     }
+
+    /** The profile name a member tag `proxy-proxy-<n>-<remarks>` carries. */
+    private fun memberName(tag: String) = tag.removePrefix(MEMBER_TAG_PREFIX).substringAfter('-')
 
     /**
      * Gets the service instance.

@@ -1050,10 +1050,13 @@ object CoreConfigManager {
     }
 
     /**
-     * Remove speed-test runtime sections when the feature is disabled.
+     * Remove speed-test runtime sections when the feature is disabled. A balancer keeps them:
+     * which member it routes through is read from these same counters.
      */
     private fun applySpeedDisabled(v2rayConfig: V2rayConfig) {
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_SPEED_ENABLED) != true) {
+        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_SPEED_ENABLED) != true
+            && v2rayConfig.routing.balancers.isNullOrEmpty()
+        ) {
             v2rayConfig.stats = null
             v2rayConfig.policy?.system = null
         }
