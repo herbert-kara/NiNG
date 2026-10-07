@@ -22,7 +22,8 @@ fun EditorOutcomeEffect(
     val outcome by viewModel.outcome.collectAsStateWithLifecycle()
     val context = LocalContext.current
     LaunchedEffect(outcome) {
-        when (val result = outcome ?: return@LaunchedEffect) {
+        val result = outcome ?: return@LaunchedEffect
+        when (result) {
             is EditorOutcome.Refused -> context.toast(
                 if (result.args.isEmpty()) context.getString(result.message)
                 else context.getString(result.message, *result.args.toTypedArray())
