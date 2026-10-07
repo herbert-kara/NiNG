@@ -7,8 +7,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.drawable.Icon
 import androidx.core.app.NotificationCompat
-import androidx.core.graphics.drawable.IconCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreServiceManager
@@ -122,9 +122,10 @@ object NotificationManager {
         val channelId = createNotificationChannel()
 
         // MIUI draws the round avatar in the shade from the app icon, so the small icon alone
-        // never shows there. The large icon is what the shade actually renders as `right_icon`.
-        val shadeIcon: IconCompat? =
-            if (isBalancer) IconCompat.createWithResource(service, R.drawable.ic_routing_24dp) else null
+        // never shows there. The large icon is what the shade actually renders.
+        // (minSdk 29, so framework Icon is always available.)
+        val shadeIcon: Icon? =
+            if (isBalancer) Icon.createWithResource(service, R.drawable.ic_routing_24dp) else null
 
         mBuilder = NotificationCompat.Builder(service, channelId)
             .setSmallIcon(
