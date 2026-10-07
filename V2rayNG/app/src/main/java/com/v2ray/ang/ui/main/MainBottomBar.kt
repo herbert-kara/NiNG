@@ -154,7 +154,8 @@ fun MainBottomBar(
                                 onAction(MainAction.ToggleService)
                             },
                             onLongClick = { balancerMenu = true }
-                        )
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         painter = if (isRunning) painterResource(R.drawable.ic_stop_24dp)
