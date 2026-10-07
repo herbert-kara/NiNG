@@ -119,6 +119,7 @@ class ServerAetherActivity : BaseServerActivity() {
         val log by viewModel.log.collectAsStateWithLifecycle()
         val listenPort by viewModel.listenPort.collectAsStateWithLifecycle()
         val keysCheck by viewModel.keysCheck.collectAsStateWithLifecycle()
+        val exitNodes by viewModel.exitNodes.collectAsStateWithLifecycle()
         // Folded away unless one of its settings holds a value, so a profile that set one shows it at once.
         var showOther by rememberSaveable { mutableStateOf(uiState.hasOtherAetherSettings) }
         val isScanning = scanState == AetherScanState.Scanning
@@ -164,9 +165,18 @@ class ServerAetherActivity : BaseServerActivity() {
         }
 
         LaunchedEffect(keysCheck) {
-            if (keysCheck == AetherKeysCheck.SaveReady) {
-                viewModel.onKeysCheckHandled()
-                saveChecked(uiState)
+            when (val check = keysCheck) {
+                is AetherKeysCheck.SaveReady -> {
+                    viewModel.onKeysCheckHandled()
+                    saveChecked(uiState, check.profile, listenPort)
+                }
+
+                is AetherKeysCheck.Refused -> {
+                    viewModel.onKeysCheckHandled()
+                    toast(getString(check.message, *check.args.toTypedArray()))
+                }
+
+                is AetherKeysCheck.Missing, null -> Unit
             }
         }
 
@@ -282,16 +292,25 @@ class ServerAetherActivity : BaseServerActivity() {
                     )
                 }
             }
-            // Set on the exit-node, where what the core sends leaves Xray, as an ordinary profile sets them on its outbound.
+            // The exit-node, where what the core sends leaves Xray: freedom, with the finalMask and the dialMode below set on
+            // it as an ordinary profile sets them on its outbound, or a profile's own outbound, which leaves those out of use.
+            ExitNodeField(
+                value = uiState.aetherExitNode,
+                nodes = exitNodes,
+                onValueChange = { uiState.aetherExitNode = it }
+            )
+            val freedom = uiState.aetherExitNode.isBlank()
             FinalMaskField(
                 stringResource(R.string.aether_lab_exit_final_mask),
                 uiState.finalMask,
-                { uiState.finalMask = it }
+                { uiState.finalMask = it },
+                enabled = freedom
             )
             FormTextField(
                 stringResource(R.string.aether_lab_exit_dial_mode),
                 uiState.dialMode,
-                { uiState.dialMode = it }
+                { uiState.dialMode = it },
+                enabled = freedom
             )
             AetherDropdownField(
                 label = R.string.aether_lab_psiphon,
@@ -462,7 +481,10 @@ class ServerAetherActivity : BaseServerActivity() {
                         stringResource(R.string.aether_lab_wiw_inner),
                         uiState.aetherWiwInner,
                         { uiState.aetherWiwInner = it },
-                        placeholder = stringResource(R.string.aether_hint_endpoint)
+                        // No scan looks for the WireGuard endpoint inside the MASQUE tunnel; blank, it is the one WARP assigns.
+                        placeholder = stringResource(
+                            if (protocol == AetherProtocol.WG_OVER_MASQUE) R.string.aether_hint_gool_peer else R.string.aether_hint_endpoint
+                        )
                     )
                 } else {
                     FormTextField(
@@ -578,7 +600,7 @@ class ServerAetherActivity : BaseServerActivity() {
                 },
                 onAnyway = {
                     viewModel.onKeysCheckHandled()
-                    if (missing.scan) viewModel.scan(uiState.toProfileItem(initialConfig, listenPort), anyway = true) else saveChecked(uiState)
+                    if (missing.scan) scanChecked(uiState, missing.profile, listenPort) else saveChecked(uiState, missing.profile, listenPort)
                 },
                 onDismiss = viewModel::onKeysCheckHandled
             )
@@ -593,19 +615,32 @@ class ServerAetherActivity : BaseServerActivity() {
     private fun requestSave(state: ServerUiState, listenPort: Int) {
         if (isFinishing) return
         if (!validateBasicConfig(state)) return
-        val config = state.toProfileItem(initialConfig, listenPort)
+        // PattNG: the checks normalize the profile in place, so they get a copy: the outcome carries the profile as the
+        // screen holds it, for the screen to tell whether it holds that one still, see saveChecked.
+        val held = state.toProfileItem(initialConfig, listenPort)
+        val config = held.copy()
         if (!validateCommonConfig(state, config)) return
         if (!validateProtocolConfig(config)) return
-        viewModel.checkKeysBeforeSave(config)
+        viewModel.checkKeysBeforeSave(config, held)
     }
 
     /**
-     * Saves the profile after the check of its keys, unless a save has closed the editor already: the check of a
-     * second tap on Save, made while the first one was checked, can end after that save, and would save a new
-     * profile twice.
+     * Saves the profile after the check of its keys, unless a save has closed the editor already. PattNG: the check was
+     * made on [checked], the profile the screen held at the tap; one edited while the check ran is checked in its turn,
+     * rather than saved without its own check.
      */
-    private fun saveChecked(state: ServerUiState) {
-        if (!isFinishing) saveServer(state)
+    private fun saveChecked(state: ServerUiState, checked: ProfileItem, listenPort: Int) {
+        if (isFinishing) return
+        if (holdsChecked(state.toProfileItem(initialConfig, listenPort), checked)) saveServer(state) else requestSave(state, listenPort)
+    }
+
+    /**
+     * Scans although a key [checked] needs is missing, as asked, unless the screen holds another profile by now, edited
+     * while the check ran: that one is checked in its turn.
+     */
+    private fun scanChecked(state: ServerUiState, checked: ProfileItem, listenPort: Int) {
+        val current = state.toProfileItem(initialConfig, listenPort)
+        viewModel.scan(current, anyway = holdsChecked(current, checked))
     }
 
     override fun validateBasicConfig(state: ServerUiState): Boolean {
@@ -617,7 +652,9 @@ class ServerAetherActivity : BaseServerActivity() {
     }
 
     // The finalMask of an Aether profile is that of its exit-node: a bad one is named by its own label and checked as
-    // on the WARP keys page, before the check every profile has would name it the outbound's.
+    // on the WARP keys page, before the check every profile has would name it the outbound's. With a profile as the
+    // exit-node it is out of use, but a broken one is refused all the same: it would be kept for freedom, and a link
+    // of the profile, which carries no exit-node, would hand it on.
     override fun validateCommonConfig(state: ServerUiState, config: ProfileItem): Boolean {
         if (!AetherExit.takesFinalMask(config.finalMask)) {
             toast(R.string.aether_lab_exit_final_mask)
@@ -626,6 +663,7 @@ class ServerAetherActivity : BaseServerActivity() {
         return super.validateCommonConfig(state, config)
     }
 
+    // The profile chosen as the exit-node is looked up when the keys are checked, see ServerAetherViewModel.checkKeysBeforeSave.
     override fun validateProtocolConfig(config: ProfileItem): Boolean {
         // The core cannot listen where the local proxy of the app does, nor where the inbound it dials out
         // through does; Xray would get the port first.
@@ -656,7 +694,8 @@ class ServerAetherActivity : BaseServerActivity() {
     private fun applyScanResult(state: ServerUiState, result: AetherScanResult) {
         if (AetherProtocol.fromString(state.aetherProtocol).twoHops) {
             state.aetherWiwOuter = result.endpoint.toString()
-            state.aetherWiwInner = result.innerHop?.toString().orEmpty()
+            // WireGuard over MASQUE finds its gateway alone, and keeps the WireGuard endpoint it scanned with.
+            result.innerHop?.let { state.aetherWiwInner = it.toString() }
         } else {
             state.address = result.endpoint.host
             state.port = result.endpoint.port.toString()

@@ -1,6 +1,7 @@
 package com.v2ray.ang.ui.server
 
 import android.os.Bundle
+import androidx.activity.viewModels
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -36,16 +37,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
-import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.moveItem
-import com.v2ray.ang.extension.toast
-import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.ui.base.BaseComponentActivity
+import com.v2ray.ang.ui.base.EditorOutcomeEffect
 import com.v2ray.ang.ui.compose.AppTopBar
 import com.v2ray.ang.ui.compose.DeleteConfirmDialog
 import com.v2ray.ang.ui.compose.FormDropdownField
@@ -70,6 +71,13 @@ class ServerProxyChainActivity : BaseComponentActivity() {
     private lateinit var initialRemarks: String
     private lateinit var initialMembers: List<String>
 
+    /** PattNG: the save, which outlives this activity when it is recreated, see [ServerProxyChainViewModel]. */
+    private val viewModel: ServerProxyChainViewModel by viewModels {
+        viewModelFactory {
+            initializer { ServerProxyChainViewModel(application, ProfileEditorRepository(), editGuid, subscriptionId) }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -78,11 +86,27 @@ class ServerProxyChainActivity : BaseComponentActivity() {
         )
         val config = MmkvManager.decodeServerConfig(editGuid)
         initialRemarks = config?.remarks ?: ""
-        initialMembers = config?.proxyChainProfiles?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: listOf("", "")
+        initialMembers = config?.proxyChainProfiles?.let { text -> ProfileItem.proxyChainMembersOf(text).map { it.trim() }.filter { it.isNotEmpty() } } ?: listOf("", "")
     }
 
     @Composable
     override fun ScreenContent() {
+        EditorOutcomeEffect(
+            viewModel = viewModel,
+            onSaved = { guid ->
+                ProfileEditorResult.run {
+                    finishSaved(
+                        guid = guid,
+                        restartService = isRunning
+                    )
+                }
+            },
+            onDeleted = {
+                ProfileEditorResult.run {
+                    finishDeleted(editGuid)
+                }
+            }
+        )
         ProxyChainScreen(
             editGuid = editGuid,
             isRunning = isRunning,
@@ -90,106 +114,18 @@ class ServerProxyChainActivity : BaseComponentActivity() {
             initialMembers = initialMembers,
             allRemarks = allRemarks,
             onBackClick = { finish() },
-            onSave = { remarks, members -> saveServer(remarks, members) },
-            onDelete = { deleteServer() }
+            onSave = { remarks, members -> viewModel.save(remarks, members) },
+            onDelete = { viewModel.delete() }
         )
     }
 
-    private fun saveServer(
-        remarks: String,
-        members: List<String>
-    ): Boolean {
-        if (remarks.isBlank()) {
-            return false
-        }
-
-        val chainMembers = members
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-
-        if (chainMembers.size != members.size) {
-            toast(R.string.server_proxy_chain_members_unselected)
-            return false
-        }
-
-        if (chainMembers.size < 2) {
-            toast(R.string.server_proxy_chain_members_insufficient)
-            return false
-        }
-
-        val invalidMembers = chainMembers.filter { member ->
-            val profile = SettingsManager.getServerViaRemarks(member)
-            profile == null || profile.configType.isComplexType()
-        }
-
-        if (invalidMembers.isNotEmpty()) {
-            toast(
-                getString(
-                    R.string.server_proxy_chain_members_invalid,
-                    invalidMembers.joinToString(", ")
-                )
-            )
-            return false
-        }
-
-        // An Aether member can stand anywhere in the chain, but one core runs, so there can be one.
-        if (hasSecondAetherMember(chainMembers.map { SettingsManager.getServerViaRemarks(it)?.configType })) {
-            toast(R.string.aether_chain_one_profile)
-            return false
-        }
-
-        val config =
-            MmkvManager.decodeServerConfig(editGuid)
-                ?: ProfileItem.create(EConfigType.PROXYCHAIN)
-
-        config.remarks = remarks.trim()
-        config.proxyChainProfiles =
-            chainMembers.joinToString(",")
-
-        config.description =
-            chainMembers.joinToString(" -> ")
-
-        if (
-            config.subscriptionId.isEmpty() &&
-            !subscriptionId.isNullOrEmpty()
-        ) {
-            config.subscriptionId = subscriptionId.orEmpty()
-        }
-
-        val savedGuid = MmkvManager.encodeServerConfig(
-            editGuid,
-            config
-        )
-
-        toastSuccess(R.string.toast_success)
-
-        ProfileEditorResult.run {
-            finishSaved(
-                guid = savedGuid,
-                restartService = isRunning
-            )
-        }
-
-        return true
-    }
-
-    private fun deleteServer(): Boolean {
-        if (editGuid.isEmpty()) {
-            return false
-        }
-
-        if (editGuid == MmkvManager.getSelectServer()) {
-            toast(R.string.toast_action_not_allowed)
-            return false
-        }
-
-        MmkvManager.removeServer(editGuid)
-
-        ProfileEditorResult.run {
-            finishDeleted(editGuid)
-        }
-
-        return true
+    /**
+     * PattNG: a save or a delete that has not written yet stops as the screen is left, so that it does not write after
+     * it is gone.
+     */
+    override fun finish() {
+        viewModel.onScreenLeft()
+        super.finish()
     }
 }
 
@@ -201,7 +137,7 @@ fun ProxyChainScreen(
     initialMembers: List<String>,
     allRemarks: List<String>,
     onBackClick: () -> Unit,
-    onSave: (String, List<String>) -> Boolean,
+    onSave: (String, List<String>) -> Unit,
     onDelete: () -> Unit
 ) {
     var remarks by rememberSaveable { mutableStateOf(initialRemarks) }

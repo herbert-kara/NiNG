@@ -158,6 +158,9 @@ class AetherFmtTest {
             AetherFmt.Problem.PSIPHON_NEEDS_MASQUE,
             AetherFmt.normalize(profile { aetherProtocol = AetherProtocol.GOOL.type; aetherPsiphon = "reverse" })
         )
+        // WireGuard over MASQUE dials MASQUE alone, with its WireGuard inside that tunnel.
+        assertNull(AetherFmt.normalize(profile { aetherProtocol = AetherProtocol.WG_OVER_MASQUE.type; aetherPsiphon = "reverse" }))
+        assertNull(AetherFmt.normalize(profile { aetherProtocol = AetherProtocol.WG_OVER_MASQUE.type; aetherPsiphon = "chain" }))
         // WireGuard inside Psiphon is fine: Psiphon carries the tunnel only the other way round.
         assertNull(AetherFmt.normalize(profile { aetherProtocol = AetherProtocol.WIREGUARD.type; aetherPsiphon = "chain" }))
 
@@ -251,6 +254,7 @@ class AetherFmtTest {
             AetherFmt.Problem.TOR_NEEDS_MASQUE,
             AetherFmt.normalize(profile { aetherProtocol = AetherProtocol.GOOL.type; aetherTor = "reverse" })
         )
+        assertNull(AetherFmt.normalize(profile { aetherProtocol = AetherProtocol.WG_OVER_MASQUE.type; aetherTor = "reverse" }))
         assertNull(AetherFmt.normalize(profile { aetherProtocol = AetherProtocol.MIM.type; aetherTor = "reverse" }))
         // Inside the tunnel or alone, Tor does not care what carries WARP.
         assertNull(AetherFmt.normalize(profile { aetherProtocol = AetherProtocol.WIREGUARD.type; aetherTor = "chain" }))
@@ -789,6 +793,37 @@ class AetherFmtTest {
     }
 
     @Test
+    fun wireGuardOverMasqueGoesThroughALinkWithItsGatewayItsWireGuardEndpointAndItsMasqueSettings() {
+        val config = profile {
+            aetherProtocol = AetherProtocol.WG_OVER_MASQUE.type
+            aetherTransport = AetherTransport.HTTP2.type
+            aetherFragment = true
+            aetherFragmentSize = "8-16"
+            aetherEch = true
+            aetherFingerprint = "firefox"
+            aetherWiwOuter = "162.159.192.1:443"
+            // The same address on both hops is no problem for the core here.
+            aetherWiwInner = "162.159.192.1:2408"
+        }
+        assertNull(AetherFmt.normalize(config))
+        assertEquals("162.159.192.1:443", config.aetherWiwOuter)
+        assertEquals("162.159.192.1:2408", config.aetherWiwInner)
+
+        val text = link(config)
+        assertTrue(text.contains("protocol=wg-over-masque"), text)
+        val parsed = AetherFmt.parse(text)
+        assertEquals(AetherProtocol.WG_OVER_MASQUE.type, parsed?.aetherProtocol)
+        assertEquals("162.159.192.1:443", parsed?.aetherWiwOuter)
+        assertEquals("162.159.192.1:2408", parsed?.aetherWiwInner)
+        assertEquals(AetherTransport.HTTP2.type, parsed?.aetherTransport)
+        assertEquals(true, parsed?.aetherFragment)
+        assertEquals("8-16", parsed?.aetherFragmentSize)
+        assertEquals(true, parsed?.aetherEch)
+        assertEquals("firefox", parsed?.aetherFingerprint)
+        assertEquals(text, link(parsed!!))
+    }
+
+    @Test
     fun anEmptyEndpointMeansScanning() {
         val config = profile {
             server = "  "
@@ -900,6 +935,16 @@ class AetherFmtTest {
         assertEquals(AetherFmt.Problem.SHARED_HOP, AetherFmt.normalize(config))
         assertEquals("162.159.192.1:2408", config.aetherWiwOuter)
         assertEquals("162.159.192.1:894", config.aetherWiwInner)
+    }
+
+    @Test
+    fun aLinkCarriesNoExitNodeProfile() {
+        // The name is that of a profile of this device; a link elsewhere would name another there, or none.
+        val noded = profile { aetherExitNode = "germany" }
+        val text = link(noded)
+        assertFalse(text.contains("germany"), text)
+        assertEquals(link(profile { }), text)
+        assertNull(AetherFmt.parse(text)?.aetherExitNode)
     }
 
     @Test

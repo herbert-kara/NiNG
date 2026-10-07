@@ -431,12 +431,6 @@
 
     <string name="import_subscription_success">সাবস্ক্রিপশন সফলভাবে আমদানি করা হয়েছে</string>
     <string name="import_subscription_failure">সাবস্ক্রিপশন আমদানি ব্যর্থ</string>
-    <string name="title_fragment_settings">প্যাকেট বিভাজন সেটিংস (Fragment)</string>
-    <string name="title_pref_fragment_packets">ফ্র্যাগমেন্ট প্যাকেটস</string>
-    <string name="title_pref_fragment_length">ফ্র্যাগমেন্ট দৈর্ঘ্য (ন্যূনতম-সর্বাধিক)</string>
-    <string name="title_pref_fragment_interval">ফ্র্যাগমেন্ট ইন্টারভ্যাল (ন্যূনতম-সর্বাধিক)</string>
-    <string name="title_pref_fragment_enabled">ফ্র্যাগমেন্ট সক্রিয় করুন</string>
-    <string name="title_pref_fragment_maxsplit">ফ্র্যাগমেন্ট ম্যাক্স স্প্লিট</string>
     <string name="title_observatory_settings">সংযোগ পর্যবেক্ষণ সেটিংস (Observatory)</string>
     <string name="title_pref_observatory_least_ping_interval">leastPing ইন্টারভ্যাল</string>
     <string name="title_pref_observatory_least_load_interval">leastLoad ইন্টারভ্যাল</string>
@@ -466,7 +460,6 @@
     <string name="server_proxy_chain_member_unselected">চেইনের সদস্য নির্বাচন করুন</string>
     <string name="server_proxy_chain_members_unselected">চেইনের প্রতিটি সারির জন্য সদস্য নির্বাচন করুন</string>
     <string name="server_proxy_chain_members_insufficient">পর্যাপ্ত সদস্য নেই</string>
-    <string name="server_proxy_chain_members_invalid">অবৈধ চেইন সদস্য: %1$s</string>
 
     <!-- BackupActivity -->
     <string name="title_configuration_backup_restore">ব্যাকআপ ও পুনরুদ্ধার</string>
@@ -588,12 +581,22 @@
     <string name="aether_lab_obfuscation">অবফাসকেশন</string>
     <string name="aether_lab_ip_version">IP সংস্করণ</string>
     <string name="aether_lab_exit_final_mask">exit-node-এর finalMask-এর কাঁচা JSON, ফরম্যাট: { FinalMaskObject }</string>
+    <string name="aether_exit_node_freedom">freedom (ডিফল্ট)</string>
+    <string name="label_numbered">%1$s (%2$d)</string>
+    <string name="aether_hint_exit_node">কোর এই প্রোফাইলের আউটবাউন্ডের মধ্য দিয়ে বাইরে সংযোগ করে, যেমন প্রক্সি চেইনের একটি হপের মধ্য দিয়ে; নিচের finalMask ও dialMode শুধু freedom-এর জন্য</string>
+    <string name="aether_exit_node_unusable">exit-node প্রোফাইল \"%1$s\" কোনো আউটবাউন্ড দেয় না; অন্য একটি, বা freedom বেছে নিন</string>
+    <string name="aether_exit_node_ech_unusable">exit-node প্রোফাইল \"%1$s\"-এর echOutbound ব্যবহার করা যায় না; সেই প্রোফাইলে এটি ঠিক করুন, বা অন্য একটি, বা freedom বেছে নিন</string>
+    <string name="toast_profile_name_not_found">\"%1$s\" নামে কোনো প্রোফাইল পাওয়া যায়নি</string>
+    <string name="toast_profile_name_duplicate">\"%1$s\" নামে দুটি প্রোফাইল পাওয়া গেছে; অনুগ্রহ করে একটির নাম পরিবর্তন করুন</string>
+    <string name="toast_profile_no_server">প্রোফাইল \"%1$s\"-এর কোনো সার্ভার ঠিকানা নেই, তাই প্রক্সি চেইন এর মধ্য দিয়ে যেতে পারে না</string>
+    <string name="aether_keys_hint_fragment">WARP API-এর অনুরোধের ClientHello টুকরো টুকরো করে পাঠায়, যেসব নেটওয়ার্ক API-এর নাম ফিল্টার করে তাদের জন্য</string>
     <string name="aether_lab_fragment">ClientHello ভাগ করুন</string>
     <string name="aether_lab_fragment_size">খণ্ডের আকার (বাইট)</string>
     <string name="aether_lab_fragment_delay">খণ্ডের মাঝে বিলম্ব (মিলিসেকেন্ড)</string>
     <string name="aether_lab_wiw_outer">বাইরের হপ</string>
     <string name="aether_lab_wiw_inner">ভিতরের হপ</string>
     <string name="aether_hint_endpoint">স্ক্যান করতে খালি রাখুন</string>
+    <string name="aether_hint_gool_peer">WARP যে এন্ডপয়েন্ট দেয় সেটি ব্যবহার করতে খালি রাখুন</string>
     <string name="aether_action_scan">সার্ভার খুঁজুন</string>
     <string name="aether_action_scanning">স্ক্যান করা হচ্ছে…</string>
     <string name="aether_scan_success">সার্ভার পাওয়া গেছে</string>
@@ -676,15 +679,17 @@
     <string name="aether_log_wireguard_inner_key_missing">WireGuard ভিতরের হপের কী: এখনও নিবন্ধিত নয়; প্রথম স্ক্যান বা সংযোগে নিবন্ধিত হবে</string>
     <string name="aether_log_masque_inner_key_ready">MASQUE ভিতরের হপের কী: ডিভাইস %1$s, IPv4 %2$s, IPv6 %3$s</string>
     <string name="aether_log_masque_inner_key_missing">MASQUE ভিতরের হপের কী: এখনও নিবন্ধিত নয়; প্রথম স্ক্যান বা সংযোগে নিবন্ধিত হবে</string>
+    <string name="aether_log_gool_key_ready">WireGuard over MASQUE কী: ডিভাইস %1$s, IPv4 %2$s, IPv6 %3$s</string>
+    <string name="aether_log_gool_key_missing">WireGuard over MASQUE কী: এখনও নিবন্ধিত নয়; প্রথম স্ক্যান বা সংযোগে নিবন্ধিত হবে</string>
     <string name="aether_renew_blocked">এই কীগুলো নেওয়ার আগে Aether সংযোগ বিচ্ছিন্ন করুন; চলমান সংযোগ এগুলো ব্যবহার করছে</string>
     <string name="aether_action_get_keys">নতুন WARP কী নিন</string>
     <string name="aether_keys_lab_kind">যার জন্য নতুন কী নেওয়া হবে</string>
     <string name="aether_keys_kind_all">সব</string>
-    <string name="aether_keys_lab_enroll_address">অনুরোধের ঠিকানা</string>
+    <string name="aether_keys_lab_enroll_address">API ঠিকানা</string>
     <string name="aether_keys_hint_ech">WARP API-এর অনুরোধে সার্ভার নাম লুকায়; ব্যবহারযোগ্য ECH কী ছাড়া কোনো WARP কী চাওয়া হয় না</string>
     <string name="aether_lab_fingerprint">ফিঙ্গারপ্রিন্ট</string>
-    <string name="aether_keys_invalid_enroll_address">অনুরোধের ঠিকানা একটি IP ঠিকানা বা ডোমেইন নাম হতে হবে, পোর্টসহ বা পোর্ট ছাড়া, যেমন 188.114.97.6:443 বা [2606:4700::1]:8443</string>
-    <string name="aether_keys_invalid_command">কমান্ডটিকে কী নিবন্ধন করতে হবে: --register, তারপর all, wg, masque, gool বা mim</string>
+    <string name="aether_keys_invalid_enroll_address">API ঠিকানা একটি IP ঠিকানা বা ডোমেইন নাম হতে হবে, পোর্টসহ বা পোর্ট ছাড়া, যেমন 188.114.97.6:443 বা [2606:4700::1]:8443</string>
+    <string name="aether_keys_invalid_command">কমান্ডটিকে কী নিবন্ধন করতে হবে: --register, তারপর all, wg, masque, mim, gool-classic (WARP-in-WARP) বা gool (WireGuard over MASQUE)</string>
     <string name="aether_keys_log_empty">কোরের আউটপুট ও WARP কী এখানে দেখা যাবে</string>
     <string name="aether_scan_blocked">স্ক্যান করার আগে Aether সংযোগ বিচ্ছিন্ন করুন; স্ক্যান চলমান সংযোগের কী দিয়ে দ্বিতীয় একটি টানেল খুলবে</string>
     <string name="aether_keys_missing">প্রয়োজনীয় WARP কী আপনার কাছে নেই; আগে সেটি নিন</string>

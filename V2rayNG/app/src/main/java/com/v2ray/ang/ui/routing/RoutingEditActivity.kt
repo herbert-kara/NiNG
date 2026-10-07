@@ -4,6 +4,7 @@ import android.app.Activity
 import android.os.Bundle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -31,16 +32,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import com.v2ray.ang.AppConfig.BUILTIN_OUTBOUND_TAGS
 import com.v2ray.ang.AppConfig.TAG_PROXY
 import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.RulesetItem
 import com.v2ray.ang.extension.nullIfBlank
-import com.v2ray.ang.extension.toastSuccess
+import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.ui.apppicker.AppPickerActivity
 import com.v2ray.ang.ui.base.BaseComponentActivity
+import com.v2ray.ang.ui.base.EditorOutcomeEffect
 import com.v2ray.ang.ui.compose.AppTopBar
 import com.v2ray.ang.ui.compose.DeleteConfirmDialog
 import com.v2ray.ang.ui.compose.FormDropdownField
@@ -48,12 +51,11 @@ import com.v2ray.ang.ui.compose.FormTextField
 import com.v2ray.ang.ui.compose.NavigationBarsSpacer
 import com.v2ray.ang.ui.compose.SettingsSwitchItem
 import com.v2ray.ang.ui.compose.verticalScrollbar
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.util.UUID
 
 private val ROUTING_NETWORK_OPTIONS = listOf("tcp", "udp", "tcp,udp")
+
+/** PattNG: where the editor keeps the id of its rule, to find the rule again should its process be gone before it is back. */
+private const val KEY_RULE_ID = "routing_edit_rule_id"
 
 class RoutingEditActivity : BaseComponentActivity() {
     private val position by lazy { intent.getIntExtra("position", -1) }
@@ -62,9 +64,26 @@ class RoutingEditActivity : BaseComponentActivity() {
     private lateinit var outboundSuggestions: List<String>
     private var canUseProcess: Boolean = false
 
+    /** PattNG: the id of the rule the editor was on, as its saved state kept it, see [onSaveInstanceState]. */
+    private var reopenedRuleId: String? = null
+
+    /**
+     * PattNG: the save and the delete, which outlive this activity when it is recreated, see [RoutingEditViewModel], and
+     * the rule the editor opened on, read once, see [openedRule].
+     */
+    private val viewModel: RoutingEditViewModel by viewModels {
+        viewModelFactory {
+            initializer {
+                RoutingEditViewModel(application, RoutingEditRepository(), position, openedRule(MmkvManager.decodeRoutingRulesets(), position, reopenedRuleId))
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        initial = SettingsManager.getRoutingRuleset(position)
+        reopenedRuleId = savedInstanceState?.getString(KEY_RULE_ID)
+        // PattNG: the rule as the view model keeps it, so that a recreated screen does not read it again at its position.
+        initial = viewModel.initial
         val profileRemarks = SettingsManager.getProfileRemarks()
         outboundSuggestions = (BUILTIN_OUTBOUND_TAGS.toList() + profileRemarks).distinct()
         canUseProcess = SettingsManager.canUseProcessRouting()
@@ -72,38 +91,34 @@ class RoutingEditActivity : BaseComponentActivity() {
 
     @Composable
     override fun ScreenContent() {
+        EditorOutcomeEffect(
+            viewModel = viewModel,
+            onSaved = { finish() },
+            onDeleted = { finish() }
+        )
         RoutingEditScreen(
             position = position,
             initial = initial,
             outboundSuggestions = outboundSuggestions,
             canUseProcess = canUseProcess,
             onBackClick = { finish() },
-            onSave = { saveServer(it) },
-            onDelete = { deleteServer() }
+            onSave = { viewModel.save(it) },
+            onDelete = { viewModel.delete() }
         )
     }
 
-    private fun saveServer(rulesetItem: RulesetItem): Boolean {
-        if (rulesetItem.remarks.isNullOrEmpty()) {
-            return false
-        }
-        if (position < 0 && rulesetItem.id.isEmpty()) {
-            rulesetItem.id = UUID.randomUUID().toString()
-        }
-        SettingsManager.saveRoutingRuleset(position, rulesetItem)
-        toastSuccess(R.string.toast_success)
-        finish()
-        return true
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        viewModel.ruleId.takeIf { it.isNotEmpty() }?.let { outState.putString(KEY_RULE_ID, it) }
     }
 
-    private fun deleteServer(): Boolean {
-        if (position >= 0) {
-            lifecycleScope.launch(Dispatchers.IO) {
-                SettingsManager.removeRoutingRuleset(position)
-                withContext(Dispatchers.Main) { finish() }
-            }
-        }
-        return true
+    /**
+     * PattNG: a save or a delete that has not written yet stops as the screen is left, so that it does not write after
+     * it is gone.
+     */
+    override fun finish() {
+        viewModel.onScreenLeft()
+        super.finish()
     }
 }
 
@@ -114,7 +129,7 @@ fun RoutingEditScreen(
     outboundSuggestions: List<String>,
     canUseProcess: Boolean,
     onBackClick: () -> Unit,
-    onSave: (RulesetItem) -> Boolean,
+    onSave: (RulesetItem) -> Unit,
     onDelete: () -> Unit
 ) {
     val context = LocalContext.current
@@ -145,8 +160,9 @@ fun RoutingEditScreen(
         }
     }
 
+    // The rule as the screen opened with it, read by the activity, with what this screen edits set on it.
     fun buildRuleset(): RulesetItem {
-        val rulesetItem = SettingsManager.getRoutingRuleset(position) ?: RulesetItem()
+        val rulesetItem = initial?.copy() ?: RulesetItem()
         rulesetItem.apply {
             this.remarks = remarks
             this.locked = locked
