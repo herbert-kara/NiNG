@@ -38,7 +38,7 @@ internal class FakeProfileEditorSource(val names: FakeProfileNames = FakeProfile
     /** The configurations in full stored with their custom profiles, by guid. */
     val raws = mutableMapOf<String, String>()
 
-    /** The guid each save was asked to store as, blank for a new profile. */
+    /** The guid each save was asked to store as, a new profile's got from [newGuid] before its first. */
     val saves = mutableListOf<String>()
 
     /** When set, a save waits for it before it writes, as one off the main thread takes its time. */
@@ -57,8 +57,42 @@ internal class FakeProfileEditorSource(val names: FakeProfileNames = FakeProfile
     var selected: String? = null
     val deletes = mutableListOf<String>()
 
+    /** When set, the storage refuses every delete: nothing is deleted. */
+    var refuseDeletes = false
+
+    /** The guids given to new profiles so far. */
+    private var newGuids = 0
+
     override suspend fun <T> withProfileNames(takes: (ProfileItem) -> Boolean, check: (find: (String) -> ByName<ProfileItem>) -> T): T =
         names.withProfileNames(takes, check)
+
+    /** When set, the reads a screen opens on wait for it, as reads off the main thread take their time. */
+    var openGate: CompletableDeferred<Unit>? = null
+
+    /** The subscriptions, their keys with their names, as the policy group editor offers them. */
+    var subscriptions: List<Pair<String, String>> = emptyList()
+
+    // Fresh copies, as real reads give.
+    override suspend fun loadProfile(guid: String): ProfileItem? {
+        openGate?.await()
+        return stored[guid]?.copy()
+    }
+
+    override suspend fun loadRaw(guid: String): String? {
+        openGate?.await()
+        return raws[guid]
+    }
+
+    // As SettingsManager.getProfileRemarks gives them.
+    override suspend fun profileNames(excluded: Set<EConfigType>): List<String> {
+        openGate?.await()
+        return names.profiles.filter { it.configType !in excluded }.map { it.remarks.trim() }.filter { it.isNotEmpty() }.distinct()
+    }
+
+    override suspend fun subscriptions(): List<Pair<String, String>> {
+        openGate?.await()
+        return subscriptions.toList()
+    }
 
     override suspend fun saveProfile(guid: String, type: EConfigType, raw: String?, edit: (ProfileItem) -> Unit): String? {
         saves += guid
@@ -86,10 +120,20 @@ internal class FakeProfileEditorSource(val names: FakeProfileNames = FakeProfile
         return parsed
     }
 
-    override suspend fun isSelected(guid: String): Boolean = guid == selected
+    override fun newGuid(): String = "guid-${++newGuids}"
 
-    override suspend fun deleteProfile(guid: String) {
+    /** When set, a look at the profile selected waits for it, as one off the main thread takes its time. */
+    var selectedGate: CompletableDeferred<Unit>? = null
+
+    override suspend fun isSelected(guid: String): Boolean {
+        selectedGate?.await()
+        return guid == selected
+    }
+
+    override suspend fun deleteProfile(guid: String): Boolean {
+        if (refuseDeletes) return false
         deletes += guid
         stored.remove(guid)
+        return true
     }
 }

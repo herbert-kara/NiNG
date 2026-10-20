@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -34,20 +35,48 @@ class SubEditViewModelTest {
         val deletes = mutableListOf<String>()
         var deleteGate: CompletableDeferred<Unit>? = null
 
+        /** When set, the storage refuses every write and every delete: nothing is written. */
+        var refuseWrites = false
+
+        /** When set, the reads the screen opens on wait for it, as reads off the main thread take their time. */
+        var openGate: CompletableDeferred<Unit>? = null
+
+        /** Whether a delete is confirmed first, as the settings have it. */
+        var confirmRemove = false
+
         override suspend fun <T> withProfileNames(takes: (ProfileItem) -> Boolean, check: (find: (String) -> ByName<ProfileItem>) -> T): T =
             names.withProfileNames(takes, check)
 
-        override suspend fun saveSubscription(subId: String, edit: (SubscriptionItem) -> Unit): String {
+        // A fresh copy, as a real read gives.
+        override suspend fun loadSubscription(subId: String): SubscriptionItem? {
+            openGate?.await()
+            return stored[subId]?.copy()
+        }
+
+        override suspend fun profileNames(excluded: Set<EConfigType>): List<String> {
+            openGate?.await()
+            return names.profiles.filter { it.configType !in excluded }.map { it.remarks }
+        }
+
+        override suspend fun confirmsRemove(): Boolean {
+            openGate?.await()
+            return confirmRemove
+        }
+
+        override suspend fun saveSubscription(subId: String, edit: (SubscriptionItem) -> Unit): String? {
             saves += subId
+            if (refuseWrites) return null
             val key = subId.ifBlank { "sub-${stored.size + 1}" }
             stored[key] = (stored[key] ?: SubscriptionItem()).also(edit)
             return key
         }
 
-        override suspend fun deleteSubscription(subId: String) {
+        override suspend fun deleteSubscription(subId: String): Boolean {
             deleteGate?.await()
+            if (refuseWrites) return false
             deletes += subId
             stored.remove(subId)
+            return true
         }
     }
 
@@ -92,6 +121,27 @@ class SubEditViewModelTest {
         viewModel.onOutcomeHandled()
         viewModel.save(edits(prev = "twice", next = "bare"))
         assertEquals(EditorOutcome.Refused(CoreConfigContext.UnresolvedName.Reason.NO_SERVER.message, listOf("bare")), viewModel.outcome.value)
+        assertTrue(source.saves.isEmpty())
+    }
+
+    @Test
+    fun aNeighborOnlyAGroupAChainOrACustomConfigurationHasIsToldByWhatItIs() {
+        // None of them can be a hop of the chain around the subscription's profiles.
+        source.names.add("group", EConfigType.POLICYGROUP)
+        source.names.add("chain", EConfigType.PROXYCHAIN)
+        source.names.add("custom", EConfigType.CUSTOM)
+        val viewModel = viewModel()
+
+        viewModel.save(edits(prev = "group"))
+        assertEquals(EditorOutcome.Refused(R.string.toast_profile_group_not_hop, listOf("group")), viewModel.outcome.value)
+
+        viewModel.onOutcomeHandled()
+        viewModel.save(edits(next = "chain"))
+        assertEquals(EditorOutcome.Refused(R.string.toast_profile_chain_not_hop, listOf("chain")), viewModel.outcome.value)
+
+        viewModel.onOutcomeHandled()
+        viewModel.save(edits(prev = "custom"))
+        assertEquals(EditorOutcome.Refused(R.string.toast_profile_custom_not_hop, listOf("custom")), viewModel.outcome.value)
         assertTrue(source.saves.isEmpty())
     }
 
@@ -165,16 +215,79 @@ class SubEditViewModelTest {
     }
 
     @Test
-    fun leavingTheScreenWhileTheNeighborsAreLookedUpStoresNothing() {
+    fun theScreenMayNotCloseWhileTheNeighborsAreLookedUp() {
         val gate = CompletableDeferred<Unit>()
         source.names.gate = gate
         val viewModel = viewModel()
 
         viewModel.save(edits(prev = "entry"))
-        viewModel.onScreenLeft()
+        assertFalse(viewModel.leaveScreen())
         gate.complete(Unit)
 
-        assertTrue(source.saves.isEmpty())
-        assertNull(viewModel.outcome.value)
+        assertEquals(EditorOutcome.Saved("sub-1"), viewModel.outcome.value)
+        assertFalse(viewModel.leaveScreen())
+        viewModel.onOutcomeHandled()
+        assertTrue(viewModel.leaveScreen())
+    }
+
+    @Test
+    fun theSubscriptionAndTheNamesOfTheProfilesAreReadOffTheMainThreadBeforeTheScreenShowsThem() {
+        source.names.add("custom", EConfigType.CUSTOM)
+        source.names.add("group", EConfigType.POLICYGROUP)
+        source.names.add("chain", EConfigType.PROXYCHAIN)
+        val stored = SubscriptionItem(remarks = "old", prevProfile = "entry")
+        source.stored["sub-id"] = stored
+        source.confirmRemove = true
+        val gate = CompletableDeferred<Unit>()
+        source.openGate = gate
+
+        val viewModel = viewModel("sub-id")
+        assertNull(viewModel.opened.value)
+        gate.complete(Unit)
+
+        // The profiles a subscription can chain through, neither custom ones nor groups nor chains.
+        assertEquals(SubEditOpening(stored, listOf("entry"), confirmRemove = true), viewModel.opened.value)
+    }
+
+    @Test
+    fun aNewSubscriptionOpensAsANewOne() {
+        val opened = viewModel().opened.value
+
+        assertEquals("", opened?.subscription?.remarks)
+        assertEquals("", opened?.subscription?.url)
+        assertEquals(false, opened?.confirmRemove)
+    }
+
+    @Test
+    fun aSaveTheStorageRefusesIsToldAndALaterSaveStoresTheSubscriptionAsNew() {
+        source.refuseWrites = true
+        val viewModel = viewModel()
+
+        viewModel.save(edits())
+        assertEquals(EditorOutcome.Refused(R.string.toast_failure), viewModel.outcome.value)
+        assertTrue(source.stored.isEmpty())
+
+        viewModel.onOutcomeHandled()
+        source.refuseWrites = false
+        viewModel.save(edits())
+
+        assertEquals(EditorOutcome.Saved("sub-1"), viewModel.outcome.value)
+        // Asked to store a new one both times: the refused save gave it no key.
+        assertEquals(listOf("", ""), source.saves)
+    }
+
+    @Test
+    fun aDeleteTheStorageRefusesIsToldAndTheScreenStays() {
+        source.stored["sub-id"] = SubscriptionItem(remarks = "old")
+        source.refuseWrites = true
+        val viewModel = viewModel("sub-id")
+
+        viewModel.delete()
+
+        assertEquals(EditorOutcome.Refused(R.string.toast_failure), viewModel.outcome.value)
+        assertTrue(source.deletes.isEmpty())
+        assertEquals(setOf("sub-id"), source.stored.keys)
+        viewModel.onOutcomeHandled()
+        assertTrue(viewModel.leaveScreen())
     }
 }

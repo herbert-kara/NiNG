@@ -382,6 +382,30 @@ class ServerUiStateTest {
     }
 
     @Test
+    fun theMasqueServerNameStartsAtWwwCloudflareComAndIsKeptWhateverTheProtocol() {
+        val profile = ProfileItem.create(EConfigType.AETHER)
+        val state = ServerUiState.from(profile)
+        // Shown filled in, before anything is set.
+        assertEquals("www.cloudflare.com", state.aetherMasqueSni)
+
+        state.aetherMasqueSni = "consumer-masque.cloudflareclient.com"
+        for (protocol in AetherProtocol.entries) {
+            state.aetherProtocol = protocol.type
+            val stored = state.toProfileItem(profile)
+            assertEquals("consumer-masque.cloudflareclient.com", stored.aetherMasqueSni, protocol.type)
+            assertEquals("consumer-masque.cloudflareclient.com", ServerUiState.from(stored).aetherMasqueSni, protocol.type)
+        }
+
+        // A field left empty is the default again.
+        state.aetherMasqueSni = " "
+        assertNull(state.toProfileItem(profile).aetherMasqueSni)
+        assertEquals("www.cloudflare.com", ServerUiState.from(state.toProfileItem(profile)).aetherMasqueSni)
+        // Only an Aether profile carries one.
+        val vless = ServerUiState.from(ProfileItem.create(EConfigType.VLESS))
+        assertNull(vless.toProfileItem(ProfileItem.create(EConfigType.VLESS)).aetherMasqueSni)
+    }
+
+    @Test
     fun aCommandIsStoredOnlyWhenItSaysMoreThanTheSettings() {
         val profile = ProfileItem.create(EConfigType.AETHER)
         val state = ServerUiState.from(profile)
@@ -428,5 +452,19 @@ class ServerUiStateTest {
         assertEquals(held, state.toProfileItem(initial, 20808))
         state.remarks = "edited"
         assertNotEquals(held, state.toProfileItem(initial, 20808))
+    }
+
+    @Test
+    fun theSavedStateKeepsACommandAsTypedWithoutWeighingIt() {
+        val profile = ProfileItem.create(EConfigType.AETHER)
+        val state = ServerUiState.from(profile)
+        val built = com.v2ray.ang.core.AetherCore.of(state.toProfileItem(profile, 10819), 10819).command
+        state.aetherCommand = built
+
+        // Weighed, the command the settings build is none of its own; kept as typed, it stays, and reads back the same.
+        assertNull(state.toProfileItem(profile, 10819).aetherCommand)
+        val saved = state.toProfileItem(ProfileItem.create(EConfigType.AETHER), keepCommand = true)
+        assertEquals(built, saved.aetherCommand)
+        assertEquals(built, ServerUiState.from(saved).aetherCommand)
     }
 }

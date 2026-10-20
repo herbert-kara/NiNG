@@ -1,6 +1,7 @@
 package com.v2ray.ang.ui.server
 
 import android.app.Application
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.BalancerStrategyType
@@ -14,6 +15,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -81,13 +83,27 @@ class ServerGroupViewModelTest {
 
     @Test
     fun theFallbackIsFoundAmongTheProfilesAGroupCanFallBackTo() {
-        // A group cannot fall back to a group, so it does not find one by its name.
+        // A group cannot fall back to a group: a name only a group has is told as a group's.
         source.names.add("other group", EConfigType.POLICYGROUP)
         val viewModel = viewModel()
 
         viewModel.save(edit.copy(fallbackTag = "other group"))
 
-        assertEquals(EditorOutcome.Refused(R.string.toast_profile_name_not_found, listOf("other group")), viewModel.outcome.value)
+        assertEquals(EditorOutcome.Refused(R.string.toast_profile_group_not_fallback, listOf("other group")), viewModel.outcome.value)
+        assertTrue(source.saves.isEmpty())
+
+        // A custom configuration cannot be one either, and is told as such.
+        source.names.add("custom", EConfigType.CUSTOM)
+        viewModel.onOutcomeHandled()
+        viewModel.save(edit.copy(fallbackTag = "custom"))
+        assertEquals(EditorOutcome.Refused(R.string.toast_profile_custom_not_fallback, listOf("custom")), viewModel.outcome.value)
+
+        // A profile that can be the fallback is found by the name, beside the group that has it too.
+        source.names.add("other group")
+        viewModel.onOutcomeHandled()
+        viewModel.save(edit.copy(fallbackTag = "other group"))
+        assertEquals(EditorOutcome.Saved("guid-1"), viewModel.outcome.value)
+        assertEquals("other group", source.stored.getValue("guid-1").policyGroupFallbackTag)
     }
 
     @Test
@@ -128,7 +144,7 @@ class ServerGroupViewModelTest {
         viewModel.save(edit.copy(remarks = "group 2", fallbackTag = " "))
 
         assertEquals(EditorOutcome.Saved("guid-1"), viewModel.outcome.value)
-        assertEquals(listOf("", "guid-1"), source.saves)
+        assertEquals(listOf("guid-1", "guid-1"), source.saves)
         assertEquals("group 2", source.stored.getValue("guid-1").remarks)
         assertNull(source.stored.getValue("guid-1").policyGroupFallbackTag)
     }
@@ -146,17 +162,19 @@ class ServerGroupViewModelTest {
     }
 
     @Test
-    fun leavingTheScreenWhileTheFallbackIsLookedUpStoresNothing() {
+    fun theScreenMayNotCloseWhileTheFallbackIsLookedUp() {
         val gate = CompletableDeferred<Unit>()
         source.names.gate = gate
         val viewModel = viewModel()
 
         viewModel.save(edit)
-        viewModel.onScreenLeft()
+        assertFalse(viewModel.leaveScreen())
         gate.complete(Unit)
 
-        assertTrue(source.saves.isEmpty())
-        assertNull(viewModel.outcome.value)
+        assertEquals(EditorOutcome.Saved("guid-1"), viewModel.outcome.value)
+        assertFalse(viewModel.leaveScreen())
+        viewModel.onOutcomeHandled()
+        assertTrue(viewModel.leaveScreen())
     }
 
     @Test
@@ -219,5 +237,68 @@ class ServerGroupViewModelTest {
 
         assertEquals(EditorOutcome.Refused(R.string.toast_failure), viewModel.outcome.value)
         assertTrue(source.stored.isEmpty())
+    }
+
+    @Test
+    fun theGroupTheSubscriptionsAndTheFallbacksAreReadOffTheMainThreadBeforeTheScreenShowsThem() {
+        source.names.add("custom", EConfigType.CUSTOM)
+        source.names.add("group", EConfigType.POLICYGROUP)
+        source.names.add("chain", EConfigType.PROXYCHAIN)
+        source.names.add(AppConfig.TAG_DIRECT)
+        source.subscriptions = listOf("sub-a" to "A", "sub-b" to "B")
+        source.stored["group-id"] = ProfileItem.create(EConfigType.POLICYGROUP).apply {
+            remarks = "group"
+            policyGroupFilter = "us"
+            policyGroupType = tested.toString()
+            policyGroupSubscriptionId = "sub-b"
+            policyGroupTestOutbounds = false
+            policyGroupFallbackTag = "exit"
+        }
+        val gate = CompletableDeferred<Unit>()
+        source.openGate = gate
+
+        val viewModel = viewModel(guid = "group-id", subscriptionId = "sub-a")
+        assertNull(viewModel.opened.value)
+        gate.complete(Unit)
+
+        assertEquals(
+            PolicyGroupOpening(
+                remarks = "group",
+                filter = "us",
+                type = tested,
+                testOutbounds = false,
+                fallbackTag = "exit",
+                // The subscription the group was stored with, not the one the screen was opened in.
+                pickedSubscription = "sub-b",
+                subscriptions = listOf("sub-a" to "A", "sub-b" to "B"),
+                // The built-in outbounds but the proxy, each once, then the profiles a group can fall back to.
+                fallbackSuggestions = listOf(AppConfig.TAG_DIRECT, AppConfig.TAG_BLOCKED, "exit", "chain"),
+            ),
+            viewModel.opened.value,
+        )
+    }
+
+    @Test
+    fun aNewGroupDrawsFromTheSubscriptionTheScreenWasOpenedInAndTestsItsMembers() {
+        val opened = viewModel(subscriptionId = "sub-a").opened.value
+
+        assertEquals("sub-a", opened?.pickedSubscription)
+        assertEquals(true, opened?.testOutbounds)
+        assertEquals(0, opened?.type)
+        assertEquals("", opened?.remarks)
+        assertEquals("", opened?.fallbackTag)
+        // All, when the screen was opened in none.
+        assertEquals("", viewModel().opened.value?.pickedSubscription)
+    }
+
+    @Test
+    fun aGroupThatCannotTestItsMembersOpensAsTestingThem() {
+        source.stored["group-id"] = ProfileItem.create(EConfigType.POLICYGROUP).apply {
+            remarks = "group"
+            policyGroupType = BalancerStrategyType.LEAST_LOAD.policyGroupTypeValue
+            policyGroupTestOutbounds = false
+        }
+
+        assertEquals(true, viewModel(guid = "group-id").opened.value?.testOutbounds)
     }
 }

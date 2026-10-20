@@ -49,6 +49,9 @@ object CoreConfigManager {
             aetherFailure(context, guid, dependency)?.let { return it }
             if (takesExitNodeName(dependency, configContext.resolvedOutbounds)) return exitNodeNameFailure(context, guid)
             val v2rayConfig = buildUnifiedConfig(configContext)
+            if (lacksMainOutbound(v2rayConfig)) return mainOutboundFailure(context, guid)
+            unbuiltRoutingTarget(v2rayConfig)?.let { return routingTargetFailure(context, guid, it) }
+            unbuiltGroupFallback(v2rayConfig)?.let { return groupFallbackFailure(context, guid, it) }
             // PattNG: what the Aether core sends out leaves through Xray.
             val secondaryPort = AetherCoreManager.secondarySocksPort
             val core = (dependency as? AetherDependency.Single)?.core?.let {
@@ -103,6 +106,8 @@ object CoreConfigManager {
             speedtestCoresRefusal(configContext.resolvedOutbounds)?.let { refusal -> aetherFailure(context, guid, refusal)?.let { return it } }
             if (takesExitNodeName(dependency, configContext.resolvedOutbounds)) return exitNodeNameFailure(context, guid)
             val v2rayConfig = buildUnifiedConfig(configContext)
+            // A test would measure the direct way out in place of the profile.
+            if (lacksMainOutbound(v2rayConfig)) return mainOutboundFailure(context, guid)
             postProcessForSpeedtest(v2rayConfig, keepInbound)
 
             // Not routed through an inbound of this configuration: a test's core of its own dials out through
@@ -391,6 +396,19 @@ object CoreConfigManager {
     }
 
     /**
+     * PattNG: the hops of a proxy chain, [profiles] in order, each with its outbound as [convert] builds it; null when
+     * there are none, or when a hop builds no outbound. A chain is built whole or not at all: without one of its hops it
+     * would carry the traffic a shorter way than it names. Not built, a chain that is the main server is refused, see
+     * [lacksMainOutbound], and so is the session for one that is a routing target, as for any target that cannot be
+     * built, see [unbuiltRoutingTarget].
+     */
+    internal fun chainHops(
+        profiles: List<ProfileItem>,
+        convert: (ProfileItem) -> V2rayConfig.OutboundBean?,
+    ): List<Pair<ProfileItem, V2rayConfig.OutboundBean>>? =
+        profiles.map { profile -> profile to (convert(profile) ?: return null) }.ifEmpty { null }
+
+    /**
      * Build and insert a multi-hop chain entry.
      *
      * PattNG: an Aether hop dials through no hop by its outbound, which only reaches the core on the
@@ -404,13 +422,11 @@ object CoreConfigManager {
         existingTags: MutableSet<String>,
         v2rayConfig: V2rayConfig,
     ) {
-        val chain = resolvedOutbound.resolvedProfiles
-            .mapNotNull { profile -> convertProfile2Outbound(profile)?.let { profile to it } }
-        val chainOutbounds = chain.map { it.second }.toMutableList()
-        if (chainOutbounds.isEmpty()) {
-            LogUtil.w(AppConfig.TAG, "PROXYCHAIN resolved outbound '${resolvedOutbound.tag}' has no valid profiles, skipping")
+        val chain = chainHops(resolvedOutbound.resolvedProfiles, ::convertProfile2Outbound) ?: run {
+            LogUtil.w(AppConfig.TAG, "PROXYCHAIN resolved outbound '${resolvedOutbound.tag}' has a hop that could not be built, skipping")
             return
         }
+        val chainOutbounds = chain.map { it.second }.toMutableList()
         if (chainOutbounds.size == 1) {
             val outbound = chainOutbounds.first()
             outbound.tag = resolvedOutbound.tag
@@ -510,13 +526,7 @@ object CoreConfigManager {
             "${AppConfig.TAG_BALANCER_PRE}-${resolvedOutbound.tag}"
         }
         val strategyType = BalancerStrategyType.from(resolvedOutbound.profile.policyGroupType)
-        val fallbackTag = if (strategyType.supportsObservatory && resolvedOutbound.profile.policyGroupTestOutbounds != false) {
-            resolvedOutbound.profile.policyGroupFallbackTag
-                ?.takeIf { it.isNotEmpty() && it != AppConfig.TAG_PROXY }
-            // Xray excludes dead random/roundRobin candidates only when fallbackTag is set;
-            // without this default, an enabled empty field creates no observatory.
-                ?: membersToAdd.first().tag
-        } else null
+        val fallbackTag = resolvePolicyGroupFallbackTag(strategyType, resolvedOutbound.profile, membersToAdd.first().tag)
         val strategy = buildBalancerStrategy(
             strategyType = strategyType,
             selector = listOf(memberTagPrefix),
@@ -531,6 +541,28 @@ object CoreConfigManager {
         balancerStrategies.add(strategy)
         policyGroupBalancerTags[resolvedOutbound.tag] = balancerTag
     }
+
+    internal fun resolvePolicyGroupFallbackTag(
+        strategyType: BalancerStrategyType,
+        profile: ProfileItem,
+        firstMemberTag: String,
+    ): String? {
+        if (strategyType.requiresObservatory || strategyType.requiresBurstObservatory) {
+            // Missing or failed probes must not let a matched rule use Xray's default outbound.
+            return firstMemberTag
+        }
+        return if (strategyType.supportsObservatory && profile.policyGroupTestOutbounds != false) {
+            // PattNG: the name the outbound built for the fallback is tagged with.
+            CoreConfigContextBuilder.fallbackNameOf(profile)
+                ?.takeIf { it != AppConfig.TAG_PROXY }
+            // Xray excludes dead random/roundRobin candidates only when fallbackTag is set;
+            // without this default, an enabled empty field creates no observatory.
+                ?: firstMemberTag
+        } else null
+    }
+
+    internal fun shouldUseStandardObservatory(strategyType: BalancerStrategyType, fallbackTag: String?): Boolean =
+        strategyType.requiresObservatory || (strategyType.supportsObservatory && fallbackTag != null)
 
     /**
      * Trim runtime sections that are not needed for latency testing.
@@ -736,13 +768,13 @@ object CoreConfigManager {
     /**
      * PattNG: [unresolved], a name by which a proxy chain, the subscription around a profile, a routing rule or the
      * fallback of a policy group names a profile, and which no profile has any more, as after it was renamed or
-     * deleted, several have, or, as a chain's hop, one without a server address has, see
-     * [CoreConfigContext.UnresolvedName], as a failure whose message, which names it, is meant for the screen; null when
-     * there is none.
+     * deleted, several have, as a chain's hop, one without a server address has, or, as a chain's hop or a fallback,
+     * only a profile of a type it cannot be has, see [CoreConfigContext.UnresolvedName], as a failure whose message,
+     * which names it, is meant for the screen; null when there is none.
      */
     private fun unresolvedNameFailure(context: Context, guid: String, unresolved: CoreConfigContext.UnresolvedName?): ConfigResult? {
         val name = unresolved ?: return null
-        LogUtil.w(AppConfig.TAG, "A chain or a routing rule names a profile it cannot use (${name.reason}), guid=$guid")
+        LogUtil.w(AppConfig.TAG, "A chain, a routing rule or a policy group's fallback names a profile it cannot use (${name.reason}), guid=$guid")
         return ConfigResult(
             status = false,
             guid = guid,
@@ -761,6 +793,78 @@ object CoreConfigManager {
             localizedError = true,
         )
     }
+
+    /**
+     * PattNG: whether [v2rayConfig], built for a profile, has neither the outbound tagged proxy nor the balancer of a
+     * policy group that is the main server: the main server could not be built, its outbound skipped with a warning,
+     * and Xray would send what no rule sends elsewhere out by the first outbound left, which is direct, while the app
+     * shows the profile connected; what a rule sends to proxy it would drop. A custom configuration is never built
+     * here, and may hold freedom outbounds alone.
+     */
+    internal fun lacksMainOutbound(v2rayConfig: V2rayConfig): Boolean =
+        v2rayConfig.outbounds.none { it.tag == AppConfig.TAG_PROXY } &&
+            v2rayConfig.routing.balancers.orEmpty().none { it.tag == AppConfig.TAG_BALANCER }
+
+    /** PattNG: see [lacksMainOutbound], as a failure whose message is meant for the screen. */
+    private fun mainOutboundFailure(context: Context, guid: String): ConfigResult {
+        LogUtil.w(AppConfig.TAG, "The main server produced no outbound, guid=$guid")
+        return ConfigResult(
+            status = false,
+            guid = guid,
+            errorMessage = context.getString(R.string.config_main_outbound_missing),
+            localizedError = true,
+        )
+    }
+
+    /**
+     * PattNG: the name a rule of [v2rayConfig], built for a profile, sends traffic to that the configuration has no
+     * outbound of: the profile of that name, a routing target, could not be built, as a chain with a hop that cannot be,
+     * say. Null when every rule has its outbound, or the balancer of a group in its place. The session is refused for
+     * it, as for a target whose name no profile has, rather than send the rule's traffic another way than it names.
+     */
+    internal fun unbuiltRoutingTarget(v2rayConfig: V2rayConfig): String? =
+        v2rayConfig.routing.rules.firstNotNullOfOrNull { rule ->
+            rule.outboundTag?.takeIf { tag -> lacksOutbound(v2rayConfig, tag) }
+        }
+
+    /** PattNG: see [unbuiltRoutingTarget], as a failure whose message, which names [target], is meant for the screen. */
+    private fun routingTargetFailure(context: Context, guid: String, target: String): ConfigResult {
+        LogUtil.w(AppConfig.TAG, "The routing target '$target' could not be built; the session is refused, guid=$guid")
+        return ConfigResult(
+            status = false,
+            guid = guid,
+            errorMessage = context.getString(R.string.config_routing_target_unbuilt, target),
+            localizedError = true,
+        )
+    }
+
+    /**
+     * PattNG: the name of the profile a policy group of [v2rayConfig], built for a profile, falls back to that the
+     * configuration has no outbound of: that profile could not be built, as a chain with a hop that cannot be, say. Null
+     * when every group falls back to an outbound that is there, or to none. Xray would drop the group's traffic whenever
+     * its probes find no member alive, rather than send it by the fallback the group names; the session is refused for
+     * it instead, as for a fallback whose name no profile has. A latency test is not refused: it measures the group's
+     * first member alone, and never falls back.
+     */
+    internal fun unbuiltGroupFallback(v2rayConfig: V2rayConfig): String? =
+        v2rayConfig.routing.balancers.orEmpty().firstNotNullOfOrNull { balancer ->
+            balancer.fallbackTag?.takeIf { tag -> lacksOutbound(v2rayConfig, tag) }
+        }
+
+    /** PattNG: see [unbuiltGroupFallback], as a failure whose message, which names [fallback], is meant for the screen. */
+    private fun groupFallbackFailure(context: Context, guid: String, fallback: String): ConfigResult {
+        LogUtil.w(AppConfig.TAG, "The policy group fallback '$fallback' could not be built; the session is refused, guid=$guid")
+        return ConfigResult(
+            status = false,
+            guid = guid,
+            errorMessage = context.getString(R.string.config_group_fallback_unbuilt, fallback),
+            localizedError = true,
+        )
+    }
+
+    /** PattNG: whether [tag], which traffic is sent to, names neither a built-in outbound nor an outbound of [v2rayConfig]. */
+    private fun lacksOutbound(v2rayConfig: V2rayConfig, tag: String): Boolean =
+        tag.isNotBlank() && tag !in AppConfig.BUILTIN_OUTBOUND_TAGS && v2rayConfig.outbounds.none { it.tag == tag }
 
     /**
      * PattNG: a custom configuration with a balancer or an observatory that would pick the exit-node by
@@ -829,7 +933,7 @@ object CoreConfigManager {
     //region some sub function
 
     private fun needTun(): Boolean {
-        return SettingsManager.isVpnMode() && !SettingsManager.isUsingHevTun()
+        return SettingsManager.isUsingXrayTun()
     }
 
     /**
@@ -847,13 +951,7 @@ object CoreConfigManager {
     internal var socksPortOverride: Int? = null
 
     private fun configureInbounds(v2rayConfig: V2rayConfig) {
-        val vpn = SettingsManager.isVpnMode()
-        val useHev = SettingsManager.isUsingHevTun()
-        val forcedByHev = vpn && useHev
-        val forcedBySocksRoot = SettingsManager.isRootMode()
-                || MmkvManager.decodeSettingsBool(AppConfig.PREF_ROOT_LAN_SHARING)
-
-        val enableLocalProxy = forcedByHev || forcedBySocksRoot || MmkvManager.decodeSettingsBool(AppConfig.PREF_ENABLE_LOCAL_PROXY, true)
+        val enableLocalProxy = SettingsManager.isLocalProxyKept()
 
         val socksPort = socksPortOverride ?: SettingsManager.getSocksPort()
         val socksUsername = SettingsManager.getSocksUsername()
@@ -982,8 +1080,10 @@ object CoreConfigManager {
         }
 
         if (SettingsManager.isVpnMode()) {
-            if (SettingsManager.isUsingHevTun()) {
-                //hev-socks5-tunnel dns routing
+            //hev-socks5-tunnel dns routing
+            // PattNG: kept with Xray-core's TUN too, for the root LAN sharing and the clients of the local proxy,
+            // whenever the core keeps that inbound
+            if (SettingsManager.isLocalProxyKept()) {
                 v2rayConfig.routing.rules.add(
                     0, V2rayConfig.RoutingBean.RulesBean(
                         inboundTag = arrayListOf("socks"),
@@ -991,7 +1091,8 @@ object CoreConfigManager {
                         port = "53",
                     )
                 )
-            } else {
+            }
+            if (SettingsManager.isUsingXrayTun()) {
                 v2rayConfig.routing.rules.add(
                     0, V2rayConfig.RoutingBean.RulesBean(
                         inboundTag = arrayListOf("tun"),
@@ -1562,15 +1663,9 @@ object CoreConfigManager {
             rule.balancerTag = balancerTag
         }
 
-        // If the outbound tag is a custom one that failed to inject, fall back to proxy
-        if (!outboundTag.isNullOrBlank()
-            && outboundTag !in policyGroupBalancerTags
-            && outboundTag !in AppConfig.BUILTIN_OUTBOUND_TAGS
-            && v2rayConfig.outbounds.none { it.tag == outboundTag }
-        ) {
-            LogUtil.w(AppConfig.TAG, "Outbound tag '$outboundTag' not found, falling back to '${AppConfig.TAG_PROXY}'")
-            rule.outboundTag = AppConfig.TAG_PROXY
-        }
+        // PattNG: a target that could not be built keeps its name here rather than fall back to proxy, the main server,
+        // which would send the rule's traffic another way than it names: the session is refused for it, see
+        // unbuiltRoutingTarget. A latency test, which leaves the targets out, clears the rules.
 
         v2rayConfig.routing.rules.add(rule)
     }
@@ -1597,7 +1692,7 @@ object CoreConfigManager {
             fallbackTag = fallbackTag,
             strategy = V2rayConfig.RoutingBean.StrategyObject(type = strategyType.policyGroupType)
         )
-        val observatory = if (strategyType.requiresObservatory || fallbackTag != null) {
+        val observatory = if (shouldUseStandardObservatory(strategyType, fallbackTag)) {
             V2rayConfig.ObservatoryObject(
                 subjectSelector = selector,
                 probeUrl = probeUrl,

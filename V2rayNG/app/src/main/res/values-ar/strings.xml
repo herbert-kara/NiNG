@@ -106,7 +106,7 @@
     <string name="server_lab_reserved">Reserved (اختياري، مفصول بفواصل)</string>
     <string name="server_lab_local_address">العنوان المحلي (اختياري IPv4/IPv6، مفصولة بفواصل)</string>
     <string name="server_lab_local_mtu">MTU (اختياري، الافتراضي 1420)</string>
-    <string name="server_lab_remote_dns">remoteDNS (اختياري، عناوين IPv4/IPv6 مفصولة بفواصل، أو "local" لاستخدام DNS الجهاز)</string>
+    <string name="server_lab_remote_dns">remoteDNS (اختياري، عناوين IPv4/IPv6 مفصولة بفواصل)</string>
     <string name="server_lab_kcp_mtu">mKCP MTU (اختياري، الافتراضي 1350)</string>
     <string name="server_lab_kcp_tti">mKCP TTI (اختياري، الافتراضي 50 مللي ثانية)</string>
     <string name="toast_success">نجاح</string>
@@ -585,6 +585,7 @@
     <string name="value_unknown">غير معروف</string>
     <string name="aether_lab_protocol">البروتوكول</string>
     <string name="aether_lab_transport">الناقل</string>
+    <string name="aether_lab_masque_sni">اسم خادم MASQUE (SNI)</string>
     <string name="aether_lab_scan_mode">وضع الفحص</string>
     <string name="aether_lab_obfuscation">التمويه</string>
     <string name="aether_lab_ip_version">إصدار IP</string>
@@ -597,6 +598,11 @@
     <string name="toast_profile_name_not_found">لم يُعثر على أي ملف باسم «%1$s»</string>
     <string name="toast_profile_name_duplicate">عُثر على ملفين باسم «%1$s»؛ يرجى إعادة تسمية أحدهما</string>
     <string name="toast_profile_no_server">الملف «%1$s» ليس له عنوان خادم، لذا لا يمكن لسلسلة الوكيل أن تمر عبره</string>
+    <string name="toast_profile_group_not_fallback">«%1$s» مجموعة سياسات، ولا يمكن لمجموعة سياسات أن تكون اتصالًا صادرًا احتياطيًا؛ اختر ملفًا آخر</string>
+    <string name="toast_profile_group_not_hop">«%1$s» مجموعة سياسات، لذا لا يمكن لسلسلة الوكيل أن تمر عبرها؛ اختر ملفًا آخر</string>
+    <string name="toast_profile_chain_not_hop">«%1$s» سلسلة وكيل، لذا لا يمكن لسلسلة وكيل أخرى أن تمر عبرها؛ اختر ملفًا آخر</string>
+    <string name="toast_profile_custom_not_hop">«%1$s» تكوين مخصص، لذا لا يمكن لسلسلة الوكيل أن تمر عبره؛ اختر ملفًا آخر</string>
+    <string name="toast_profile_custom_not_fallback">«%1$s» تكوين مخصص، ولا يمكن لتكوين مخصص أن يكون اتصالًا صادرًا احتياطيًا؛ اختر ملفًا آخر</string>
     <string name="aether_keys_hint_fragment">يرسل ClientHello لطلبات WARP API على أجزاء، للشبكات التي ترشّح اسم الـ API</string>
     <string name="aether_lab_fragment">تجزئة ClientHello</string>
     <string name="aether_lab_fragment_size">حجم الأجزاء (بايت)</string>
@@ -646,6 +652,7 @@
     <string name="aether_lab_ech_domain">نطاق ECH</string>
     <string name="aether_invalid_ech_dns">يجب أن يكون DNS لـ ECH بالشكل udp://IP أو tcp://IP أو عنوان https:// لخادم DNS-over-HTTPS</string>
     <string name="aether_invalid_ech_domain">يجب أن يكون نطاق ECH اسم نطاق، مثل cloudflare-ech.com</string>
+    <string name="aether_invalid_masque_sni">يجب أن يكون اسم خادم MASQUE (SNI) اسم نطاق، مثل www.cloudflare.com</string>
     <string name="aether_lab_dns">DNS داخل النفق</string>
     <string name="aether_hint_dns">مفصولة بفواصل؛ اتركه فارغًا لاستخدام 1.1.1.1 و1.0.0.1</string>
     <string name="aether_invalid_dns">اكتب عناوين محلّلات مثل 1.1.1.1 أو 10.0.0.1:5353 مفصولة بفواصل</string>
@@ -706,6 +713,9 @@
     <string name="aether_chain_one_profile">لا يمكن أن تحتوي سلسلة الوكيل إلا على ملف Aether واحد</string>
     <string name="aether_exit_node_name_taken">يُستخدم ملف باسم exit-node في التوجيه هنا، وexit-node هو اسم المنفذ الصادر الذي تتصل عبره نواة Aether بالخارج؛ غيّر اسم ذلك الملف</string>
     <string name="aether_chain_hop_missing">تعذّر إنشاء القفزة التي يتصل عبرها ملف Aether في سلسلة الوكيل هذه بالخارج، وكانت نواة Aether ستصل إلى الإنترنت بدونها</string>
+    <string name="config_main_outbound_missing">تعذّر إنشاء الملف المحدد، وكانت كل حركة المرور ستصل إلى الإنترنت مباشرة بدونه؛ تحقق من إعداداته</string>
+    <string name="config_routing_target_unbuilt">تعذّر إنشاء الملف «%1$s» الذي ترسل إليه قاعدة توجيه حركة المرور؛ أصلحه أو عطّل القواعد التي تستخدمه</string>
+    <string name="config_group_fallback_unbuilt">تعذّر إنشاء الملف «%1$s» وهو الاتصال الصادر الاحتياطي لمجموعة سياسات؛ أصلحه أو اختر اتصالًا صادرًا احتياطيًا آخر للمجموعة</string>
     <string name="aether_config_single_profile">لا يمكن للتكوين استخدام أكثر من ملف Aether واحد</string>
     <string name="aether_config_two_exits">سيتعين على نواة Aether واحدة أن تتصل بالخارج بطريقتين هنا: النفق نفسه مستخدم بمفرده وخلف قفزة في سلسلة وكيل، أو خلف قفزتين مختلفتين، أو بإعدادين مختلفين لـ exit-node</string>
     <string name="aether_custom_no_outbound">لا يتصل أي مخرج SOCKS في الإعدادات بالعنوان %1$s:%2$d، حيث يستمع أمر Aether</string>

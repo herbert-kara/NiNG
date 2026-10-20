@@ -1,7 +1,5 @@
 package com.v2ray.ang.ui.server
 
-import android.os.Bundle
-import androidx.activity.compose.BackHandler
 import androidx.activity.viewModels
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
@@ -60,8 +58,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.v2ray.ang.R
 import com.v2ray.ang.enums.EConfigType
-import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.ui.base.BaseComponentActivity
+import com.v2ray.ang.ui.base.EditorLoading
 import com.v2ray.ang.ui.base.EditorOutcomeEffect
 import com.v2ray.ang.ui.compose.AppTopBar
 import com.v2ray.ang.ui.compose.DeleteConfirmDialog
@@ -74,42 +72,28 @@ import kotlinx.coroutines.flow.collectLatest
 class ServerCustomConfigActivity : BaseComponentActivity() {
 
     private val editGuid by lazy { intent.getStringExtra("guid").orEmpty() }
-    private val isRunning by lazy {
-        intent.getBooleanExtra("isRunning", false)
-                && editGuid.isNotEmpty()
-                && editGuid == MmkvManager.getSelectServer()
-    }
-
-    private var initialRemarks: String = ""
-    private var initialContent: String = ""
 
     /** PattNG: the save and the delete, which outlive this activity when it is recreated, see [ServerCustomConfigViewModel]. */
     private val viewModel: ServerCustomConfigViewModel by viewModels {
         viewModelFactory {
-            initializer { ServerCustomConfigViewModel(application, ProfileEditorRepository(), editGuid) }
+            initializer {
+                ServerCustomConfigViewModel(application, ProfileEditorRepository(), editGuid, intent.getBooleanExtra("isRunning", false))
+            }
         }
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val config = MmkvManager.decodeServerConfig(editGuid)
-        initialRemarks = config?.remarks ?: ""
-        initialContent = MmkvManager.decodeServerRaw(editGuid).orEmpty()
     }
 
     @Composable
     override fun ScreenContent() {
-        // PattNG: Back waits for a save or a delete that runs, see finish(); held only meanwhile, so that predictive back
-        // shows where it leads at any other time.
-        val busy by viewModel.busy.collectAsStateWithLifecycle()
-        BackHandler(enabled = busy) {}
+        // PattNG: read off the main thread, see ProfileEditorViewModel.isRunning; no delete is offered until it is known.
+        val running by viewModel.isRunning.collectAsStateWithLifecycle()
+        val opened by viewModel.opened.collectAsStateWithLifecycle()
         EditorOutcomeEffect(
             viewModel = viewModel,
             onSaved = { guid ->
                 ProfileEditorResult.run {
                     finishSaved(
                         guid = guid,
-                        restartService = isRunning
+                        restartService = viewModel.isRunning.value == true
                     )
                 }
             },
@@ -119,11 +103,17 @@ class ServerCustomConfigActivity : BaseComponentActivity() {
                 }
             }
         )
+        // PattNG: the profile and its configuration are read off the main thread; until they are, the screen waits.
+        val custom = opened
+        if (custom == null) {
+            EditorLoading(EConfigType.CUSTOM.toString()) { finish() }
+            return
+        }
         ServerCustomConfigScreen(
             editGuid = editGuid,
-            isRunning = isRunning,
-            initialRemarks = initialRemarks,
-            initialContent = initialContent,
+            isRunning = running != false,
+            initialRemarks = custom.remarks,
+            initialContent = custom.content,
             onBackClick = { finish() },
             onSave = { remarks, content -> viewModel.save(remarks, content) },
             onDelete = { viewModel.delete() }
@@ -131,14 +121,11 @@ class ServerCustomConfigActivity : BaseComponentActivity() {
     }
 
     /**
-     * PattNG: while a save or a delete runs the screen stays; it closes once that has written, telling the main screen
-     * what it did. Left before, the write would go untold: the main screen would neither show it nor restart the running
-     * profile with it. Once the screen is left, no save or delete starts any more.
+     * PattNG: the screen closes only once the save or the delete that runs has written, telling the screen it returns
+     * to what it did, see [com.v2ray.ang.ui.base.EditorViewModel.leaveScreen].
      */
     override fun finish() {
-        if (viewModel.isBusy) return
-        viewModel.onScreenLeft()
-        super.finish()
+        if (viewModel.leaveScreen()) super.finish()
     }
 }
 

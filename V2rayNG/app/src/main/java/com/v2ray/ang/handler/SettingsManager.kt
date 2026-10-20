@@ -20,18 +20,16 @@ import com.v2ray.ang.dto.entities.SubscriptionItem
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.enums.RoutingType
 import com.v2ray.ang.enums.VpnInterfaceAddressConfig
-import com.v2ray.ang.extension.moveItem
 import com.v2ray.ang.handler.MmkvManager.decodeAllServerList
 import com.v2ray.ang.handler.MmkvManager.decodeServerConfig
 import com.v2ray.ang.handler.MmkvManager.decodeSubsList
 import com.v2ray.ang.handler.MmkvManager.decodeSubscription
-import com.v2ray.ang.handler.MmkvManager.encodeSubscription
-import com.v2ray.ang.handler.MmkvManager.removeSubscription
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import java.io.File
 import java.io.FileOutputStream
+import java.util.UUID
 import kotlin.random.Random
 
 object SettingsManager {
@@ -52,10 +50,13 @@ object SettingsManager {
      * @param context The application context.
      */
     private fun initRoutingRulesets(context: Context) {
-        val exist = MmkvManager.decodeRoutingRulesets()
-        if (exist.isNullOrEmpty()) {
-            val rulesetList = getPresetRoutingRulesets(context, RoutingType.WHITE_IRAN)
-            MmkvManager.encodeRoutingRulesets(rulesetList)
+        // PattNG: one change of the stored rules at a time, see changeRoutingRulesets.
+        changeRoutingRulesets {
+            val exist = MmkvManager.decodeRoutingRulesets()
+            if (exist.isNullOrEmpty()) {
+                val rulesetList = getPresetRoutingRulesets(context, RoutingType.WHITE_IRAN)
+                MmkvManager.encodeRoutingRulesets(rulesetList)
+            }
         }
     }
 
@@ -79,9 +80,9 @@ object SettingsManager {
      * @param context The application context.
      * @param type The routing preset type.
      */
-    fun resetRoutingRulesetsFromPresets(context: Context, type: RoutingType) {
-        val rulesetList = getPresetRoutingRulesets(context, type) ?: return
-        resetRoutingRulesetsCommon(rulesetList)
+    fun resetRoutingRulesetsFromPresets(context: Context, type: RoutingType): Boolean {
+        val rulesetList = getPresetRoutingRulesets(context, type) ?: return false
+        return resetRoutingRulesetsCommon(rulesetList)
     }
 
     /**
@@ -100,8 +101,7 @@ object SettingsManager {
                 return false
             }
 
-            resetRoutingRulesetsCommon(rulesetList)
-            return true
+            return resetRoutingRulesetsCommon(rulesetList)
         } catch (e: Exception) {
             LogUtil.e(ANG_PACKAGE, "Failed to reset routing rulesets", e)
             return false
@@ -111,21 +111,78 @@ object SettingsManager {
     /**
      * Common method to reset routing rulesets.
      * @param rulesetList The list of rulesets.
+     * @return PattNG: whether the storage took them; a refusal is logged.
      */
-    private fun resetRoutingRulesetsCommon(rulesetList: MutableList<RulesetItem>) {
-        MmkvManager.encodeRoutingRulesets(rulesetsAfterImport(MmkvManager.decodeRoutingRulesets(), rulesetList))
+    private fun resetRoutingRulesetsCommon(rulesetList: MutableList<RulesetItem>): Boolean {
+        val stored = changeRoutingRulesets {
+            MmkvManager.encodeRoutingRulesets(rulesetsAfterImport(MmkvManager.decodeRoutingRulesets(), rulesetList))
+        }
+        if (!stored) LogUtil.e(AppConfig.TAG, "SettingsManager: the storage refused the imported routing rulesets")
+        return stored
     }
+
+    /** PattNG: what every read, change and write of the stored routing rulesets holds, see [changeRoutingRulesets]. */
+    private val routingRulesetsLock = Any()
+
+    /**
+     * PattNG: runs [change], a read of the stored routing rulesets, its change and its write, while no other runs, so
+     * that none writes back a list another changed meanwhile: an import, the routing list, the editor of a rule.
+     */
+    internal fun <T> changeRoutingRulesets(change: () -> T): T = synchronized(routingRulesetsLock) { change() }
 
     /**
      * The rulesets an import of [imported] leaves: the locked ones of [stored] first, kept as they are, then [imported].
      * PattNG: but for the copy of a locked one, which an export of it brings back with its id: the routing list tells its
-     * rules apart by their ids, and two with one id would make it fail to show.
+     * rules apart by their ids, and two with one id would make it fail to show. Each gets an id of its own besides, see
+     * [rulesetsWithOwnIds], a locked one without an id as well.
      */
-    internal fun rulesetsAfterImport(stored: List<RulesetItem>?, imported: List<RulesetItem>): MutableList<RulesetItem> {
+    internal fun rulesetsAfterImport(
+        stored: List<RulesetItem>?,
+        imported: List<RulesetItem>,
+        newId: () -> String = ::newRulesetId,
+    ): MutableList<RulesetItem> {
         val locked = stored.orEmpty().filter { it.locked == true }
         val lockedIds = locked.map { it.id }.filterTo(HashSet()) { it.isNotEmpty() }
-        return (locked + imported.filter { it.id !in lockedIds }).toMutableList()
+        val rulesets = locked + imported.filter { it.id !in lockedIds }
+        return rulesetsWithOwnIds(rulesets, newId) ?: rulesets.toMutableList()
     }
+
+    /**
+     * PattNG: [rulesets] with an id of their own each, which the routing list tells them apart by: one that repeats whole
+     * a ruleset before it, the id it came with included, goes, as the copies of a locked one an import stored before it
+     * was left out; one with the id of a ruleset before it and other content gets a new id from [newId], as does one
+     * without an id. Null when each has its own already.
+     */
+    internal fun rulesetsWithOwnIds(
+        rulesets: List<RulesetItem>,
+        newId: () -> String = ::newRulesetId,
+    ): MutableList<RulesetItem>? {
+        // The rulesets kept so far of each id they came with, as they came.
+        val keptWithId = HashMap<String, MutableList<RulesetItem>>()
+        val result = ArrayList<RulesetItem>(rulesets.size)
+        var changed = false
+        for (ruleset in rulesets) {
+            val kept = keptWithId.getOrPut(ruleset.id) { mutableListOf() }
+            when {
+                ruleset in kept -> changed = true
+
+                ruleset.id.isEmpty() || kept.isNotEmpty() -> {
+                    kept += ruleset
+                    result += ruleset.copy(id = newId())
+                    changed = true
+                }
+
+                else -> {
+                    kept += ruleset
+                    result += ruleset
+                }
+            }
+        }
+        return result.takeIf { changed }
+    }
+
+    /** PattNG: a new id for a routing ruleset, as the routing editor gives one. */
+    private fun newRulesetId(): String = UUID.randomUUID().toString()
 
     /**
      * Get a routing ruleset by index.
@@ -244,25 +301,21 @@ object SettingsManager {
     }
 
     /**
-     * Removes the subscription.
-     * If there are no remaining subscriptions,
-     * it creates a new default subscription to ensure that ungroup
-     **/
-    fun removeSubscriptionWithDefault(subid: String) {
+     * PattNG: removes the subscription [subid] names with its profiles, its updates stopped first, and, when none is
+     * left, creates the default subscription, which keeps the profiles of no subscription. Tells whether the storage took
+     * it, see [MmkvManager.tryRemoveSubscription]: refused, the subscription stays as it was, its updates scheduled again.
+     * A default subscription the storage refused is logged.
+     */
+    fun tryRemoveSubscriptionWithDefault(subid: String): Boolean {
         SubscriptionUpdater.cancelOne(subId = subid)
-        // Remove the subscription
-        removeSubscription(subid)
-
-        // After removal, check if there are any subscriptions left. If not, create a default subscription.
-        val subsList2 = decodeSubsList()
-        if (subsList2.isNotEmpty()) {
-            return
+        if (!MmkvManager.tryRemoveSubscription(subid)) {
+            SubscriptionUpdater.syncOne(subId = subid)
+            return false
         }
-
-        val defaultSub = SubscriptionItem(
-            remarks = "Default",
-        )
-        encodeSubscription(DEFAULT_SUBSCRIPTION_ID, defaultSub)
+        if (decodeSubsList().isEmpty()) {
+            MmkvManager.tryEncodeSubscription(DEFAULT_SUBSCRIPTION_ID, SubscriptionItem(remarks = "Default"), listFirst = true)
+        }
+        return true
     }
 
     /**
@@ -470,7 +523,8 @@ object SettingsManager {
      * @return True if HEV TUN is used, false otherwise.
      */
     fun isUsingHevTun(): Boolean {
-        return MmkvManager.decodeSettingsBool(AppConfig.PREF_USE_HEV_TUNNEL, true)
+        // PattNG: Xray-core's own TUN is the default
+        return MmkvManager.decodeSettingsBool(AppConfig.PREF_USE_HEV_TUNNEL, false)
     }
 
     /**
@@ -490,11 +544,56 @@ object SettingsManager {
     }
 
     /**
+     * Check if Xray-core's own TUN inbound carries the traffic: the VPN mode with HEV TUN off. The root mode always
+     * runs its own HEV tun, whichever mode is selected.
+     */
+    fun isUsingXrayTun(): Boolean {
+        return usesXrayTun(isVpnMode(), isRootMode(), isUsingHevTun())
+    }
+
+    /** Whether Xray-core's own TUN inbound carries the traffic, see [isUsingXrayTun]. */
+    internal fun usesXrayTun(vpnMode: Boolean, rootMode: Boolean, hevTun: Boolean): Boolean {
+        return vpnMode && !rootMode && !hevTun
+    }
+
+    /**
+     * Check if the core keeps its local proxy, the SOCKS inbound that takes HTTP as well: always for HEV TUN in the VPN
+     * mode, the root mode and its LAN sharing, which all reach the core through it, and otherwise as set.
+     */
+    fun isLocalProxyKept(): Boolean {
+        return keepsLocalProxy(
+            vpnMode = isVpnMode(),
+            hevTun = isUsingHevTun(),
+            rootMode = isRootMode(),
+            lanSharing = MmkvManager.decodeSettingsBool(AppConfig.PREF_ROOT_LAN_SHARING),
+            localProxySet = MmkvManager.decodeSettingsBool(AppConfig.PREF_ENABLE_LOCAL_PROXY, true),
+        )
+    }
+
+    /** Whether the core keeps its local proxy, see [isLocalProxyKept]. */
+    internal fun keepsLocalProxy(vpnMode: Boolean, hevTun: Boolean, rootMode: Boolean, lanSharing: Boolean, localProxySet: Boolean): Boolean {
+        return (vpnMode && hevTun) || rootMode || lanSharing || localProxySet
+    }
+
+    /**
+     * Check if the VPN hands apps the local proxy as their HTTP proxy: as set, and only while the core keeps the local
+     * proxy, since the HTTP proxy would point at a closed port otherwise.
+     */
+    fun isAppendingHttpProxy(): Boolean {
+        return appendsHttpProxy(MmkvManager.decodeSettingsBool(AppConfig.PREF_APPEND_HTTP_PROXY), isLocalProxyKept())
+    }
+
+    /** Whether the VPN hands apps the local HTTP proxy, see [isAppendingHttpProxy]. */
+    internal fun appendsHttpProxy(appendSet: Boolean, localProxyKept: Boolean): Boolean {
+        return appendSet && localProxyKept
+    }
+
+    /**
      *  Check if process routing can be used.
      */
     fun canUseProcessRouting(): Boolean {
         // Must xray tun
-        if (isUsingHevTun()) {
+        if (!isUsingXrayTun()) {
             return false
         }
 
@@ -621,13 +720,8 @@ object SettingsManager {
             val defaultSub = SubscriptionItem(
                 remarks = "Default",
             )
-            encodeSubscription(DEFAULT_SUBSCRIPTION_ID, defaultSub)
-
-            // Move to the top
-            val subsList = decodeSubsList()
-            if (subsList.moveItem(subsList.lastIndex, 0)) {
-                MmkvManager.encodeSubsList(subsList)
-            }
+            // PattNG: stored and listed first in one hold of the profile index lock, checked; a refusal is logged there.
+            MmkvManager.tryEncodeSubscription(DEFAULT_SUBSCRIPTION_ID, defaultSub, listFirst = true)
         }
     }
 

@@ -106,7 +106,7 @@
     <string name="server_lab_reserved">Reserved (ঐচ্ছিক, কমা দিয়ে পৃথক)</string>
     <string name="server_lab_local_address">স্থানীয় ঠিকানা (ঐচ্ছিক IPv4/IPv6, কমা দ্বারা পৃথক করা)</string>
     <string name="server_lab_local_mtu">MTU (ঐচ্ছিক, ডিফল্ট 1420)</string>
-    <string name="server_lab_remote_dns">remoteDNS (ঐচ্ছিক, কমা দ্বারা পৃথক করা IPv4/IPv6 ঠিকানা, অথবা ডিভাইসের DNS ব্যবহার করতে "local")</string>
+    <string name="server_lab_remote_dns">remoteDNS (ঐচ্ছিক, কমা দ্বারা পৃথক করা IPv4/IPv6 ঠিকানা)</string>
     <string name="server_lab_kcp_mtu">mKCP MTU (ঐচ্ছিক, ডিফল্ট 1350)</string>
     <string name="server_lab_kcp_tti">mKCP TTI (ঐচ্ছিক, ডিফল্ট 50 মিলিসেকেন্ড)</string>
     <string name="toast_success">সফল</string>
@@ -577,6 +577,7 @@
     <string name="value_unknown">অজানা</string>
     <string name="aether_lab_protocol">প্রোটোকল</string>
     <string name="aether_lab_transport">ট্রান্সপোর্ট</string>
+    <string name="aether_lab_masque_sni">MASQUE সার্ভার নাম (SNI)</string>
     <string name="aether_lab_scan_mode">স্ক্যান মোড</string>
     <string name="aether_lab_obfuscation">অবফাসকেশন</string>
     <string name="aether_lab_ip_version">IP সংস্করণ</string>
@@ -589,6 +590,11 @@
     <string name="toast_profile_name_not_found">\"%1$s\" নামে কোনো প্রোফাইল পাওয়া যায়নি</string>
     <string name="toast_profile_name_duplicate">\"%1$s\" নামে দুটি প্রোফাইল পাওয়া গেছে; অনুগ্রহ করে একটির নাম পরিবর্তন করুন</string>
     <string name="toast_profile_no_server">প্রোফাইল \"%1$s\"-এর কোনো সার্ভার ঠিকানা নেই, তাই প্রক্সি চেইন এর মধ্য দিয়ে যেতে পারে না</string>
+    <string name="toast_profile_group_not_fallback">\"%1$s\" একটি নীতি গ্রুপ, এবং নীতি গ্রুপ বিকল্প বহির্গামী সংযোগ হতে পারে না; অন্য একটি প্রোফাইল বেছে নিন</string>
+    <string name="toast_profile_group_not_hop">\"%1$s\" একটি নীতি গ্রুপ, তাই প্রক্সি চেইন এর মধ্য দিয়ে যেতে পারে না; অন্য একটি প্রোফাইল বেছে নিন</string>
+    <string name="toast_profile_chain_not_hop">\"%1$s\" একটি প্রক্সি চেইন, তাই অন্য প্রক্সি চেইন এর মধ্য দিয়ে যেতে পারে না; অন্য একটি প্রোফাইল বেছে নিন</string>
+    <string name="toast_profile_custom_not_hop">\"%1$s\" একটি কাস্টম কনফিগারেশন, তাই প্রক্সি চেইন এর মধ্য দিয়ে যেতে পারে না; অন্য একটি প্রোফাইল বেছে নিন</string>
+    <string name="toast_profile_custom_not_fallback">\"%1$s\" একটি কাস্টম কনফিগারেশন, এবং কাস্টম কনফিগারেশন বিকল্প বহির্গামী সংযোগ হতে পারে না; অন্য একটি প্রোফাইল বেছে নিন</string>
     <string name="aether_keys_hint_fragment">WARP API-এর অনুরোধের ClientHello টুকরো টুকরো করে পাঠায়, যেসব নেটওয়ার্ক API-এর নাম ফিল্টার করে তাদের জন্য</string>
     <string name="aether_lab_fragment">ClientHello ভাগ করুন</string>
     <string name="aether_lab_fragment_size">খণ্ডের আকার (বাইট)</string>
@@ -638,6 +644,7 @@
     <string name="aether_lab_ech_domain">ECH ডোমেইন</string>
     <string name="aether_invalid_ech_dns">ECH DNS হতে হবে udp://IP, tcp://IP অথবা কোনো DNS-over-HTTPS সার্ভারের https:// ঠিকানা</string>
     <string name="aether_invalid_ech_domain">ECH ডোমেইন একটি ডোমেইন নাম হতে হবে, যেমন cloudflare-ech.com</string>
+    <string name="aether_invalid_masque_sni">MASQUE সার্ভার নাম (SNI) একটি ডোমেইন নাম হতে হবে, যেমন www.cloudflare.com</string>
     <string name="aether_lab_dns">টানেলের ভিতরের DNS</string>
     <string name="aether_hint_dns">কমা দিয়ে আলাদা করুন; খালি রাখলে 1.1.1.1 ও 1.0.0.1</string>
     <string name="aether_invalid_dns">1.1.1.1 বা 10.0.0.1:5353-এর মতো রিজলভার ঠিকানা কমা দিয়ে আলাদা করে লিখুন</string>
@@ -698,6 +705,9 @@
     <string name="aether_chain_one_profile">একটি প্রক্সি চেইনে শুধুমাত্র একটি Aether প্রোফাইল থাকতে পারে</string>
     <string name="aether_exit_node_name_taken">এখানে রাউটিংয়ে exit-node নামের একটি প্রোফাইল ব্যবহৃত হচ্ছে, আর exit-node হলো সেই আউটবাউন্ডের নাম যার মধ্য দিয়ে Aether কোর বাইরে সংযোগ করে; প্রোফাইলটির নাম বদলান</string>
     <string name="aether_chain_hop_missing">এই প্রক্সি চেইনে Aether প্রোফাইল যে হপের মধ্য দিয়ে বাইরে সংযোগ করে সেটি তৈরি করা যায়নি, তাই Aether কোর সেটি ছাড়াই ইন্টারনেটে পৌঁছাত</string>
+    <string name="config_main_outbound_missing">নির্বাচিত প্রোফাইলটি তৈরি করা যায়নি, তাই সব ট্রাফিক এটি ছাড়াই সরাসরি ইন্টারনেটে পৌঁছাত; এর সেটিংস পরীক্ষা করুন</string>
+    <string name="config_routing_target_unbuilt">রাউটিং নিয়ম যে প্রোফাইল \"%1$s\"-এ ট্রাফিক পাঠায় সেটি তৈরি করা যায়নি; সেটি ঠিক করুন, অথবা যে নিয়মগুলো এটি ব্যবহার করে সেগুলো বন্ধ করুন</string>
+    <string name="config_group_fallback_unbuilt">নীতি গ্রুপের বিকল্প বহির্গামী সংযোগ প্রোফাইল \"%1$s\" তৈরি করা যায়নি; সেটি ঠিক করুন, অথবা গ্রুপের জন্য অন্য একটি বিকল্প বহির্গামী সংযোগ বেছে নিন</string>
     <string name="aether_config_single_profile">একটি কনফিগারেশন শুধুমাত্র একটি Aether প্রোফাইল ব্যবহার করতে পারে</string>
     <string name="aether_config_two_exits">এখানে একটি Aether কোরকে দুইভাবে বাইরে সংযোগ করতে হতো: একই টানেল একা এবং প্রক্সি চেইনের একটি হপের পেছনে, দুটি ভিন্ন হপের পেছনে, বা exit-node-এর দুটি ভিন্ন সেটিং দিয়ে ব্যবহৃত হয়েছে</string>
     <string name="aether_custom_no_outbound">কনফিগারেশনের কোনো SOCKS আউটবাউন্ড %1$s:%2$d-এ সংযোগ করে না, যেখানে Aether কমান্ড শোনে</string>

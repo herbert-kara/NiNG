@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -36,8 +37,8 @@ class ServerEditorViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel(guid: String = "", subscriptionId: String? = null) =
-        ServerEditorViewModel(mock<Application>(), source, guid, subscriptionId)
+    private fun viewModel(guid: String = "", subscriptionId: String? = null, serviceRunning: Boolean = false, type: EConfigType = EConfigType.VLESS) =
+        ServerEditorViewModel(mock<Application>(), source, guid, subscriptionId, type, serviceRunning)
 
     private fun vless(name: String, subscription: String = "") = ProfileItem.create(EConfigType.VLESS).apply {
         remarks = name
@@ -67,7 +68,7 @@ class ServerEditorViewModelTest {
         viewModel.save(vless("renamed"))
 
         assertEquals(EditorOutcome.Saved("guid-1"), viewModel.outcome.value)
-        assertEquals(listOf("", "guid-1"), source.saves)
+        assertEquals(listOf("guid-1", "guid-1"), source.saves)
         assertEquals(setOf("guid-1"), source.stored.keys)
         assertEquals("renamed", source.stored.getValue("guid-1").remarks)
     }
@@ -105,20 +106,24 @@ class ServerEditorViewModelTest {
         viewModel.save(vless("new"))
         gate.complete(Unit)
 
-        assertEquals(listOf(""), source.saves)
+        assertEquals(listOf("guid-1"), source.saves)
         assertEquals(EditorOutcome.Saved("guid-1"), viewModel.outcome.value)
     }
 
     @Test
-    fun leavingTheScreenBeforeTheSaveWritesStoresNothing() {
-        source.saveGate = CompletableDeferred()
+    fun theScreenMayNotCloseWhileTheSaveRuns() {
+        val gate = CompletableDeferred<Unit>()
+        source.saveGate = gate
         val viewModel = viewModel()
 
         viewModel.save(vless("new"))
-        viewModel.onScreenLeft()
+        assertFalse(viewModel.leaveScreen())
+        gate.complete(Unit)
 
-        assertTrue(source.stored.isEmpty())
-        assertNull(viewModel.outcome.value)
+        assertEquals(EditorOutcome.Saved("guid-1"), viewModel.outcome.value)
+        assertFalse(viewModel.leaveScreen())
+        viewModel.onOutcomeHandled()
+        assertTrue(viewModel.leaveScreen())
     }
 
     @Test
@@ -141,7 +146,7 @@ class ServerEditorViewModelTest {
     }
 
     @Test
-    fun aDeleteStopsASaveThatHasNotWrittenYetSoThatItDoesNotWriteTheProfileBack() {
+    fun aDeleteWaitsForTheSaveThatRunsSoThatItDoesNotWriteTheProfileBack() {
         source.stored["vless-guid"] = vless("old")
         val gate = CompletableDeferred<Unit>()
         source.saveGate = gate
@@ -176,13 +181,76 @@ class ServerEditorViewModelTest {
         assertEquals(EditorOutcome.Refused(R.string.toast_failure), viewModel.outcome.value)
         assertTrue(source.stored.isEmpty())
 
-        // Tried again once the storage takes it: stored as a new profile, once.
+        // Tried again once the storage takes it: under the guid the first try got, so that what that one may have stored
+        // part of is written over, not stored a second time.
         viewModel.onOutcomeHandled()
         source.refuseWrites = false
         viewModel.save(vless("new"))
 
         assertEquals(EditorOutcome.Saved("guid-1"), viewModel.outcome.value)
-        assertEquals(listOf("", ""), source.saves)
+        assertEquals(listOf("guid-1", "guid-1"), source.saves)
         assertEquals(setOf("guid-1"), source.stored.keys)
+    }
+
+    @Test
+    fun aDeleteTheStorageRefusesIsToldAndLeavesTheProfile() {
+        source.stored["vless-guid"] = vless("old")
+        source.refuseDeletes = true
+        val viewModel = viewModel(guid = "vless-guid")
+
+        viewModel.delete()
+
+        assertEquals(EditorOutcome.Refused(R.string.toast_failure), viewModel.outcome.value)
+        assertEquals(setOf("vless-guid"), source.stored.keys)
+    }
+
+    @Test
+    fun theAppRunsOnTheProfileWhenItRunsAndTheProfileIsTheOneSelected() {
+        source.stored["vless-guid"] = vless("old")
+        source.selected = "vless-guid"
+
+        assertEquals(true, viewModel(guid = "vless-guid", serviceRunning = true).isRunning.value)
+        // Not when the app runs on another, nor when it runs not at all, nor for a new profile.
+        source.selected = "other"
+        assertEquals(false, viewModel(guid = "vless-guid", serviceRunning = true).isRunning.value)
+        source.selected = "vless-guid"
+        assertEquals(false, viewModel(guid = "vless-guid").isRunning.value)
+        assertEquals(false, viewModel(serviceRunning = true).isRunning.value)
+    }
+
+    @Test
+    fun whetherTheAppRunsOnTheProfileIsUnknownUntilRead() {
+        val gate = CompletableDeferred<Unit>()
+        source.selectedGate = gate
+        source.selected = "vless-guid"
+        val viewModel = viewModel(guid = "vless-guid", serviceRunning = true)
+
+        assertNull(viewModel.isRunning.value)
+        gate.complete(Unit)
+        assertEquals(true, viewModel.isRunning.value)
+    }
+
+    @Test
+    fun theProfileIsReadOffTheMainThreadBeforeTheScreenShowsIt() {
+        source.stored["stored"] = vless("stored", subscription = "sub")
+        val gate = CompletableDeferred<Unit>()
+        source.openGate = gate
+
+        val viewModel = viewModel(guid = "stored")
+        assertNull(viewModel.opened.value)
+        gate.complete(Unit)
+
+        assertEquals(source.stored.getValue("stored"), viewModel.opened.value)
+    }
+
+    @Test
+    fun aNewProfileOrOneGoneOpensAsANewOneOfTheScreensType() {
+        val new = viewModel(type = EConfigType.TROJAN).opened.value
+        assertEquals(EConfigType.TROJAN, new?.configType)
+        assertEquals("", new?.remarks)
+
+        val gone = viewModel(guid = "gone", type = EConfigType.SOCKS).opened.value
+        assertEquals(EConfigType.SOCKS, gone?.configType)
+        assertEquals("", gone?.remarks)
     }
 }

@@ -106,7 +106,7 @@
     <string name="server_lab_reserved">Reserved (اختیاری، جدا شده با کاما)</string>
     <string name="server_lab_local_address">آدرس محلی (IPv4/IPv6 اختیاری، جدا شده با کاما)</string>
     <string name="server_lab_local_mtu">MTU (اختیاری، پیش‌فرض 1420)</string>
-    <string name="server_lab_remote_dns">remoteDNS (اختیاری، آدرس‌های IPv4/IPv6 جدا شده با کاما، یا "local" برای استفاده از DNS دستگاه)</string>
+    <string name="server_lab_remote_dns">remoteDNS (اختیاری، آدرس‌های IPv4/IPv6 جدا شده با کاما)</string>
     <string name="server_lab_kcp_mtu">mKCP MTU (اختیاری، پیش‌فرض 1350)</string>
     <string name="server_lab_kcp_tti">mKCP TTI (اختیاری، پیش‌فرض 50 میلی‌ثانیه)</string>
     <string name="toast_success">موفقیت‌آمیز</string>
@@ -577,6 +577,7 @@
     <string name="value_unknown">ناشناخته</string>
     <string name="aether_lab_protocol">پروتکل</string>
     <string name="aether_lab_transport">حامل</string>
+    <string name="aether_lab_masque_sni">نام سرور MASQUE (SNI)</string>
     <string name="aether_lab_scan_mode">حالت اسکن</string>
     <string name="aether_lab_obfuscation">مبهم‌سازی</string>
     <string name="aether_lab_ip_version">نسخه IP</string>
@@ -589,6 +590,11 @@
     <string name="toast_profile_name_not_found">هیچ پروفایلی با نام «%1$s» پیدا نشد</string>
     <string name="toast_profile_name_duplicate">دو پروفایل با نام «%1$s» پیدا شد؛ لطفاً نام یکی را تغییر دهید</string>
     <string name="toast_profile_no_server">پروفایل «%1$s» نشانی سرور ندارد، پس زنجیره پروکسی نمی‌تواند از آن بگذرد</string>
+    <string name="toast_profile_group_not_fallback">«%1$s» یک گروه خط مشی است، و گروه خط مشی نمی‌تواند خروجی پشتیبان باشد؛ پروفایل دیگری انتخاب کنید</string>
+    <string name="toast_profile_group_not_hop">«%1$s» یک گروه خط مشی است، پس زنجیره پروکسی نمی‌تواند از آن بگذرد؛ پروفایل دیگری انتخاب کنید</string>
+    <string name="toast_profile_chain_not_hop">«%1$s» یک زنجیره پروکسی است، پس زنجیره پروکسی دیگری نمی‌تواند از آن بگذرد؛ پروفایل دیگری انتخاب کنید</string>
+    <string name="toast_profile_custom_not_hop">«%1$s» یک کانفیگ سفارشی است، پس زنجیره پروکسی نمی‌تواند از آن بگذرد؛ پروفایل دیگری انتخاب کنید</string>
+    <string name="toast_profile_custom_not_fallback">«%1$s» یک کانفیگ سفارشی است، و کانفیگ سفارشی نمی‌تواند خروجی پشتیبان باشد؛ پروفایل دیگری انتخاب کنید</string>
     <string name="aether_keys_hint_fragment">ClientHello درخواست‌های WARP API را تکه‌تکه می‌فرستد، برای شبکه‌هایی که نام API را فیلتر می‌کنند</string>
     <string name="aether_lab_fragment">تکه‌تکه کردن ClientHello</string>
     <string name="aether_lab_fragment_size">اندازه تکه‌ها (بایت)</string>
@@ -638,6 +644,7 @@
     <string name="aether_lab_ech_domain">دامنه‌ی ECH</string>
     <string name="aether_invalid_ech_dns">DNS برای ECH باید udp://IP، tcp://IP یا نشانی https:// یک سرور DNS-over-HTTPS باشد</string>
     <string name="aether_invalid_ech_domain">دامنه‌ی ECH باید نام دامنه باشد، مانند cloudflare-ech.com</string>
+    <string name="aether_invalid_masque_sni">نام سرور MASQUE (SNI) باید نام دامنه باشد، مانند www.cloudflare.com</string>
     <string name="aether_lab_dns">DNS درون تونل</string>
     <string name="aether_hint_dns">با کاما جدا کنید؛ خالی بگذارید تا 1.1.1.1 و 1.0.0.1 استفاده شود</string>
     <string name="aether_invalid_dns">نشانی‌های DNS مانند 1.1.1.1 یا 10.0.0.1:5353 را با کاما جدا بنویسید</string>
@@ -698,6 +705,9 @@
     <string name="aether_chain_one_profile">یک زنجیره پروکسی فقط می‌تواند یک پروفایل Aether داشته باشد</string>
     <string name="aether_exit_node_name_taken">در مسیریابی اینجا از پروفایلی با نام exit-node استفاده شده، و exit-node نام outbound ـی است که هستهٔ Aether از راه آن به بیرون وصل می‌شود؛ نام آن پروفایل را تغییر دهید</string>
     <string name="aether_chain_hop_missing">گامی که پروفایل Aether این زنجیرهٔ پروکسی از راه آن به بیرون وصل می‌شود ساخته نشد، و هستهٔ Aether بدون آن به اینترنت می‌رسید</string>
+    <string name="config_main_outbound_missing">پروفایل انتخاب‌شده ساخته نشد، و همهٔ ترافیک بدون آن مستقیم به اینترنت می‌رسید؛ تنظیماتش را بررسی کنید</string>
+    <string name="config_routing_target_unbuilt">پروفایل «%1$s» که یک قانون مسیریابی ترافیک را به آن می‌فرستد ساخته نشد؛ آن را درست کنید، یا قانون‌هایی را که از آن استفاده می‌کنند خاموش کنید</string>
+    <string name="config_group_fallback_unbuilt">پروفایل «%1$s» که خروجی پشتیبان یک گروه خط مشی است ساخته نشد؛ آن را درست کنید، یا خروجی پشتیبان دیگری برای گروه انتخاب کنید</string>
     <string name="aether_config_single_profile">یک پیکربندی فقط می‌تواند از یک پروفایل Aether استفاده کند</string>
     <string name="aether_config_two_exits">اینجا یک هستهٔ Aether باید از دو راه به بیرون وصل شود: همان تونل هم به‌تنهایی و هم پشت یک گام زنجیرهٔ پروکسی، یا پشت دو گام متفاوت، یا با دو تنظیم متفاوت exit-node به کار رفته است</string>
     <string name="aether_custom_no_outbound">هیچ خروجی SOCKS در پیکربندی به %1$s:%2$d وصل نمی‌شود؛ فرمان Aether همان‌جا گوش می‌دهد</string>

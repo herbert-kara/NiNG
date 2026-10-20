@@ -106,7 +106,7 @@
     <string name="server_lab_reserved">Reserved (optional, separated by commas)</string>
     <string name="server_lab_local_address">Local address (optional IPv4/IPv6, separated by commas)</string>
     <string name="server_lab_local_mtu">MTU (optional, default 1420)</string>
-    <string name="server_lab_remote_dns">remoteDNS (optional, comma-separated IPv4/IPv6, or "local" to use device DNS)</string>
+    <string name="server_lab_remote_dns">remoteDNS (optional, comma-separated IPv4/IPv6)</string>
     <string name="server_lab_kcp_mtu">mKCP MTU (optional, default 1350)</string>
     <string name="server_lab_kcp_tti">mKCP TTI (optional, default 50 ms)</string>
     <string name="toast_success">Success</string>
@@ -581,6 +581,7 @@
     <string name="value_unknown">unknown</string>
     <string name="aether_lab_protocol">Protocol</string>
     <string name="aether_lab_transport">Transport</string>
+    <string name="aether_lab_masque_sni">MASQUE SNI</string>
     <string name="aether_lab_scan_mode">Scan mode</string>
     <string name="aether_lab_obfuscation">Obfuscation</string>
     <string name="aether_lab_ip_version">IP version</string>
@@ -595,6 +596,11 @@
     <string name="toast_profile_name_not_found">No profile named \"%1$s\" was found</string>
     <string name="toast_profile_name_duplicate">Two profiles named \"%1$s\" were found; please rename one</string>
     <string name="toast_profile_no_server">Profile \"%1$s\" has no server address, so a proxy chain cannot go through it</string>
+    <string name="toast_profile_group_not_fallback">\"%1$s\" is a policy group, and a policy group cannot be a fallback outbound; choose another profile</string>
+    <string name="toast_profile_group_not_hop">\"%1$s\" is a policy group, so a proxy chain cannot go through it; choose another profile</string>
+    <string name="toast_profile_chain_not_hop">\"%1$s\" is a proxy chain, so another proxy chain cannot go through it; choose another profile</string>
+    <string name="toast_profile_custom_not_hop">\"%1$s\" is a custom configuration, so a proxy chain cannot go through it; choose another profile</string>
+    <string name="toast_profile_custom_not_fallback">\"%1$s\" is a custom configuration, and a custom configuration cannot be a fallback outbound; choose another profile</string>
     <string name="aether_keys_hint_fragment">Sends the ClientHello of the calls to the WARP API in pieces, for networks that filter the name of the API</string>
     <string name="aether_lab_fragment">Fragment ClientHello</string>
     <string name="aether_lab_fragment_size">Fragment size (bytes)</string>
@@ -646,6 +652,7 @@
     <string name="aether_lab_ech_domain">ECH domain</string>
     <string name="aether_invalid_ech_dns">The ECH DNS must be udp://IP, tcp://IP or the https:// address of a DNS-over-HTTPS server</string>
     <string name="aether_invalid_ech_domain">The ECH domain must be a domain name, such as cloudflare-ech.com</string>
+    <string name="aether_invalid_masque_sni">The MASQUE SNI must be a domain name, such as www.cloudflare.com</string>
     <string name="aether_lab_dns">DNS inside the tunnel</string>
     <string name="aether_hint_dns">Comma-separated; leave blank for 1.1.1.1 and 1.0.0.1</string>
     <string name="aether_invalid_dns">Write resolver addresses such as 1.1.1.1 or 10.0.0.1:5353, separated by commas</string>
@@ -706,6 +713,9 @@
     <string name="aether_chain_one_profile">A proxy chain can have only one Aether profile</string>
     <string name="aether_exit_node_name_taken">A profile named exit-node is used by routing here, and exit-node is the name of the outbound the Aether core dials out by; rename that profile</string>
     <string name="aether_chain_hop_missing">The hop the Aether profile of this proxy chain dials out through could not be built, and the Aether core would reach the internet without it</string>
+    <string name="config_main_outbound_missing">The selected profile could not be built, and all traffic would reach the internet directly without it; check its settings</string>
+    <string name="config_routing_target_unbuilt">The profile \"%1$s\", which a routing rule sends traffic to, could not be built; fix it, or turn off the rules that use it</string>
+    <string name="config_group_fallback_unbuilt">The profile \"%1$s\", which a policy group falls back to, could not be built; fix it, or choose another fallback outbound for the group</string>
     <string name="aether_config_single_profile">A configuration can use only one Aether profile</string>
     <string name="aether_config_two_exits">One Aether core would have to dial out two ways here: the same tunnel is used on its own and behind a proxy chain\'s hop, behind two different hops, or with two different exit-node settings</string>
     <string name="aether_custom_no_outbound">No SOCKS outbound of the configuration dials %1$s:%2$d, where the Aether command listens</string>

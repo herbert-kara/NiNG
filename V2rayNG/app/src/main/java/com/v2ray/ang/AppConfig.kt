@@ -171,7 +171,7 @@ object AppConfig {
     const val IP_API_URL = "https://api.ip.sb/geoip"
 
     /** DNS server addresses. */
-    const val DNS_PROXY = "https://dns.google/dns-query"
+    const val DNS_PROXY = "https://8.8.8.8/dns-query"
     const val DNS_DIRECT = "localhost"
     const val DNS_VPN = "8.8.8.8"
     const val GEOSITE_PRIVATE = "geosite:private"
@@ -200,6 +200,12 @@ object AppConfig {
     /** PattNG: where the Aether core asks for the ECH key, and the domain whose key it takes, unless a profile names others. */
     const val AETHER_ECH_DNS = "udp://1.1.1.1"
     const val AETHER_ECH_DOMAIN = "cloudflare-ech.com"
+
+    /**
+     * PattNG: the server name the MASQUE handshakes of the Aether core put in their ClientHello, unless a profile names
+     * another; the core's own default as well. The HTTP host of the CONNECT request stays the core's.
+     */
+    const val AETHER_MASQUE_SNI = "www.cloudflare.com"
 
     /** PattNG: where the Aether core sends the calls to the WARP API, which register and enroll the keys, unless told otherwise. */
     const val AETHER_ENROLL_ADDRESS = "api.cloudflareclient.com"
@@ -297,6 +303,7 @@ object AppConfig {
     const val ROOT_TUN2SOCKS_BIN = "libhevsockstun.so"
     const val ROOT_FWD_CHAIN = "CORE_FWD"   // FORWARD chain for LAN/tethering sharing
     const val ROOT_DNS_CHAIN = "CORE_DNS"   // nat chain for tethered-client DNS DNAT
+    const val ROOT_DNS_OUT_CHAIN = "CORE_DNS_OUT"  // nat chain for device DNS DNAT (root mode)
     const val ROOT_V6_CHAIN = "CORE6_FILTER"       // ip6tables filter/OUTPUT chain: blackhole native IPv6 when it isn't tunneled
     const val ROOT_V6_FWD_CHAIN = "CORE6_FWD" // ip6tables FORWARD chain: route or reject tethered clients' native IPv6
     const val ROOT_V6_PRE_CHAIN = "CORE6_PRE" // ip6tables mangle/PREROUTING chain: mark forwarded clients' IPv6 into the tun

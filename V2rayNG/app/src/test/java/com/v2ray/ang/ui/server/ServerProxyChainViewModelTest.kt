@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -89,13 +90,34 @@ class ServerProxyChainViewModelTest {
 
     @Test
     fun membersAreFoundAmongTheProfilesAChainCanGoThrough() {
-        // A policy group cannot be a hop, so a chain does not find it by its name.
+        // A policy group cannot be a hop: a name only a group has is told as a group's.
         source.names.add("group", EConfigType.POLICYGROUP)
         val viewModel = viewModel()
 
         viewModel.save("chain", listOf("entry", "group"))
 
-        assertEquals(refused(CoreConfigContext.UnresolvedName.Reason.NOT_FOUND.message, "group"), viewModel.outcome.value)
+        assertEquals(refused(R.string.toast_profile_group_not_hop, "group"), viewModel.outcome.value)
+        assertTrue(source.saves.isEmpty())
+
+        // Nor can another chain or a custom configuration, each told as what it is.
+        source.names.add("other chain", EConfigType.PROXYCHAIN)
+        viewModel.onOutcomeHandled()
+        viewModel.save("chain", listOf("entry", "other chain"))
+        assertEquals(refused(R.string.toast_profile_chain_not_hop, "other chain"), viewModel.outcome.value)
+        source.names.add("custom", EConfigType.CUSTOM)
+        viewModel.onOutcomeHandled()
+        viewModel.save("chain", listOf("custom", "entry"))
+        assertEquals(refused(R.string.toast_profile_custom_not_hop, "custom"), viewModel.outcome.value)
+        // A name no profile has is told as before.
+        viewModel.onOutcomeHandled()
+        viewModel.save("chain", listOf("entry", "gone"))
+        assertEquals(refused(CoreConfigContext.UnresolvedName.Reason.NOT_FOUND.message, "gone"), viewModel.outcome.value)
+
+        // A profile that can be a hop is found by the name, beside the group that has it too.
+        source.names.add("group")
+        viewModel.onOutcomeHandled()
+        viewModel.save("chain", listOf("entry", "group"))
+        assertEquals(EditorOutcome.Saved("guid-1"), viewModel.outcome.value)
     }
 
     @Test
@@ -128,7 +150,7 @@ class ServerProxyChainViewModelTest {
         viewModel.save("chain 2", listOf("exit", "entry"))
 
         assertEquals(EditorOutcome.Saved("guid-1"), viewModel.outcome.value)
-        assertEquals(listOf("", "guid-1"), source.saves)
+        assertEquals(listOf("guid-1", "guid-1"), source.saves)
         assertEquals(setOf("guid-1"), source.stored.keys)
         assertEquals("chain 2", source.stored.getValue("guid-1").remarks)
     }
@@ -165,22 +187,25 @@ class ServerProxyChainViewModelTest {
         viewModel.save("chain", listOf("entry", "exit"))
         gate.complete(Unit)
 
-        assertEquals(1, source.names.lookups)
-        assertEquals(listOf(""), source.saves)
+        // One lookup for each member, of the one save.
+        assertEquals(2, source.names.lookups)
+        assertEquals(listOf("guid-1"), source.saves)
     }
 
     @Test
-    fun leavingTheScreenWhileTheMembersAreLookedUpStoresNothing() {
+    fun theScreenMayNotCloseWhileTheMembersAreLookedUp() {
         val gate = CompletableDeferred<Unit>()
         source.names.gate = gate
         val viewModel = viewModel()
 
         viewModel.save("chain", listOf("entry", "exit"))
-        viewModel.onScreenLeft()
+        assertFalse(viewModel.leaveScreen())
         gate.complete(Unit)
 
-        assertTrue(source.saves.isEmpty())
-        assertNull(viewModel.outcome.value)
+        assertEquals(EditorOutcome.Saved("guid-1"), viewModel.outcome.value)
+        assertFalse(viewModel.leaveScreen())
+        viewModel.onOutcomeHandled()
+        assertTrue(viewModel.leaveScreen())
     }
 
     @Test
@@ -202,7 +227,7 @@ class ServerProxyChainViewModelTest {
     }
 
     @Test
-    fun aDeleteConfirmedWhileTheMembersAreLookedUpStopsTheSaveAndDeletes() {
+    fun aDeleteConfirmedWhileTheMembersAreLookedUpWaitsForTheSaveThenDeletes() {
         source.stored["chain-guid"] = ProfileItem.create(EConfigType.PROXYCHAIN)
         val gate = CompletableDeferred<Unit>()
         source.names.gate = gate
@@ -212,9 +237,10 @@ class ServerProxyChainViewModelTest {
         viewModel.delete()
         gate.complete(Unit)
 
+        // The save ends first, so that it writes nothing back after the delete, which closes the screen.
         assertEquals(EditorOutcome.Deleted, viewModel.outcome.value)
         assertEquals(listOf("chain-guid"), source.deletes)
-        assertTrue(source.saves.isEmpty())
+        assertEquals(listOf("chain-guid"), source.saves)
         assertTrue(source.stored.isEmpty())
     }
 
@@ -229,7 +255,7 @@ class ServerProxyChainViewModelTest {
     }
 
     @Test
-    fun aDeleteRefusedWhileTheMembersAreLookedUpLeavesTheSaveToGoOn() {
+    fun aDeleteRefusedWhileTheMembersAreLookedUpLetsTheSaveEndAndTheScreenCloseOnIt() {
         source.stored["chain-guid"] = ProfileItem.create(EConfigType.PROXYCHAIN)
         source.selected = "chain-guid"
         val gate = CompletableDeferred<Unit>()
@@ -238,10 +264,12 @@ class ServerProxyChainViewModelTest {
 
         viewModel.save("chain", listOf("entry", "exit"))
         viewModel.delete()
+        // The delete waits for the save, then is refused; told so, the screen closes on what the save saved.
+        assertNull(viewModel.outcome.value)
+        gate.complete(Unit)
         assertEquals(refused(R.string.toast_action_not_allowed), viewModel.outcome.value)
 
         viewModel.onOutcomeHandled()
-        gate.complete(Unit)
         assertEquals(EditorOutcome.Saved("chain-guid"), viewModel.outcome.value)
         assertEquals(listOf("chain-guid"), source.saves)
         assertTrue(source.deletes.isEmpty())
@@ -256,5 +284,37 @@ class ServerProxyChainViewModelTest {
 
         assertEquals(refused(R.string.toast_failure), viewModel.outcome.value)
         assertTrue(source.stored.isEmpty())
+    }
+
+    @Test
+    fun theChainAndTheNamesOfTheProfilesAreReadOffTheMainThreadBeforeTheScreenShowsThem() {
+        source.names.add("custom", EConfigType.CUSTOM)
+        source.names.add("group", EConfigType.POLICYGROUP)
+        source.names.add("chain", EConfigType.PROXYCHAIN)
+        source.stored["chain-id"] = ProfileItem.create(EConfigType.PROXYCHAIN).apply {
+            remarks = "chain"
+            proxyChainProfiles = ProfileItem.proxyChainProfilesOf(listOf(" entry ", "", "a\\b,c"))
+        }
+        val gate = CompletableDeferred<Unit>()
+        source.openGate = gate
+
+        val viewModel = viewModel(guid = "chain-id")
+        assertNull(viewModel.opened.value)
+        gate.complete(Unit)
+
+        // Its members trimmed, a blank one left out; the profiles a chain can hold, neither custom ones nor groups nor chains.
+        assertEquals(ProxyChainOpening("chain", listOf("entry", "a\\b,c"), listOf("entry", "exit")), viewModel.opened.value)
+    }
+
+    @Test
+    fun aNewChainOpensOnTwoBlankMembers() {
+        assertEquals(ProxyChainOpening("", listOf("", ""), listOf("entry", "exit")), viewModel().opened.value)
+    }
+
+    @Test
+    fun aStoredChainWithoutMembersOpensOnTwoBlankOnes() {
+        source.stored["chain-id"] = ProfileItem.create(EConfigType.PROXYCHAIN).apply { remarks = "chain" }
+
+        assertEquals(ProxyChainOpening("chain", listOf("", ""), listOf("entry", "exit")), viewModel(guid = "chain-id").opened.value)
     }
 }

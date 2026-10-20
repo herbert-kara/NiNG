@@ -105,9 +105,10 @@ object CoreConfigContextBuilder {
     /**
      * Collect and resolve non-builtin routing targets from enabled rules.
      *
-     * Invalid or empty targets are skipped and handled by fallback logic later. PattNG: a target is a profile's name;
-     * the first one that no profile has any more, or several have, goes beside them, for the session to be refused for
-     * it rather than send the rule's traffic by the proxy, or by a profile it may not mean.
+     * Invalid or empty targets are skipped. PattNG: the session is then refused for them, see
+     * CoreConfigManager.unbuiltRoutingTarget. A target is a profile's name; the first one that no profile has any more,
+     * or several have, goes beside them, for the session to be refused for it rather than send the rule's traffic by
+     * the proxy, or by a profile it may not mean.
      */
     private fun resolveRoutingOutbounds(): Pair<List<CoreConfigContext.ResolvedOutbound>, CoreConfigContext.UnresolvedName?> {
         val rulesetItems = MmkvManager.decodeRoutingRulesets() ?: return emptyList<CoreConfigContext.ResolvedOutbound>() to null
@@ -215,9 +216,7 @@ object CoreConfigContextBuilder {
         }
 
         try {
-            val (hops, unresolved) = proxyChainHops(ProfileItem.proxyChainMembersOf(config.proxyChainProfiles)) { name ->
-                SettingsManager.findServerViaRemarks(name, ::takesAsHop)
-            }
+            val (hops, unresolved) = proxyChainHops(ProfileItem.proxyChainMembersOf(config.proxyChainProfiles), SettingsManager::findServerViaRemarks)
             return hops.reversed() to unresolved
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to resolve proxy chain profiles for '${config.remarks}'", e)
@@ -229,18 +228,20 @@ object CoreConfigContextBuilder {
     internal fun takesAsHop(profile: ProfileItem): Boolean = !profile.configType.isComplexType()
 
     /**
-     * PattNG: the profiles [names], the hops of a proxy chain in the order it lists them, find through [find], see
-     * [ByName], and the first of the names that finds none, several, or one a chain cannot go through, see
-     * [hasServerAddress]. A blank name names no hop.
+     * PattNG: the profiles [names], the hops of a proxy chain in the order it lists them, find among those that can be a
+     * hop, see [takesAsHop], and the first of the names that finds none, several, one a chain cannot go through, see
+     * [hasServerAddress], or only a group, a chain or a custom configuration, which is told as such rather than as a
+     * name no profile has, see [HOP_REASONS]. [find] looks a name up among the profiles a filter takes, see [ByName];
+     * inline, so that an editor looks up through its own source, which suspends. A blank name names no hop.
      */
-    internal fun proxyChainHops(
+    internal inline fun proxyChainHops(
         names: List<String>,
-        find: (String) -> ByName<ProfileItem>,
+        find: (String, (ProfileItem) -> Boolean) -> ByName<ProfileItem>,
     ): Pair<List<ProfileItem>, CoreConfigContext.UnresolvedName?> {
         val hops = mutableListOf<ProfileItem>()
         var unresolved: CoreConfigContext.UnresolvedName? = null
         for (name in names.map(String::trim).filter(String::isNotEmpty)) {
-            val reason = when (val found = find(name)) {
+            val reason = when (val found = find(name, ::takesAsHop)) {
                 is ByName.One -> if (hasServerAddress(found.value)) {
                     hops += found.value
                     null
@@ -248,13 +249,47 @@ object CoreConfigContextBuilder {
                     CoreConfigContext.UnresolvedName.Reason.NO_SERVER
                 }
 
-                ByName.None -> CoreConfigContext.UnresolvedName.Reason.NOT_FOUND
+                ByName.None -> reasonByType(name, HOP_REASONS, find) ?: CoreConfigContext.UnresolvedName.Reason.NOT_FOUND
                 ByName.Several -> CoreConfigContext.UnresolvedName.Reason.SEVERAL
             }
             if (reason != null && unresolved == null) unresolved = CoreConfigContext.UnresolvedName(name, reason)
         }
         return hops to unresolved
     }
+
+    /**
+     * PattNG: the types of profile a chain cannot go through, see [takesAsHop], with why each is told, see
+     * [reasonByType].
+     */
+    internal val HOP_REASONS = listOf(
+        EConfigType.POLICYGROUP to CoreConfigContext.UnresolvedName.Reason.GROUP_AS_HOP,
+        EConfigType.PROXYCHAIN to CoreConfigContext.UnresolvedName.Reason.CHAIN_AS_HOP,
+        EConfigType.CUSTOM to CoreConfigContext.UnresolvedName.Reason.CUSTOM_AS_HOP,
+    )
+
+    /** PattNG: the types of profile a group cannot fall back to, see [takesAsFallback], with why each is told. */
+    internal val FALLBACK_REASONS = listOf(
+        EConfigType.POLICYGROUP to CoreConfigContext.UnresolvedName.Reason.GROUP_AS_FALLBACK,
+        EConfigType.CUSTOM to CoreConfigContext.UnresolvedName.Reason.CUSTOM_AS_FALLBACK,
+    )
+
+    /**
+     * PattNG: why [name], which finds no profile it can be used as, cannot be used: the reason of the first of
+     * [reasons], in their order, whose type [find] finds a profile of the name among, or null when none does, as when no
+     * profile has the name at all. A name that a profile of another type has is told by what it names, rather than as a
+     * name no profile has. One lookup among the profiles of all those types tells it, as each lookup reads every
+     * profile; the types are looked up one by one only when several of those profiles have the name.
+     */
+    internal inline fun reasonByType(
+        name: String,
+        reasons: List<Pair<EConfigType, CoreConfigContext.UnresolvedName.Reason>>,
+        find: (String, (ProfileItem) -> Boolean) -> ByName<ProfileItem>,
+    ): CoreConfigContext.UnresolvedName.Reason? =
+        when (val found = find(name) { profile -> reasons.any { it.first == profile.configType } }) {
+            ByName.None -> null
+            is ByName.One -> reasons.first { it.first == found.value.configType }.second
+            ByName.Several -> reasons.firstOrNull { (type, _) -> find(name) { it.configType == type } != ByName.None }?.second
+        }
 
     /**
      * PattNG: whether a proxy chain can go through [profile]: an Aether one, whose core it reaches on the loopback, or
@@ -290,9 +325,8 @@ object CoreConfigContextBuilder {
 
         try {
             val subItem = MmkvManager.decodeSubscription(config.subscriptionId) ?: return listOf(config) to null
-            val find = { name: String -> SettingsManager.findServerViaRemarks(name, ::takesAsHop) }
-            val (next, nextUnresolved) = proxyChainHops(listOfNotNull(subItem.nextProfile), find)
-            val (prev, prevUnresolved) = proxyChainHops(listOfNotNull(subItem.prevProfile), find)
+            val (next, nextUnresolved) = proxyChainHops(listOfNotNull(subItem.nextProfile), SettingsManager::findServerViaRemarks)
+            val (prev, prevUnresolved) = proxyChainHops(listOfNotNull(subItem.prevProfile), SettingsManager::findServerViaRemarks)
             return next + config + prev to (nextUnresolved ?: prevUnresolved)
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to resolve proxy chain from group for '${config.remarks}'", e)
@@ -334,8 +368,11 @@ object CoreConfigContextBuilder {
      * Resolve and collect fallback outbounds from all POLICYGROUP nodes.
      *
      * Fallback targets must not overlap with already resolved tags or builtin tags. PattNG: a target is a profile's
-     * name; the first one that no profile has any more, or several have, goes beside them, for the session to be
-     * refused for it rather than fall back to an outbound that is not there, or to a profile it may not mean.
+     * name, read as [fallbackNameOf] reads it; the first one that no profile has any more, or several have, goes beside
+     * them, for the session to be refused for it rather than fall back to an outbound that is not there, or to a profile
+     * it may not mean. A routing target of that name stands in for the fallback only when it can be one, see
+     * [takesAsFallback]: a group, which builds a balancer and no outbound of its name, is looked up and refused as when
+     * no rule sends to it.
      */
     private fun resolveFallbackOutbounds(
         resolvedOutbounds: List<CoreConfigContext.ResolvedOutbound>,
@@ -345,18 +382,16 @@ object CoreConfigContextBuilder {
             .asSequence()
             .filter { it.resolvedType == CoreResolvedType.POLICYGROUP }
             .filter { BalancerStrategyType.from(it.profile.policyGroupType).supportsObservatory && it.profile.policyGroupTestOutbounds != false }
-            .mapNotNull { it.profile.policyGroupFallbackTag?.takeIf(String::isNotBlank) }
-            .filter { it !in AppConfig.BUILTIN_OUTBOUND_TAGS && resolvedOutbounds.none { outbound -> outbound.tag == it } }
+            .mapNotNull { fallbackNameOf(it.profile) }
+            .filter { it !in AppConfig.BUILTIN_OUTBOUND_TAGS && resolvedOutbounds.none { outbound -> outbound.tag == it && takesAsFallback(outbound.profile) } }
             .distinct()
             .mapNotNull { tag ->
-                when (val found = SettingsManager.findServerViaRemarks(tag, ::takesAsFallback)) {
-                    is ByName.One -> resolveOutbound(tag, found.value)
-                    ByName.None, ByName.Several -> {
-                        LogUtil.w(AppConfig.TAG, "Policy group fallback '$tag' has ${if (found == ByName.Several) "several matching profiles" else "no matching profile"}; the session is refused")
-                        if (unresolved == null) unresolved = CoreConfigContext.UnresolvedName(tag.trim(), reasonOf(found == ByName.Several))
-                        null
-                    }
+                val (profile, reason) = fallbackOf(tag, SettingsManager::findServerViaRemarks)
+                if (reason != null) {
+                    LogUtil.w(AppConfig.TAG, "Policy group fallback '$tag' cannot be used ($reason)")
+                    if (unresolved == null) unresolved = CoreConfigContext.UnresolvedName(tag, reason)
                 }
+                profile?.let { resolveOutbound(tag, it) }
             }
             .toList()
         return fallbacks to unresolved
@@ -365,6 +400,32 @@ object CoreConfigContextBuilder {
     /** PattNG: whether [profile] can be the fallback of a policy group: any profile but a group or a custom configuration. */
     internal fun takesAsFallback(profile: ProfileItem): Boolean =
         profile.configType != EConfigType.CUSTOM && profile.configType != EConfigType.POLICYGROUP
+
+    /**
+     * PattNG: the one profile [name], the fallback a policy group names, finds among those that can be a fallback, see
+     * [takesAsFallback], or why it finds none: no such profile has the name, several have it, or only a group or a
+     * custom configuration has it, which is told as such rather than as a name no profile has, see [FALLBACK_REASONS].
+     * [find] looks a name up among the profiles a filter takes, see [ByName]; inline, so that the group editor looks up
+     * through its own source, which suspends.
+     */
+    internal inline fun fallbackOf(
+        name: String,
+        find: (String, (ProfileItem) -> Boolean) -> ByName<ProfileItem>,
+    ): Pair<ProfileItem?, CoreConfigContext.UnresolvedName.Reason?> =
+        when (val found = find(name, ::takesAsFallback)) {
+            is ByName.One -> found.value to null
+            ByName.Several -> null to CoreConfigContext.UnresolvedName.Reason.SEVERAL
+            ByName.None -> null to (reasonByType(name, FALLBACK_REASONS, find) ?: CoreConfigContext.UnresolvedName.Reason.NOT_FOUND)
+        }
+
+    /**
+     * PattNG: the name of the profile the policy group [profile] falls back to, trimmed, or null when it names none. The
+     * outbound built for that profile is tagged with it, and the group's balancer falls back to it, see
+     * CoreConfigManager.resolvePolicyGroupFallbackTag: both read it here, so that the two tags match. A blank name
+     * names none; the group then falls back to its first member, rather than to an outbound of a blank tag.
+     */
+    internal fun fallbackNameOf(profile: ProfileItem): String? =
+        profile.policyGroupFallbackTag?.trim()?.takeIf(String::isNotEmpty)
 
     /**
      * A group is filled by a filter rather than by named members, so it can catch several Aether

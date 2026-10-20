@@ -1,7 +1,5 @@
 package com.v2ray.ang.ui.server
 
-import android.os.Bundle
-import androidx.activity.compose.BackHandler
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -45,8 +43,8 @@ import com.v2ray.ang.extension.toast
 import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.CertificateFingerprintManager
-import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.ui.base.BaseComponentActivity
+import com.v2ray.ang.ui.base.EditorLoading
 import com.v2ray.ang.ui.base.EditorOutcomeEffect
 import com.v2ray.ang.ui.compose.AppTopBar
 import com.v2ray.ang.ui.compose.DeleteConfirmDialog
@@ -66,37 +64,43 @@ abstract class BaseServerActivity : BaseComponentActivity() {
     protected abstract val serverConfigType: EConfigType
 
     protected val editGuid by lazy { intent.getStringExtra("guid").orEmpty() }
-    protected val isRunning by lazy {
-        intent.getBooleanExtra("isRunning", false)
-                && editGuid.isNotEmpty()
-                && editGuid == MmkvManager.getSelectServer()
-    }
     protected val subscriptionId by lazy { intent.getStringExtra("subscriptionId") }
 
-    protected lateinit var initialConfig: ProfileItem
+    /**
+     * The profile the screen opened on. PattNG: read off the main thread by the view model, see
+     * [ServerEditorViewModel.opened]; the screen shows its form, which reads this, only once it is.
+     */
+    protected val initialConfig: ProfileItem
+        get() = checkNotNull(editor.opened.value) { "the profile is read before the screen shows its form" }
 
     /** PattNG: the save and the delete, which outlive this activity when it is recreated, see [ServerEditorViewModel]. */
     private val editor: ServerEditorViewModel by viewModels {
         viewModelFactory {
-            initializer { ServerEditorViewModel(application, ProfileEditorRepository(), editGuid, subscriptionId) }
+            initializer {
+                ServerEditorViewModel(
+                    application, ProfileEditorRepository(), editGuid, subscriptionId, serverConfigType, intent.getBooleanExtra("isRunning", false)
+                )
+            }
         }
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val existingConfig = MmkvManager.decodeServerConfig(editGuid)
-        initialConfig = existingConfig ?: ProfileItem.create(serverConfigType)
+    /** PattNG: the form once the profile it opens on is read, see [initialConfig]; until then, that the screen waits. */
+    @Composable
+    final override fun ScreenContent() {
+        val opened by editor.opened.collectAsStateWithLifecycle()
+        if (opened == null) EditorLoading(serverConfigType.toString()) { finish() } else EditorContent()
     }
 
+    /** PattNG: the screen's form, shown once the profile it opened on is read, see [initialConfig]. */
+    @Composable
+    protected abstract fun EditorContent()
+
     /**
-     * PattNG: while a save or a delete runs the screen stays; it closes once that has written, telling the main screen
-     * what it did, see [ServerEditorScaffold]. Left before, the write would go untold: the main screen would neither show
-     * it nor restart the running profile with it. Once the screen is left, no save or delete starts any more.
+     * PattNG: the screen closes only once the save or the delete that runs has written, telling the screen it returns
+     * to what it did, see [com.v2ray.ang.ui.base.EditorViewModel.leaveScreen].
      */
     override fun finish() {
-        if (editor.isBusy) return
-        editor.onScreenLeft()
-        super.finish()
+        if (editor.leaveScreen()) super.finish()
     }
 
     @Composable
@@ -440,6 +444,12 @@ abstract class BaseServerActivity : BaseComponentActivity() {
 
     protected open fun validateProtocolConfig(config: ProfileItem): Boolean = true
 
+    /**
+     * PattNG: the Aether listen port an Aether profile is built on, see [ServerUiState.toProfileItem]; null, the port of
+     * the settings, for the others, which have no core.
+     */
+    protected open val aetherListenPort: Int? get() = null
+
     protected open fun validateCommonConfig(state: ServerUiState, config: ProfileItem): Boolean {
 
         if (config.password.isNullOrBlank()) {
@@ -504,7 +514,7 @@ abstract class BaseServerActivity : BaseComponentActivity() {
      */
     protected fun saveServer(state: ServerUiState) {
         if (!validateBasicConfig(state)) return
-        val config = state.toProfileItem(initialConfig)
+        val config = state.toProfileItem(initialConfig, aetherListenPort)
         if (!validateCommonConfig(state, config)) return
         if (!validateProtocolConfig(config)) return
 
@@ -520,15 +530,13 @@ abstract class BaseServerActivity : BaseComponentActivity() {
     ) {
         var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
         val scrollState = rememberScrollState()
-        // PattNG: Back waits for a save or a delete that runs, see finish(); held only meanwhile, so that predictive back
-        // shows where it leads at any other time.
-        val busy by editor.busy.collectAsStateWithLifecycle()
-        BackHandler(enabled = busy) {}
+        // PattNG: read off the main thread, see ProfileEditorViewModel.isRunning; no delete is offered until it is known.
+        val running by editor.isRunning.collectAsStateWithLifecycle()
         EditorOutcomeEffect(
             viewModel = editor,
             onSaved = { guid ->
                 ProfileEditorResult.run {
-                    finishSaved(guid, isRunning)
+                    finishSaved(guid, editor.isRunning.value == true)
                 }
             },
             onDeleted = {
@@ -544,7 +552,7 @@ abstract class BaseServerActivity : BaseComponentActivity() {
                     title = title,
                     onBackClick = { finish() },
                     actions = {
-                        if (editGuid.isNotEmpty() && !isRunning) {
+                        if (editGuid.isNotEmpty() && running == false) {
                             IconButton(onClick = { showDeleteDialog = true }) {
                                 Icon(
                                     painterResource(R.drawable.ic_delete_24dp),

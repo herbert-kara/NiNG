@@ -8,8 +8,10 @@ import com.v2ray.ang.enums.AetherTor
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.util.JsonUtil
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -20,6 +22,17 @@ class CoreOutboundBuilderTest {
 
     private fun createProfile(mode: String?): ProfileItem =
         ProfileItem.create(EConfigType.VLESS).apply { dialMode = mode }
+
+    @Test
+    fun aMuxConcurrencyFieldThatHoldsNoNumberFallsBackToTheDefault() {
+        assertEquals(16, CoreOutboundBuilder.muxConcurrency("16", 8))
+        assertEquals(16, CoreOutboundBuilder.muxConcurrency(" 16 ", 8))
+        assertEquals(-1, CoreOutboundBuilder.muxConcurrency("-1", 8))
+        // Blank, whitespace, words, a decimal and an overflow left the outbound unbuilt before.
+        for (text in listOf(null, "", "  ", "eight", "1.5", "99999999999")) {
+            assertEquals(8, CoreOutboundBuilder.muxConcurrency(text, 8), text.toString())
+        }
+    }
 
     @Test
     fun test_applyDialMode_setsSockoptDialMode() {
@@ -334,5 +347,48 @@ class CoreOutboundBuilderTest {
         assertEquals(ExitNodeOutbound.EchUnusable, CoreOutboundBuilder.nodeOutboundOf(withEch("""{"tag": "exit-node", "protocol": "freedom"}""")))
         assertEquals(ExitNodeOutbound.EchUnusable, CoreOutboundBuilder.nodeOutboundOf(withEch("freedom")))
         assertEquals(ExitNodeOutbound.EchUnusable, CoreOutboundBuilder.nodeOutboundOf(withEch("""{"tag": "ech", "protocol": "freedom"}""", echConfigList = null)))
+    }
+
+    @Test
+    fun aWireGuardOutboundGetsOnlyAddressesAsRemoteDnsEachItsOwnEntry() {
+        val none = emptyList<String>()
+        // Blank: the default servers, one entry each, the IPv4 ones alone when IPv6 is off.
+        assertEquals(
+            listOf("1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001") to none,
+            CoreOutboundBuilder.wireguardRemoteDns(null, ipv6Enabled = true),
+        )
+        assertEquals(listOf("1.1.1.1", "1.0.0.1") to none, CoreOutboundBuilder.wireguardRemoteDns(" , ", ipv6Enabled = false))
+        // "local", which the core takes no more, a host name and an address with a port are left out.
+        assertEquals(listOf("1.1.1.1", "1.0.0.1") to listOf("local"), CoreOutboundBuilder.wireguardRemoteDns("local", ipv6Enabled = false))
+        assertEquals(
+            listOf("8.8.8.8") to listOf("dns.google", "1.1.1.1:53"),
+            CoreOutboundBuilder.wireguardRemoteDns("dns.google, 8.8.8.8, 1.1.1.1:53", ipv6Enabled = true),
+        )
+        // Only IPv6 servers while IPv6 is off: the default IPv4 ones.
+        assertEquals(listOf("1.1.1.1", "1.0.0.1") to none, CoreOutboundBuilder.wireguardRemoteDns("2001:4860:4860::8888", ipv6Enabled = false))
+        // An IPv6 address loses its brackets; with a port it is left out.
+        assertEquals(
+            listOf("2001:4860:4860::8888", "9.9.9.9") to listOf("[2001:4860:4860::8844]:53"),
+            CoreOutboundBuilder.wireguardRemoteDns("[2001:4860:4860::8888], 9.9.9.9, [2001:4860:4860::8844]:53", ipv6Enabled = true),
+        )
+        // What the core refuses although it looks like an address is left out; what it takes is kept.
+        assertEquals(
+            listOf("::ffff:1.1.1.1", "64:ff9b::8.8.8.8") to listOf("8.8.8.08", "1:2:3:4:5:6:7::8", "[[::1]]"),
+            CoreOutboundBuilder.wireguardRemoteDns("8.8.8.08, ::ffff:1.1.1.1, 1:2:3:4:5:6:7::8, [[::1]], 64:ff9b::8.8.8.8", ipv6Enabled = true),
+        )
+    }
+
+    @Test
+    fun anAddressIsWhatGosNetipParseAddrTakes() {
+        listOf(
+            "1.1.1.1", "0.0.0.0", "255.255.255.255", "::", "::1", "1::", "2001:db8::68", "2001:DB8:0:0:0:0:0:1",
+            "1:2:3:4:5:6:7:8", "::ffff:1.1.1.1", "64:ff9b::8.8.8.8", "::1.2.3.4", "1:2:3:4:5:6:1.2.3.4", "fe80::1%eth0",
+        ).forEach { assertTrue(CoreOutboundBuilder.isNetipAddress(it), it) }
+        listOf(
+            "", "local", "dns.google", "8.8.8.08", "010.0.0.1", "00.1.1.1", "256.1.1.1", "1.2.3", "1.2.3.4.5", "1..2.3",
+            "1.2.3.4%eth0", "1.1.1.1:53", "1:2:3:4:5:6:7::8", "2001:db8:0:0:0:0:0::1", "1:::2", ":1::2", "1::2::3", "1:2",
+            "[::1]", "12345::1", "::1%", "%eth0", "1:2:3:4:5:6:7:8:9", "1:2:3:4:5:6:1.2.3.4:5", "::1.2.3", "1:2:3:4:5:1.2.3.4",
+            "::g", "1:2:3:4:5:6:7:8::", "１.1.1.1",
+        ).forEach { assertFalse(CoreOutboundBuilder.isNetipAddress(it), it) }
     }
 }

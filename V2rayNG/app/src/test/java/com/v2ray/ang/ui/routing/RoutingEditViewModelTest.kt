@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -33,15 +34,50 @@ class RoutingEditViewModelTest {
         /** The position and the id each delete was asked for. */
         val deletes = mutableListOf<Pair<Int, String>>()
 
+        /** When set, the storage refuses every write: nothing is written. */
+        var refuseWrites = false
+
+        /** The rule the editor opens on, and the position and the kept id each read of it was asked for. */
+        var rule: RulesetItem? = null
+        val ruleReads = mutableListOf<Pair<Int, String?>>()
+
+        /** Whether a rule can match the app a connection comes from. */
+        var canUseProcess = false
+
+        /** When set, the reads the screen opens on wait for it, as reads off the main thread take their time. */
+        var openGate: CompletableDeferred<Unit>? = null
+
         override suspend fun <T> withProfileNames(takes: (ProfileItem) -> Boolean, check: (find: (String) -> ByName<ProfileItem>) -> T): T =
             names.withProfileNames(takes, check)
 
-        override suspend fun saveRule(position: Int, rule: RulesetItem) {
-            saves += position to rule.copy()
+        // A fresh copy, as a real read gives.
+        override suspend fun loadRule(position: Int, reopenedId: String?): RulesetItem? {
+            ruleReads += position to reopenedId
+            openGate?.await()
+            return rule?.copy()
         }
 
-        override suspend fun deleteRule(position: Int, id: String) {
+        // As read, custom profiles left out by the source.
+        override suspend fun profileNames(): List<String> {
+            openGate?.await()
+            return names.profiles.map { it.remarks }
+        }
+
+        override suspend fun canUseProcessRouting(): Boolean {
+            openGate?.await()
+            return canUseProcess
+        }
+
+        override suspend fun saveRule(position: Int, rule: RulesetItem): Boolean {
+            if (refuseWrites) return false
+            saves += position to rule.copy()
+            return true
+        }
+
+        override suspend fun deleteRule(position: Int, id: String): Boolean {
+            if (refuseWrites) return false
             deletes += position to id
+            return true
         }
     }
 
@@ -60,7 +96,11 @@ class RoutingEditViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel(position: Int = -1, initial: RulesetItem? = null) = RoutingEditViewModel(mock<Application>(), source, position, initial)
+    /** The editor opened at [position] on [initial], as the source reads it, by [reopenedId] when it kept one. */
+    private fun viewModel(position: Int = -1, initial: RulesetItem? = null, reopenedId: String? = null): RoutingEditViewModel {
+        source.rule = initial
+        return RoutingEditViewModel(mock<Application>(), source, position, reopenedId)
+    }
 
     private fun rule(tag: String = "exit", enabled: Boolean = true, id: String = "") =
         RulesetItem(id = id, remarks = "rule", outboundTag = tag, enabled = enabled)
@@ -210,16 +250,82 @@ class RoutingEditViewModelTest {
     }
 
     @Test
-    fun leavingTheScreenWhileTheProfileIsLookedUpStoresNothing() {
+    fun theScreenMayNotCloseWhileTheProfileIsLookedUp() {
         val gate = CompletableDeferred<Unit>()
         source.names.gate = gate
         val viewModel = viewModel()
 
         viewModel.save(rule())
-        viewModel.onScreenLeft()
+        assertFalse(viewModel.leaveScreen())
         gate.complete(Unit)
 
+        assertEquals(EditorOutcome.Saved(source.saves.single().second.id), viewModel.outcome.value)
+        assertFalse(viewModel.leaveScreen())
+        viewModel.onOutcomeHandled()
+        assertTrue(viewModel.leaveScreen())
+    }
+
+    @Test
+    fun aSaveOrADeleteTheStorageRefusesIsTold() {
+        source.refuseWrites = true
+        val viewModel = viewModel(position = 3, initial = rule(id = "rule-id"))
+
+        viewModel.save(rule())
+        assertEquals(EditorOutcome.Refused(R.string.toast_failure), viewModel.outcome.value)
+
+        viewModel.onOutcomeHandled()
+        viewModel.delete()
+        assertEquals(EditorOutcome.Refused(R.string.toast_failure), viewModel.outcome.value)
         assertTrue(source.saves.isEmpty())
+        assertTrue(source.deletes.isEmpty())
+    }
+
+    @Test
+    fun aRuleGoneByTheTimeTheEditorOpenedHasNoneToDelete() {
+        val viewModel = viewModel(position = 3, initial = null)
+
+        viewModel.delete()
+
+        assertTrue(source.deletes.isEmpty())
         assertNull(viewModel.outcome.value)
+    }
+
+    @Test
+    fun theRuleAndWhatTheScreenOffersAreReadOffTheMainThreadBeforeTheScreenShowsThem() {
+        source.names.add(AppConfig.TAG_DIRECT)
+        source.canUseProcess = true
+        val gate = CompletableDeferred<Unit>()
+        source.openGate = gate
+
+        val viewModel = viewModel(position = 3, initial = RulesetItem(id = "rule-id", remarks = "rule"), reopenedId = "rule-id")
+        assertNull(viewModel.opened.value)
+        assertNull(viewModel.ruleId)
+        gate.complete(Unit)
+
+        assertEquals(listOf(3 to "rule-id"), source.ruleReads)
+        // The built-in outbounds, then the names of the profiles, each once.
+        assertEquals(
+            RuleOpening(RulesetItem(id = "rule-id", remarks = "rule"), AppConfig.BUILTIN_OUTBOUND_TAGS.toList() + "exit", canUseProcess = true),
+            viewModel.opened.value,
+        )
+        assertEquals("rule-id", viewModel.ruleId)
+    }
+
+    @Test
+    fun nothingIsSavedOrDeletedBeforeTheRuleIsRead() {
+        val gate = CompletableDeferred<Unit>()
+        source.openGate = gate
+        val viewModel = viewModel(position = 3, initial = RulesetItem(id = "rule-id"))
+
+        viewModel.save(rule(tag = "gone"))
+        viewModel.delete()
+
+        // Not even a profile is looked up, whose name not found would be told.
+        assertEquals(0, source.names.lookups)
+        assertTrue(source.saves.isEmpty())
+        assertTrue(source.deletes.isEmpty())
+        assertNull(viewModel.outcome.value)
+        gate.complete(Unit)
+        assertEquals("rule-id", viewModel.ruleId)
     }
 }

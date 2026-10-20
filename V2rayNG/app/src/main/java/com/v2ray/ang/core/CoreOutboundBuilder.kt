@@ -107,6 +107,13 @@ object CoreOutboundBuilder {
         }
     }
 
+    /**
+     * PattNG: a mux concurrency setting, [text], as Xray takes it: the whole number written, or [default] when the field,
+     * which takes any text, holds none. A blank field left the outbound unbuilt, and the profile's traffic went out
+     * directly while the app showed it connected.
+     */
+    internal fun muxConcurrency(text: String?, default: Int): Int = Utils.parseInt(text?.trim(), default)
+
     /** Applies global outbound options (mux, protocol-specific tweaks, etc.). */
     private fun updateOutboundWithGlobalSettings(outbound: OutboundBean): Boolean {
         try {
@@ -127,8 +134,11 @@ object CoreOutboundBuilder {
 
             if (muxEnabled) {
                 outbound.mux?.enabled = true
-                outbound.mux?.concurrency = MmkvManager.decodeSettingsString(AppConfig.PREF_MUX_CONCURRENCY, "8").orEmpty().toInt()
-                outbound.mux?.xudpConcurrency = MmkvManager.decodeSettingsString(AppConfig.PREF_MUX_XUDP_CONCURRENCY, AppConfig.DEFAULT_MUX_XUDP_CONCURRENCY).orEmpty().toInt()
+                outbound.mux?.concurrency = muxConcurrency(MmkvManager.decodeSettingsString(AppConfig.PREF_MUX_CONCURRENCY, "8"), 8)
+                outbound.mux?.xudpConcurrency = muxConcurrency(
+                    MmkvManager.decodeSettingsString(AppConfig.PREF_MUX_XUDP_CONCURRENCY, AppConfig.DEFAULT_MUX_XUDP_CONCURRENCY),
+                    AppConfig.DEFAULT_MUX_XUDP_CONCURRENCY.toInt(),
+                )
                 outbound.mux?.xudpProxyUDP443 = MmkvManager.decodeSettingsString(AppConfig.PREF_MUX_XUDP_QUIC, "reject")
                 if (protocol.equals(EConfigType.VLESS.name, true) && outbound.settings?.flow?.isNotEmpty() == true) {
                     outbound.mux?.concurrency = -1
@@ -310,6 +320,99 @@ object CoreOutboundBuilder {
         return outboundBean
     }
 
+    /**
+     * PattNG: the remote DNS servers of a WireGuard outbound, and the entries of [remoteDNS] left out. The core parses
+     * each server with Go's netip.ParseAddr and stops the whole process on anything it refuses, as a host name, an
+     * address with a port, or "local", which it takes no more; so only what it takes goes, see [isNetipAddress], an
+     * IPv6 address without its brackets, the IPv4 ones alone when IPv6 is off, each its own entry; and when none is
+     * left, the default ones, see [AppConfig.WIREGUARD_LOCAL_REMOTE_DNS], split as well.
+     */
+    internal fun wireguardRemoteDns(remoteDNS: String?, ipv6Enabled: Boolean): Pair<List<String>, List<String>> {
+        fun entries(list: String?) = list?.split(",").orEmpty().map { it.trim() }.filter { it.isNotEmpty() }
+        fun address(entry: String): String? {
+            val bare = if (entry.startsWith("[") && entry.endsWith("]")) entry.substring(1, entry.length - 1) else entry
+            return bare.takeIf(::isNetipAddress)
+        }
+
+        val read = entries(remoteDNS).map { entry -> entry to address(entry) }
+        val leftOut = read.filter { it.second == null }.map { it.first }
+        val usable = read.mapNotNull { it.second }.filter { ipv6Enabled || !it.contains(":") }
+        val servers = usable.ifEmpty { entries(AppConfig.WIREGUARD_LOCAL_REMOTE_DNS).filter { ipv6Enabled || !it.contains(":") } }
+        return servers to leftOut
+    }
+
+    /**
+     * PattNG: whether Go's netip.ParseAddr takes [text], as the core reads a WireGuard remoteDNS server, see
+     * [wireguardRemoteDns]: IPv4 in four decimal fields without leading zeros, or IPv6 with one :: at most, standing for
+     * one field or more, and a dotted IPv4 tail and a zone allowed; no brackets. Follows net/netip's ParseAddr,
+     * parseIPv4Fields and parseIPv6 step by step.
+     */
+    internal fun isNetipAddress(text: String): Boolean {
+        for (c in text) {
+            when (c) {
+                '.' -> return isNetipIpv4(text)
+                ':' -> return isNetipIpv6(text)
+                '%' -> return false
+            }
+        }
+        return false
+    }
+
+    private fun isNetipIpv4(text: String): Boolean {
+        val fields = text.split('.')
+        return fields.size == 4 && fields.all { field ->
+            field.isNotEmpty() && field.length <= 3 && field.all { it in '0'..'9' } &&
+                (field.length == 1 || field[0] != '0') && field.toInt() <= 255
+        }
+    }
+
+    private fun isNetipIpv6(text: String): Boolean {
+        var s = text
+        val zoneAt = s.indexOf('%')
+        if (zoneAt >= 0) {
+            if (zoneAt == s.length - 1) return false
+            s = s.substring(0, zoneAt)
+        }
+        var ellipsis = -1
+        if (s.startsWith("::")) {
+            ellipsis = 0
+            s = s.substring(2)
+            if (s.isEmpty()) return true
+        }
+        var i = 0
+        while (i < 16) {
+            var off = 0
+            while (off < s.length && isHexDigit(s[off])) {
+                if (off > 3) return false
+                off++
+            }
+            if (off == 0) return false
+            if (off < s.length && s[off] == '.') {
+                if (ellipsis < 0 && i != 12) return false
+                if (i + 4 > 16) return false
+                if (!isNetipIpv4(s)) return false
+                s = ""
+                i += 4
+                break
+            }
+            i += 2
+            s = s.substring(off)
+            if (s.isEmpty()) break
+            if (s[0] != ':' || s.length == 1) return false
+            s = s.substring(1)
+            if (s[0] == ':') {
+                if (ellipsis >= 0) return false
+                ellipsis = i
+                s = s.substring(1)
+                if (s.isEmpty()) break
+            }
+        }
+        if (s.isNotEmpty()) return false
+        return if (i < 16) ellipsis >= 0 else ellipsis < 0
+    }
+
+    private fun isHexDigit(c: Char): Boolean = c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
+
     private fun toOutboundWireguard(profileItem: ProfileItem): OutboundBean? {
         val outboundBean = createInitOutbound(EConfigType.WIREGUARD)
 
@@ -327,20 +430,16 @@ object CoreOutboundBuilder {
             ipv4Addresses.ifEmpty { listOf(AppConfig.WIREGUARD_LOCAL_ADDRESS_V4) }
         }
 
-        val rawDNS = profileItem.remoteDNS
-            ?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?.ifEmpty { null }
-            ?: listOf(AppConfig.WIREGUARD_LOCAL_REMOTE_DNS)
-
-        val remotes = if (rawDNS.size == 1 && rawDNS[0] == "local") {
-            rawDNS
-        } else if (MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED) == true) {
-            rawDNS
-        } else {
-            val ipv4Dns = rawDNS.filter { !it.contains(":") }
-            ipv4Dns.ifEmpty { listOf(AppConfig.WIREGUARD_LOCAL_REMOTE_DNS) }
+        val (remotes, leftOut) = wireguardRemoteDns(
+            profileItem.remoteDNS,
+            ipv6Enabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED) == true,
+        )
+        if (leftOut.isNotEmpty()) {
+            // The entries themselves stay out of the log: one may be a DNS URL with an account in it.
+            LogUtil.w(
+                AppConfig.TAG,
+                "CoreOutboundBuilder: WireGuard profile '${profileItem.remarks}': ${leftOut.size} remoteDNS entries left out, not IP addresses"
+            )
         }
 
         outboundBean?.settings?.let { wireguard ->

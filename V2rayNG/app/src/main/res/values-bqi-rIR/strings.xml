@@ -106,7 +106,7 @@
     <string name="server_lab_reserved">Reserved(اختیاری، وا کاما (,) ز یک جوڌا ابۊن)</string>
     <string name="server_lab_local_address">نشۊوی مهلی (اختیاری IPv4/IPv6، وا کاما (,) ز یک جوڌا ابۊن)</string>
     <string name="server_lab_local_mtu">MTU(اختیاری، پؽش فرز 1420)</string>
-    <string name="server_lab_remote_dns">remoteDNS (اختياری، نشۊویا IPv4/IPv6 جوڌا وابیڌه وا کاما، یا «local» سی و کار گرؽڌن DNS دسگا)</string>
+    <string name="server_lab_remote_dns">remoteDNS (اختياری، نشۊویا IPv4/IPv6 جوڌا وابیڌه وا کاما)</string>
     <string name="server_lab_kcp_mtu">mKCP MTU (اختیاری، پؽش فرز 1350)</string>
     <string name="server_lab_kcp_tti">mKCP TTI (اختیاری، پؽش فرز 50 میلی‌سانیه)</string>
     <string name="toast_success">وا مووفقیت ٱنجوم وابی</string>
@@ -577,6 +577,7 @@
     <string name="value_unknown">نا موشخس</string>
     <string name="aether_lab_protocol">پروتکل</string>
     <string name="aether_lab_transport">حامل</string>
+    <string name="aether_lab_masque_sni">نوم سرور MASQUE (SNI)</string>
     <string name="aether_lab_scan_mode">حالت اسکن</string>
     <string name="aether_lab_obfuscation">مبهم‌سازی</string>
     <string name="aether_lab_ip_version">نسخه IP</string>
@@ -589,6 +590,11 @@
     <string name="toast_profile_name_not_found">هیچ پروفایلی وا نوم «%1$s» پیدا نبی</string>
     <string name="toast_profile_name_duplicate">دو پروفایل وا نوم «%1$s» پیدا بین؛ نوم یکیشونه آلشت کۊنین</string>
     <string name="toast_profile_no_server">پروفایل «%1$s» نشۊوی سرور ناره، سی همی زنجیره پروکسی ازس رد نیبۊ</string>
+    <string name="toast_profile_group_not_fallback">«%1$s» یه بونکۊ سیاسته، وو بونکۊ سیاست سی بارت جایگۊزین قابل استفاده نی؛ یه پروفایل دیه انتخاب کنین</string>
+    <string name="toast_profile_group_not_hop">«%1$s» یه بونکۊ سیاسته، سی همی زنجیره پروکسی ازس رد نیبۊ؛ یه پروفایل دیه انتخاب کنین</string>
+    <string name="toast_profile_chain_not_hop">«%1$s» یه زنجیره پروکسیه، سی همی زنجیره پروکسی دیه ازس رد نیبۊ؛ یه پروفایل دیه انتخاب کنین</string>
+    <string name="toast_profile_custom_not_hop">«%1$s» یه کانفیگ سفارشیه، سی همی زنجیره پروکسی ازس رد نیبۊ؛ یه پروفایل دیه انتخاب کنین</string>
+    <string name="toast_profile_custom_not_fallback">«%1$s» یه کانفیگ سفارشیه، وو کانفیگ سفارشی سی بارت جایگۊزین قابل استفاده نی؛ یه پروفایل دیه انتخاب کنین</string>
     <string name="aether_keys_hint_fragment">ClientHello درخواستا WARP API تکه‌تکه فرستاده ابۊ، سی شبکه‌یایی که نوم API نه فیلتر اکنن</string>
     <string name="aether_lab_fragment">تکه‌تکه کردن ClientHello</string>
     <string name="aether_lab_fragment_size">اندازه تکه‌یل (بایت)</string>
@@ -638,6 +644,7 @@
     <string name="aether_lab_ech_domain">دامنه ECH</string>
     <string name="aether_invalid_ech_dns">DNS سی ECH باید udp://IP، tcp://IP یا نشونی https:// یه سرور DNS-over-HTTPS بۊ</string>
     <string name="aether_invalid_ech_domain">دامنه ECH باید یه نوم دامنه بۊ، چی cloudflare-ech.com</string>
+    <string name="aether_invalid_masque_sni">نوم سرور MASQUE (SNI) باید یه نوم دامنه بۊ، چی www.cloudflare.com</string>
     <string name="aether_lab_dns">DNS من تونل</string>
     <string name="aether_hint_dns">وا کاما سوا کنین؛ خالی بیلین تا 1.1.1.1 و 1.0.0.1 استفاده بۊ</string>
     <string name="aether_invalid_dns">نشونی‌یای DNS مثل 1.1.1.1 یا 10.0.0.1:5353 نه وا کاما سوا بنویسین</string>
@@ -698,6 +705,9 @@
     <string name="aether_chain_one_profile">یه زنجیره پروکسی فقط ایتره یه پروفایل Aether داشته بۊ</string>
     <string name="aether_exit_node_name_taken">یه پروفایل وا نوم exit-node ایچو من مسیریابی استفاده ابۊ، وو exit-node نوم outbound ـیه که هسته Aether زه ری وو بیرون وصل ابۊ؛ نوم او پروفایل نه آلشت کنین</string>
     <string name="aether_chain_hop_missing">گامی که پروفایل Aether ای زنجیره پروکسی زه ری وو بیرون وصل ابۊ ساخته نبی، وو هسته Aether بی او وو اینترنت ارسی</string>
+    <string name="config_main_outbound_missing">پروفایل انتخاب بیده ساخته نبی، وو همه ترافیک بی او مستقیم وو اینترنت ارسی؛ تنظیماتس نه درس کۊنین</string>
+    <string name="config_routing_target_unbuilt">پروفایل «%1$s» که یه قانووݩ تور جوستن ترافیک وو هونه مفرسه ساخته نبی؛ درسس کۊنین، یا قانووݩیایی که زهس استفاده اکنن نه خاموش کۊنین</string>
+    <string name="config_group_fallback_unbuilt">پروفایل «%1$s» که بارت جایگۊزین یه بونکۊ سیاسته ساخته نبی؛ درسس کۊنین، یا یه بارت جایگۊزین دیه سی بونکۊ انتخاب کنین</string>
     <string name="aether_config_single_profile">یه پیکربندی فقط ایتره زه یه پروفایل Aether استفاده کنه</string>
     <string name="aether_config_two_exits">ایچو یه هسته Aether باید وا دو جور زه ری وو بیرون وصل بۊ: همو تونل تنهایی وو پشت یه گام زنجیره پروکسی، یا پشت دو گام جدا، یا وا دو تنظیم جدا exit-node استفاده بیه</string>
     <string name="aether_custom_no_outbound">هیچ خروجی SOCKS من پیکربندی به %1$s:%2$d وصل نیبۊ؛ فرمان Aether همۊچو گوش اکنه</string>

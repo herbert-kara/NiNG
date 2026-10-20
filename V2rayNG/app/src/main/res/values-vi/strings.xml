@@ -106,7 +106,7 @@
     <string name="server_lab_reserved">Reserved (không bắt buộc, phân cách bằng dấu phẩy)</string>
     <string name="server_lab_local_address">Địa chỉ cục bộ (IPv4/IPv6 không bắt buộc, phân cách bằng dấu phẩy)</string>
     <string name="server_lab_local_mtu">MTU (không bắt buộc, mặc định 1420)</string>
-    <string name="server_lab_remote_dns">remoteDNS (tùy chọn, các địa chỉ IPv4/IPv6 cách nhau bằng dấu phẩy, hoặc "local" để dùng DNS của thiết bị)</string>
+    <string name="server_lab_remote_dns">remoteDNS (tùy chọn, các địa chỉ IPv4/IPv6 cách nhau bằng dấu phẩy)</string>
     <string name="server_lab_kcp_mtu">mKCP MTU (không bắt buộc, mặc định 1350)</string>
     <string name="server_lab_kcp_tti">mKCP TTI (không bắt buộc, mặc định 50 ms)</string>
     <string name="toast_success">Thành công!</string>
@@ -575,6 +575,7 @@
     <string name="value_unknown">không xác định</string>
     <string name="aether_lab_protocol">Giao thức</string>
     <string name="aether_lab_transport">Truyền tải</string>
+    <string name="aether_lab_masque_sni">Tên máy chủ MASQUE (SNI)</string>
     <string name="aether_lab_scan_mode">Chế độ quét</string>
     <string name="aether_lab_obfuscation">Làm rối</string>
     <string name="aether_lab_ip_version">Phiên bản IP</string>
@@ -587,6 +588,11 @@
     <string name="toast_profile_name_not_found">Không tìm thấy hồ sơ nào tên \"%1$s\"</string>
     <string name="toast_profile_name_duplicate">Tìm thấy hai hồ sơ cùng tên \"%1$s\"; hãy đổi tên một hồ sơ</string>
     <string name="toast_profile_no_server">Hồ sơ \"%1$s\" không có địa chỉ máy chủ, nên chuỗi proxy không thể đi qua nó</string>
+    <string name="toast_profile_group_not_fallback">\"%1$s\" là một nhóm chính sách, và nhóm chính sách không thể làm kết nối dự phòng; hãy chọn hồ sơ khác</string>
+    <string name="toast_profile_group_not_hop">\"%1$s\" là một nhóm chính sách, nên chuỗi proxy không thể đi qua nó; hãy chọn hồ sơ khác</string>
+    <string name="toast_profile_chain_not_hop">\"%1$s\" là một chuỗi proxy, nên chuỗi proxy khác không thể đi qua nó; hãy chọn hồ sơ khác</string>
+    <string name="toast_profile_custom_not_hop">\"%1$s\" là một cấu hình tùy chỉnh, nên chuỗi proxy không thể đi qua nó; hãy chọn hồ sơ khác</string>
+    <string name="toast_profile_custom_not_fallback">\"%1$s\" là một cấu hình tùy chỉnh, và cấu hình tùy chỉnh không thể làm kết nối dự phòng; hãy chọn hồ sơ khác</string>
     <string name="aether_keys_hint_fragment">Gửi ClientHello của các yêu cầu tới WARP API thành từng mảnh, cho các mạng lọc tên của API</string>
     <string name="aether_lab_fragment">Phân mảnh ClientHello</string>
     <string name="aether_lab_fragment_size">Kích thước mảnh (byte)</string>
@@ -636,6 +642,7 @@
     <string name="aether_lab_ech_domain">Tên miền ECH</string>
     <string name="aether_invalid_ech_dns">DNS cho ECH phải là udp://IP, tcp://IP hoặc địa chỉ https:// của máy chủ DNS-over-HTTPS</string>
     <string name="aether_invalid_ech_domain">Tên miền ECH phải là một tên miền, ví dụ cloudflare-ech.com</string>
+    <string name="aether_invalid_masque_sni">Tên máy chủ MASQUE (SNI) phải là một tên miền, ví dụ www.cloudflare.com</string>
     <string name="aether_lab_dns">DNS trong đường hầm</string>
     <string name="aether_hint_dns">Phân cách bằng dấu phẩy; để trống để dùng 1.1.1.1 và 1.0.0.1</string>
     <string name="aether_invalid_dns">Hãy nhập địa chỉ máy phân giải như 1.1.1.1 hoặc 10.0.0.1:5353, phân cách bằng dấu phẩy</string>
@@ -696,6 +703,9 @@
     <string name="aether_chain_one_profile">Một chuỗi proxy chỉ có thể có một hồ sơ Aether</string>
     <string name="aether_exit_node_name_taken">Định tuyến ở đây dùng một hồ sơ tên exit-node, mà exit-node là tên outbound qua đó lõi Aether kết nối ra ngoài; hãy đổi tên hồ sơ đó</string>
     <string name="aether_chain_hop_missing">Không thể dựng chặng mà hồ sơ Aether trong chuỗi proxy này dùng để kết nối ra ngoài, và lõi Aether sẽ ra Internet mà không qua nó</string>
+    <string name="config_main_outbound_missing">Không thể dựng hồ sơ đã chọn, và mọi lưu lượng sẽ ra Internet trực tiếp mà không qua nó; hãy kiểm tra cài đặt của nó</string>
+    <string name="config_routing_target_unbuilt">Không thể dựng hồ sơ \"%1$s\" mà một quy tắc định tuyến gửi lưu lượng tới; hãy sửa nó, hoặc tắt các quy tắc dùng nó</string>
+    <string name="config_group_fallback_unbuilt">Không thể dựng hồ sơ \"%1$s\", kết nối dự phòng của một nhóm chính sách; hãy sửa nó, hoặc chọn kết nối dự phòng khác cho nhóm</string>
     <string name="aether_config_single_profile">Một cấu hình chỉ có thể dùng một hồ sơ Aether</string>
     <string name="aether_config_two_exits">Ở đây một lõi Aether sẽ phải kết nối ra ngoài theo hai cách: cùng một đường hầm được dùng riêng lẻ và sau một chặng của chuỗi proxy, sau hai chặng khác nhau, hoặc với hai thiết lập exit-node khác nhau</string>
     <string name="aether_custom_no_outbound">Không có outbound SOCKS nào của cấu hình kết nối tới %1$s:%2$d, nơi lệnh Aether lắng nghe</string>

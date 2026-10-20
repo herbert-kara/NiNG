@@ -14,7 +14,7 @@ android {
         applicationId = "com.herbertkara.ning"
         minSdk = 29
         targetSdk = 37
-        versionCode = 749
+        versionCode = 752
         // Upstream renamed the property and bumped to 2.3.9. Keep the -ning scheme: the release
         // workflow derives tags and APK filenames from it, so adopting the upstream name would
         // silently drop the fork's version suffix.
@@ -98,7 +98,10 @@ android {
                 .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
                 .forEach { output ->
                     val abi = output.getFilter("ABI") ?: "universal"
-                    output.outputFileName = "NiNG_${variant.versionName}-fdroid_${abi}.apk"
+                    // PattNG: GitHub lists a release's files by name, and a version starts with a digit, which sorts
+                    // before "fdroid": the F-Droid files come after the others. The app's update check finds its file
+                    // by "fdroid" and the ABI anywhere in the name, see UpdateCheckerManager.getDownloadUrl.
+                    output.outputFileName = "NiNG_fdroid_${variant.versionName}_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (100 * variant.versionCode + versionCodes[abi]!!).plus(5000000)
@@ -144,6 +147,7 @@ android {
             "ru",
             "fa",
             "ar",
+            "az",
             "bn",
             "bqi-rIR"
         )
