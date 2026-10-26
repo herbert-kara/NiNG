@@ -214,7 +214,7 @@ jobs:
     # the native cache keys, so the pins the build job exports have to be repeated here; an
     # empty RUST_TOOLCHAIN makes dtolnay/rust-toolchain fail with an unhelpful error.
     env:
-      RUST_TOOLCHAIN: '1.98.1'
+      RUST_TOOLCHAIN: 'stable'
       GO_VERSION: '1.26'
       RELEASE_TAG: ${{ inputs.release_tag || 'v0.0.0-ning.0' }}
 
