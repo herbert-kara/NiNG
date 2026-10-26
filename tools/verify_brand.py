@@ -2237,14 +2237,15 @@ def check_the_documented_colour_exceptions_hold():
     assert ".background(SelectedRowGold)" in pager, (
         "the selected row marker is not using the gold; a 4dp bar needs 3:1 on white to be seen")
     assert re.search(r"GroupIndicatorGold = Color\(0x[0-9A-Fa-f]{2}" + gold + r"\)", tab), (
-        "the group tab underline is not the palette gold; it must be #" + gold)
-    # The lambda holds a Modifier.tabIndicatorOffset(...) with its own parentheses, so [^)]* stops
-    # short. Bound the search to the SecondaryIndicator call itself.
-    ind = re.search(r"SecondaryIndicator\(.*?\n\s*\)\n", tab, re.S)
-    m = re.search(r"color = (\w+)", ind.group(0)) if ind else None
-    assert m and m.group(1) == "GroupIndicatorGold", (
-        "the group tab underline is drawn with " + (m.group(1) if m else "nothing")
-        + " rather than the gold; colorScheme.secondary put slate there, which read as disabled")
+        "the group tab marker is not the palette gold; it must be #" + gold)
+    # The selected tab shows itself in gold twice: its label and its count badge. A pill bar
+    # has no underline, so the gold rides the selected state instead of an indicator bar.
+    tab_uses = len(re.findall(r"GroupIndicatorGold", tab))
+    assert tab_uses >= 3, (
+        "the group tab's gold is not used for the selected tab's label and badge; expected the "
+        "constant plus at least two uses, found " + str(tab_uses))
+    assert "if (selected) GroupIndicatorGold else colors.onSurfaceVariant," in tab, (
+        "the selected tab's label is not the gold; a graphic needs 3:1 on white to be seen")
     # The palette gold itself is what these are darkened from, so keep them in step.
     assert "FED766" in theme, "the gold anchor is gone from the theme, so the darkened gold is orphaned"
 

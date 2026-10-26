@@ -56,6 +56,14 @@ private val TAB_HEIGHT = 30.dp
 private val SELECTED_TAB_MARGIN = 12.dp
 
 /**
+ * The palette gold darkened to 3:1 on white, for the selected group's tab.
+ *
+ * The palette's own FED766 is 1.4:1 on white, so a marker in it would be invisible in light
+ * mode. Darkening keeps the hue and gives a graphic the contrast it needs.
+ */
+private val GroupIndicatorGold = Color(0xFFAD9245)
+
+/**
  * Subscription group tabs: a floating rounded bar whose selected tab is a tinted pill and whose
  * server count is a small badge.
  *
@@ -198,7 +206,7 @@ private fun GroupTabItem(
             text = group.remarks,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
-            color = if (selected) colors.primary else colors.onSurfaceVariant,
+            color = if (selected) GroupIndicatorGold else colors.onSurfaceVariant,
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Ellipsis
@@ -209,7 +217,7 @@ private fun GroupTabItem(
                 modifier = Modifier
                     .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
                     .clip(CircleShape)
-                    .background(if (selected) colors.primary else colors.onSurfaceVariant.copy(alpha = 0.55f))
+                    .background(if (selected) GroupIndicatorGold else colors.onSurfaceVariant.copy(alpha = 0.55f))
                     .padding(horizontal = 4.dp),
                 contentAlignment = Alignment.Center
             ) {
