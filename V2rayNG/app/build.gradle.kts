@@ -14,6 +14,7 @@ android {
         applicationId = "com.herbertkara.ning"
         minSdk = 29
         targetSdk = 37
+        versionCode = 753
         versionCode = 752
         // Upstream renamed the property and bumped to 2.3.9. Keep the -ning scheme: the release
         // workflow derives tags and APK filenames from it, so adopting the upstream name would
