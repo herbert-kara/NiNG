@@ -1317,8 +1317,6 @@ object CoreConfigManager {
         val remoteDns = SettingsManager.getRemoteDnsServers()
         val domesticDns = SettingsManager.getDomesticDnsServers()
 
-        remoteDns.forEach { servers.add(it) }
-
         val hosts = buildDnsHostsFromRoutingRules(configContext)
         val cnDomesticDnsTags = buildDnsCnModeFromRoutingRules(configContext, servers, domesticDns)
         val domesticDnsTags = buildDnsFromRoutingRules(
@@ -1328,6 +1326,8 @@ object CoreConfigManager {
             domesticDns = domesticDns
         )
         domesticDnsTags.addAll(cnDomesticDnsTags)
+
+        remoteDns.forEach { servers.add(it) }
 
         v2rayConfig.dns = V2rayConfig.DnsBean(
             servers = servers,
@@ -1414,7 +1414,7 @@ object CoreConfigManager {
         return hosts
     }
 
-    private fun buildDnsCnModeFromRoutingRules(configContext: CoreConfigContext, servers: ArrayList<Any>, domesticDns: List<String>): List<String> {
+    internal fun buildDnsCnModeFromRoutingRules(configContext: CoreConfigContext, servers: ArrayList<Any>, domesticDns: List<String>): List<String> {
         val cnRegionFilter = { domain: String ->
             domain.startsWith("geosite:") && (domain.endsWith("-cn") || domain.endsWith("@cn"))
                     || domain == AppConfig.GEOSITE_CN
@@ -1449,7 +1449,6 @@ object CoreConfigManager {
                     domains = cnDomains,
                     expectIPs = geoipCn,
                     skipFallback = true,
-                    finalQuery = true,
                     tag = cnDomesticDnsTag
                 )
             )
@@ -1458,7 +1457,7 @@ object CoreConfigManager {
         return cnDomesticDnsTags
     }
 
-    private fun buildDnsFromRoutingRules(
+    internal fun buildDnsFromRoutingRules(
         configContext: CoreConfigContext,
         servers: ArrayList<Any>,
         remoteDns: List<String>,
@@ -1475,7 +1474,7 @@ object CoreConfigManager {
                                 address = address,
                                 domains = rule.domain,
                                 skipFallback = true,
-                                finalQuery = true,
+                                finalQuery = if (dnsIndex == domesticDns.lastIndex) true else null,
                                 tag = tag
                             )
                         )
@@ -1485,12 +1484,15 @@ object CoreConfigManager {
 
                 AppConfig.TAG_BLOCKED -> Unit
                 else -> {
-                    servers.add(
-                        V2rayConfig.DnsBean.ServersBean(
-                            address = remoteDns.first(),
-                            domains = rule.domain,
+                    remoteDns.forEachIndexed { index, address ->
+                        servers.add(
+                            V2rayConfig.DnsBean.ServersBean(
+                                address = address,
+                                domains = rule.domain,
+                                finalQuery = if (index == remoteDns.lastIndex) true else null
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
