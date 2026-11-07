@@ -34,6 +34,8 @@ import java.net.URI
 
 object AngConfigManager {
 
+    private const val OUTLINE_SCHEME = "ssconf://"
+
     private data class ParsedProfile(
         val profile: ProfileItem,
         val rawConfig: String? = null,
@@ -187,17 +189,18 @@ object AngConfigManager {
      */
     fun importBatchConfig(server: String?, subid: String, append: Boolean): Pair<Int, Int> {
         return try {
-            var count = parseBatchConfig(Utils.decode(server), subid, append)
+            val input = resolveOutlineLinks(server)
+            var count = parseBatchConfig(Utils.decode(input), subid, append)
             if (count <= 0) {
-                count = parseBatchConfig(server, subid, append)
+                count = parseBatchConfig(input, subid, append)
             }
             if (count <= 0) {
-                count = parseCustomConfigServer(server, subid, append)
+                count = parseCustomConfigServer(input, subid, append)
             }
 
-            var countSub = parseBatchSubscription(server)
+            var countSub = parseBatchSubscription(input)
             if (countSub <= 0) {
-                countSub = parseBatchSubscription(Utils.decode(server))
+                countSub = parseBatchSubscription(Utils.decode(input))
             }
             if (countSub > 0) {
                 updateConfigViaSubAll()
@@ -209,6 +212,66 @@ object AngConfigManager {
             0 to 0
         }
     }
+
+    /**
+     * An Outline share key (ssconf://) is a link to a JSON document, not a profile.
+     * Fetches such lines and turns them into plain ss:// links for the normal import path.
+     *
+     * @param servers The raw import text.
+     * @return The import text with Outline keys replaced by ss:// links.
+     */
+    private fun resolveOutlineLinks(servers: String?): String? {
+        servers ?: return null
+        if (servers.lines().none { it.trim().startsWith(OUTLINE_SCHEME) }) return servers
+
+        return servers.lines().joinToString("\n") { line ->
+            if (line.trim().startsWith(OUTLINE_SCHEME)) outlineToSsLink(line.trim()) ?: line else line
+        }
+    }
+
+    /**
+     * Downloads an Outline access key document and converts it into an ss:// link.
+     *
+     * @param link The ssconf:// link, optionally with a #name fragment.
+     * @return The ss:// link, or null if the document could not be read.
+     */
+    private fun outlineToSsLink(link: String): String? {
+        try {
+            val url = "https://" + link.substringBefore('#').removePrefix(OUTLINE_SCHEME)
+            val body = HttpUtil.getUrlContent(UrlContentRequest(url)) ?: return null
+            val config = ProfileItem.create(EConfigType.SHADOWSOCKS)
+            val json = if (body.trimStart().startsWith("{")) JsonUtil.parseString(body) else null
+            if (json != null) { // Outline access key
+                config.server = json.get("server")?.asString ?: return null
+                config.serverPort = json.get("server_port")?.asString ?: return null
+                config.method = json.get("method")?.asString ?: return null
+                config.password = json.get("password")?.asString ?: return null
+            } else { // Outline SDK config url (YAML)
+                val endpoint = yamlValue(body, "endpoint") ?: return null
+                config.server = endpoint.substringBeforeLast(':').removeSurrounding("[", "]")
+                config.serverPort = endpoint.substringAfterLast(':')
+                config.method = yamlValue(body, "cipher") ?: return null
+                config.password = yamlValue(body, "secret") ?: return null
+            }
+            config.remarks = Utils.decodeURIComponent(link.substringAfter('#', ""))
+            // shortcut: Outline's salt prefix is not sent, Xray has no support for it
+            return EConfigType.SHADOWSOCKS.protocolScheme + ShadowsocksFmt.toUri(config)
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "Failed to read Outline access key", e)
+        }
+        return null
+    }
+
+    /**
+     * Reads a single scalar value from a flat YAML document.
+     *
+     * @param text The YAML text.
+     * @param key The key to look for.
+     * @return The value, or null if the key is absent.
+     */
+    private fun yamlValue(text: String, key: String): String? =
+        Regex("(?m)^\\s*" + key + ":\\s*\"?([^\"\\r\\n]+?)\"?\\s*$")
+            .find(text)?.groupValues?.get(1)
 
     /**
      * Parses a batch of subscriptions.
