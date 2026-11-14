@@ -451,8 +451,9 @@ class MainViewModel(
 
             MainServiceEvent.StateStopSuccess -> updateRunningState(false)
             is MainServiceEvent.MeasureDelayResult -> {
+                // PattNG: the delay, then the IP lookup, of this request only; a late reply to an older one changes nothing.
                 if (!uiState.value.isRunning) return
-                val tested = testRequests.completeCurrent(event.requestId) ?: return
+                val tested = testRequests.answerCurrent(event.requestId) ?: return
                 // The country on this result is the one the connection actually exited in: the
                 // core was started on this profile, and SpeedtestManager asked through it. A row
                 // filled from DNS answers for whatever a CDN or relay put in front of the server,
@@ -486,6 +487,7 @@ class MainViewModel(
             }
 
             is MainServiceEvent.MeasureDelayCancelled -> {
+                // PattNG: a test cancelled before its delay came in ends; a cancelled IP lookup leaves the delay shown.
                 if (testRequests.completeCurrent(event.requestId) != null) resetTestStatus()
             }
 
@@ -771,7 +773,9 @@ class MainViewModel(
             is MainAction.EditServer,
             is MainAction.ShareClipboard,
             is MainAction.ShareFullContent,
-            is MainAction.OpenSubscriptionLink -> {
+            is MainAction.OpenSubscriptionLink,
+            is MainAction.CopyDonationAddress,
+            MainAction.OpenAuthorTelegram -> {
                 // Handled by Activity via its onAction lambda
             }
         }

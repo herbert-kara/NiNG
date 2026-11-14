@@ -8,6 +8,10 @@ internal class MainTestRequests {
 
     private var current: String? = null
 
+    // PattNG: the current request whose delay came in while its IP lookup may still answer, see answerCurrent.
+    private var answered: String? = null
+    private var answeredServerGuid: String? = null
+
     /**
      * The server the current single test is running on, kept so a late reply can be attributed.
      *
@@ -26,6 +30,8 @@ internal class MainTestRequests {
         UUID.randomUUID().toString().also {
             current = it
             currentServerGuid = serverGuid
+            answered = null
+            answeredServerGuid = null
         }
 
     /**
@@ -46,9 +52,26 @@ internal class MainTestRequests {
 
     data class Completed(val serverGuid: String?)
 
+    /**
+     * PattNG: whether a reply belongs to the current request. The service answers it twice, the delay and then
+     * the IP lookup: the first completes the request, the second is taken too, and a reply to any other request
+     * is refused. The server it ran on comes back with either answer, so the country of the IP lookup -- the
+     * reply that actually carries one -- still reaches the row the test was started for.
+     */
+    fun answerCurrent(id: String): Completed? {
+        completeCurrent(id)?.let {
+            answered = id
+            answeredServerGuid = it.serverGuid
+            return it
+        }
+        return if (id == answered) Completed(answeredServerGuid) else null
+    }
+
     fun invalidateCurrent() {
         current = null
         currentServerGuid = null
+        answered = null
+        answeredServerGuid = null
     }
 
     fun beginBulk(groupId: String): Bulk = Bulk(UUID.randomUUID().toString(), groupId).also { bulk = it }

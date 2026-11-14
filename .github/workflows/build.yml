@@ -200,7 +200,7 @@ jobs:
       run: bash tools/fetch-libv2ray.sh
 
     - name: Setup Java
-      uses: actions/setup-java@v6.1.0
+      uses: actions/setup-java@v6.2.0
       with:
         distribution: 'temurin'
         java-version: '21'
