@@ -68,27 +68,36 @@ class MainTestRequestsTest {
         val requests = MainTestRequests()
         val older = requests.beginCurrent()
         val current = requests.beginCurrent()
-        assertFalse(requests.answerCurrent(older))
+        assertNull(requests.answerCurrent(older))
         assertTrue(requests.isTesting)
-        assertTrue(requests.answerCurrent(current))
+        assertNotNull(requests.answerCurrent(current))
         assertFalse(requests.isTesting)
-        assertTrue(requests.answerCurrent(current))
-        assertFalse(requests.answerCurrent(older))
-        assertFalse(requests.answerCurrent(""))
+        assertNotNull(requests.answerCurrent(current))
+        assertNull(requests.answerCurrent(older))
+        assertNull(requests.answerCurrent(""))
         // Its IP lookup cancelled afterwards: not a test that ended unanswered.
-        assertFalse(requests.completeCurrent(current))
+        assertNull(requests.completeCurrent(current))
     }
 
     @Test
     fun aNewTestOrAStopEndsTheAnswersOfTheOldRequest() {
         val requests = MainTestRequests()
         val answered = requests.beginCurrent()
-        assertTrue(requests.answerCurrent(answered))
+        assertNotNull(requests.answerCurrent(answered))
         val next = requests.beginCurrent()
-        assertFalse(requests.answerCurrent(answered))
-        assertTrue(requests.answerCurrent(next))
+        assertNull(requests.answerCurrent(answered))
+        assertNotNull(requests.answerCurrent(next))
         requests.invalidateCurrent()
-        assertFalse(requests.answerCurrent(next))
+        assertNull(requests.answerCurrent(next))
         assertFalse(requests.isTesting)
+    }
+
+    /** The fork's country attribution needs the server back from the IP-lookup reply too. */
+    @Test
+    fun theSecondAnswerCarriesTheServerTheTestRanOn() {
+        val requests = MainTestRequests()
+        val id = requests.beginCurrent("guid-1")
+        assertEquals("guid-1", requests.answerCurrent(id)?.serverGuid)
+        assertEquals("guid-1", requests.answerCurrent(id)?.serverGuid)
     }
 }
