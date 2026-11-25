@@ -7,20 +7,27 @@ plugins {
 
 android {
     namespace = "com.v2ray.ang"
+    // Kept at the version the sign job installs. The build job seds its own NDK 30 line in above
+    // this one, but a later assignment in the same block wins, so 29 is what both jobs use today;
+    // the two jobs differing is what broke the native stage before.
     ndkVersion = "29.0.14206865"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
 
     defaultConfig {
         applicationId = "com.herbertkara.ning"
         minSdk = 29
         targetSdk = 37
-        versionCode = 760
-        // Upstream renamed the property and is now on 2.4.0. Keep the -ning scheme: the release
+        versionCode = 761
+        // Upstream renamed the property and is now on 2.4.1. Keep the -ning scheme: the release
         // workflow derives tags and APK filenames from it, so adopting the upstream name would
         // silently drop the fork's version suffix.
         versionName = (project.findProperty("ningVersion") as? String)
             ?: (project.findProperty("pattngVersion") as? String)?.takeIf { !it.contains("-ning") }
-            ?: "2.4.0-ning.1"
+            ?: "2.4.1-ning.1"
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {
@@ -188,6 +195,7 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.tv.material)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.coil.compose)

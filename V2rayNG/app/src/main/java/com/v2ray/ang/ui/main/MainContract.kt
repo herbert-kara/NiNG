@@ -26,6 +26,7 @@ data class MainUiState(
     val isRunning: Boolean = false,
     val isTesting: Boolean = false,
     val status: MainStatus = MainStatus.Disconnected,
+    val searchQuery: String = "",
     val locateTarget: LocateTarget? = null,
     val confirmRemove: Boolean = false,
     val doubleColumnDisplay: Boolean = false,
@@ -91,7 +92,9 @@ sealed interface MainAction {
     /** Long-press on the connect button: strategy index into R.array.policy_group_type, null = off. */
     data class SetBalancer(val typeIdx: Int?) : MainAction
 
-    data object LocateHandled : MainAction
+    data class LocateHandled(val target: LocateTarget) : MainAction
+
+    data object Exit : MainAction
 
     /** PattNG: the refusal of a move numbered [refusal], see [MainUiState.moveRefusal], was told. */
     data class MoveRefusalShown(val refusal: Int) : MainAction
