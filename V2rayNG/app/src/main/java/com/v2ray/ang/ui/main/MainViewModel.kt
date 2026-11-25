@@ -1265,6 +1265,19 @@ class MainViewModel(
         }
     }
 
+    /**
+     * Reloads the selected group from storage, for a change made to the selection itself (the
+     * balancer menu) rather than to the group's contents. Upstream dropped this when the group
+     * cache took over; [reloadAllGroups] is not a substitute, it re-reads every group.
+     */
+    fun reloadServerList() {
+        val groupId = uiState.value.selectedGroupId
+        selectedGroupLoadJob?.cancel()
+        selectedGroupLoadJob = viewModelScope.launch(ioDispatcher) {
+            updateGroupUi(groupId, loadGroup(groupId, forceRefresh = true))
+        }
+    }
+
     fun reloadAllGroups(groupIds: List<String>) {
         reloadJob?.cancel()
         reloadJob = viewModelScope.launch(preloadDispatcher) {
